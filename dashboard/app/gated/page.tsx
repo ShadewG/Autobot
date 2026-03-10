@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem } from "@/lib/utils";
+import { cn, formatRelativeTime, formatDate, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem, cleanEmailBody } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import { LinkifiedText } from "@/components/linkified-text";
@@ -2651,12 +2651,30 @@ function MonitorPageContent() {
                   {selectedItem.data.last_inbound_subject}
                 </p>
               )}
-              <div className="bg-background border p-2">
-                <LinkifiedText
-                  text={selectedItem.data.last_inbound_preview || ""}
-                  className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
-                />
-              </div>
+              {(() => {
+                const { body: inboundClean, quotedThread: inboundQuoted } = cleanEmailBody(selectedItem.data.last_inbound_preview || "");
+                return (
+                  <div className="bg-background border p-2">
+                    <LinkifiedText
+                      text={inboundClean}
+                      className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                    />
+                    {inboundQuoted && (
+                      <details className="mt-2 border-t border-border/50 pt-2">
+                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                          Show full thread
+                        </summary>
+                        <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                          <LinkifiedText
+                            text={inboundQuoted}
+                            className="text-xs whitespace-pre-wrap font-[inherit] text-muted-foreground/60"
+                          />
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -3187,12 +3205,30 @@ function MonitorPageContent() {
                   {showCorrespondence ? "Hide Correspondence" : "See Full Correspondence"}
                 </Button>
               </div>
-              <div className="bg-background border p-2">
-                <LinkifiedText
-                  text={selectedItem.data.last_inbound_preview || ""}
-                  className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
-                />
-              </div>
+              {(() => {
+                const { body: reviewClean, quotedThread: reviewQuoted } = cleanEmailBody(selectedItem.data.last_inbound_preview || "");
+                return (
+                  <div className="bg-background border p-2">
+                    <LinkifiedText
+                      text={reviewClean}
+                      className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                    />
+                    {reviewQuoted && (
+                      <details className="mt-2 border-t border-border/50 pt-2">
+                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                          Show full thread
+                        </summary>
+                        <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                          <LinkifiedText
+                            text={reviewQuoted}
+                            className="text-xs whitespace-pre-wrap font-[inherit] text-muted-foreground/60"
+                          />
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
               {selectedItem.data.inbound_count > 0 && (
                 <p className="text-[10px] text-muted-foreground mt-1">
                   {selectedItem.data.inbound_count} inbound message(s) total
@@ -3658,12 +3694,30 @@ function MonitorPageContent() {
                           )}
 
                           {/* Email body */}
-                          <div className="bg-background border p-3 max-h-64 overflow-auto">
-                            <LinkifiedText
-                              text={msg.body_text || "(no body text)"}
-                              className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
-                            />
-                          </div>
+                          {(() => {
+                            const { body: cleanBody, quotedThread } = cleanEmailBody(msg.body_text || "");
+                            return (
+                              <div className="bg-background border p-3 max-h-64 overflow-auto">
+                                <LinkifiedText
+                                  text={cleanBody || "(no body text)"}
+                                  className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                                />
+                                {quotedThread && (
+                                  <details className="mt-2 border-t border-border/50 pt-2">
+                                    <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                                      Show full thread
+                                    </summary>
+                                    <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                                      <LinkifiedText
+                                        text={quotedThread}
+                                        className="text-xs whitespace-pre-wrap font-[inherit] text-muted-foreground/60"
+                                      />
+                                    </div>
+                                  </details>
+                                )}
+                              </div>
+                            );
+                          })()}
 
                           {/* Match to case — only for unmatched */}
                           {isUnmatched && (
@@ -4012,14 +4066,30 @@ function MonitorPageContent() {
                                 <span className="text-muted-foreground">From:</span> {task.last_inbound_from_email}
                               </p>
                             )}
-                            {task.last_inbound_preview && (
-                              <div className="border p-2">
-                                <LinkifiedText
-                                  text={task.last_inbound_preview}
-                                  className="text-xs whitespace-pre-wrap text-foreground/80"
-                                />
-                              </div>
-                            )}
+                            {task.last_inbound_preview && (() => {
+                              const { body: phoneClean, quotedThread: phoneQuoted } = cleanEmailBody(task.last_inbound_preview);
+                              return (
+                                <div className="border p-2">
+                                  <LinkifiedText
+                                    text={phoneClean}
+                                    className="text-xs whitespace-pre-wrap text-foreground/80"
+                                  />
+                                  {phoneQuoted && (
+                                    <details className="mt-2 border-t border-border/50 pt-2">
+                                      <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                                        Show full thread
+                                      </summary>
+                                      <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                                        <LinkifiedText
+                                          text={phoneQuoted}
+                                          className="text-xs whitespace-pre-wrap text-muted-foreground/60"
+                                        />
+                                      </div>
+                                    </details>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
 
@@ -4046,7 +4116,19 @@ function MonitorPageContent() {
                                     const records = (details.records_requested || []) as string[];
                                     const responses = (details.previous_responses || []) as string[];
                                     const daysWaiting = dates.days_waiting != null ? String(dates.days_waiting) : null;
-                                    const requestSent = dates.request_sent ? String(dates.request_sent) : null;
+                                    const fmtBriefingDate = (v: unknown): string => {
+                                      if (!v) return "";
+                                      const s = String(v);
+                                      // If it looks like an ISO or parseable date, format it nicely
+                                      const d = new Date(s);
+                                      if (!isNaN(d.getTime()) && /\d{4}/.test(s)) return formatDate(s);
+                                      return s;
+                                    };
+                                    const requestSent = dates.request_sent ? fmtBriefingDate(dates.request_sent) : null;
+                                    // Render any other date fields (e.g. statutory_deadline, response_due)
+                                    const extraDateEntries = Object.entries(dates).filter(
+                                      ([k]) => !["days_waiting", "request_sent"].includes(k)
+                                    );
                                     return (
                                       <div className="space-y-1 text-foreground/80">
                                         {daysWaiting && (
@@ -4055,6 +4137,11 @@ function MonitorPageContent() {
                                         {requestSent && (
                                           <p>Request sent: {requestSent}</p>
                                         )}
+                                        {extraDateEntries.map(([key, val]) => (
+                                          <p key={key}>
+                                            {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}: {fmtBriefingDate(val)}
+                                          </p>
+                                        ))}
                                         {records.length > 0 && (
                                           <p>Records: {records.join(", ")}</p>
                                         )}

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LinkifiedText } from "@/components/linkified-text";
 import type { ThreadMessage } from "@/lib/types";
-import { formatDateTime, cn } from "@/lib/utils";
+import { formatDateTime, cn, cleanEmailBody } from "@/lib/utils";
 import {
   Mail, Globe, Phone, Truck, FileText, FileCode, Loader2,
   Paperclip, Download, ExternalLink, ChevronDown, ChevronRight,
@@ -412,14 +412,21 @@ const MessageBubble = memo(function MessageBubble({
 }: MessageBubbleProps) {
   const isOutbound = message.direction === "OUTBOUND";
   const style = getMessageStyle(message);
+  const [showQuotedThread, setShowQuotedThread] = useState(false);
 
   const displayBody = showRaw && message.raw_body ? message.raw_body : message.body;
   const normalizedSubject = isOutbound
     ? normalizeHistoricalOutboundText(message.subject || "", canonicalAgencyName)
     : (message.subject || "");
-  const normalizedBody = isOutbound
+  const rawNormalizedBody = isOutbound
     ? normalizeHistoricalOutboundText(displayBody || "", canonicalAgencyName)
     : (displayBody || "");
+
+  // For inbound messages, strip CID refs and split quoted thread
+  const { body: cleanBody, quotedThread } = !isOutbound
+    ? cleanEmailBody(rawNormalizedBody)
+    : { body: rawNormalizedBody, quotedThread: null };
+
   const hasRawVersion = message.raw_body && message.raw_body !== message.body;
 
   return (
@@ -481,10 +488,30 @@ const MessageBubble = memo(function MessageBubble({
       <div className={cn("p-3 w-full border-l-4 overflow-hidden", style.borderColor, style.bgColor)}>
         <p className="text-xs font-semibold mb-1.5">{normalizedSubject}</p>
         <LinkifiedText
-          text={normalizedBody}
+          text={cleanBody}
           fallbackUrlForTrackedLinks={canonicalPortalUrl}
           className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
+        {quotedThread && (
+          <div className="mt-2 border-t border-border/30 pt-2">
+            <button
+              onClick={() => setShowQuotedThread(!showQuotedThread)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors select-none"
+            >
+              {showQuotedThread ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              {showQuotedThread ? "Hide full thread" : "Show full thread"}
+            </button>
+            {showQuotedThread && (
+              <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                <LinkifiedText
+                  text={quotedThread}
+                  fallbackUrlForTrackedLinks={canonicalPortalUrl}
+                  className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-muted-foreground/60"
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Sending indicator for optimistic messages */}

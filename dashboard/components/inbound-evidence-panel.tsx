@@ -18,7 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatDate, cn, humanizeRiskFlag } from "@/lib/utils";
+import { formatDate, cn, humanizeRiskFlag, stripCidReferences } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import {
   Mail,
@@ -229,9 +229,9 @@ export function InboundEvidencePanel({
           <Collapsible open={showFullBody} onOpenChange={setShowFullBody}>
             <div className="bg-muted/30 rounded-lg p-3 text-sm">
               <LinkifiedText
-                text={((showRaw ? (message.raw_body || message.body) : message.body)
+                text={stripCidReferences(((showRaw ? (message.raw_body || message.body) : message.body)
                   ?.slice(0, showFullBody ? undefined : 500) || "")
-                  + (!showFullBody && (message.body?.length || 0) > 500 ? "..." : "")}
+                  + (!showFullBody && (message.body?.length || 0) > 500 ? "..." : ""))}
                 className="whitespace-pre-wrap font-sans text-sm"
               />
             </div>

@@ -403,6 +403,39 @@ export function sanitizeDisplayUrl(url: string): { label: string; isTracked: boo
   }
 }
 
+// Strip CID references like [cid:image001.png@01DCB061.04C7EE00] from email body text
+export function stripCidReferences(text: string): string {
+  return text.replace(/\[cid:[^\]]+\]/gi, '').replace(/cid:[^\s<>]+/gi, '');
+}
+
+// Common reply markers that indicate the start of a quoted thread
+const REPLY_MARKER_RE = /^(From:\s|On\s.+wrote:\s*$|-----\s*Original Message\s*-----|_{3,}|> On\s.+wrote:)/im;
+
+// Split email body into the new content and the quoted thread.
+// Returns { body: string; quotedThread: string | null }
+export function splitQuotedThread(text: string): { body: string; quotedThread: string | null } {
+  const match = text.match(REPLY_MARKER_RE);
+  if (!match || match.index === undefined) return { body: text, quotedThread: null };
+
+  // Only split if the marker isn't at the very start (i.e., there's some content before it)
+  const idx = match.index;
+  if (idx < 10) return { body: text, quotedThread: null };
+
+  const body = text.slice(0, idx).trimEnd();
+  const quotedThread = text.slice(idx).trim();
+
+  // Don't split if body would be too short (probably a false positive)
+  if (body.length < 20) return { body: text, quotedThread: null };
+
+  return { body, quotedThread };
+}
+
+// Clean email body for display: strip CID refs and split quoted thread
+export function cleanEmailBody(text: string): { body: string; quotedThread: string | null } {
+  const cleaned = stripCidReferences(text);
+  return splitQuotedThread(cleaned);
+}
+
 // Action type display config — shared across queue page, detail page, panels
 export const ACTION_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   SEND_INITIAL_REQUEST: { label: "Initial Request", color: "bg-blue-500/10 text-blue-400" },
