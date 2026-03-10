@@ -36,6 +36,7 @@ export interface RequestListItem {
   agency_name: string;
   state: string;
   status: RequestStatus;
+  send_date?: string | null;
   last_inbound_at: string | null;
   last_activity_at: string;
   next_due_at: string | null;

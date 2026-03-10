@@ -2356,7 +2356,13 @@ function DetailV2Content() {
 
   const controlDisplay = getControlStateDisplay(control_state);
   const ControlStateIcon = controlDisplay.icon;
-  const submittedAtDisplay = request.submitted_at || _threadMessages.find((m) => m.direction === "OUTBOUND")?.timestamp || null;
+  const submittedAtDisplay =
+    request.submitted_at ||
+    request.send_date ||
+    _threadMessages.find((m) => m.direction === "OUTBOUND")?.timestamp ||
+    null;
+  const hasRecordedSubmissionWithoutThread =
+    visibleThreadMessages.length === 0 && Boolean(submittedAtDisplay);
   const agentDecisions: AgentDecision[] = data.agent_decisions || [];
   const hasPortalHistory = !!request.last_portal_status && !portalTaskActive;
 
@@ -2713,6 +2719,12 @@ function DetailV2Content() {
 
               {/* Thread (flex-1, fills remaining space) */}
               <div className="flex-1 min-h-0 overflow-hidden">
+                {hasRecordedSubmissionWithoutThread && (
+                  <div className="mx-3 mb-2 rounded border border-amber-700/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                    No email thread is stored for this case. The request was already submitted on{" "}
+                    <span className="font-medium">{formatDate(submittedAtDisplay)}</span>, likely via portal or manual delivery, so follow-up/status proposals can still be valid.
+                  </div>
+                )}
                 <Thread
                   messages={visibleThreadMessages}
                   maxHeight="h-full"

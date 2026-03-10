@@ -2704,6 +2704,29 @@ export async function decideNextAction(
               researchLevel: "deep",
             });
           }
+          const outboundResult = await db.query(
+            `SELECT COUNT(*)::int AS outbound_count
+             FROM messages
+             WHERE case_id = $1
+               AND direction = 'outbound'`,
+            [caseId]
+          );
+          const outboundCount = Number(outboundResult.rows[0]?.outbound_count || 0);
+          const hasPriorSubmission =
+            Boolean(caseDataForReview?.send_date) ||
+            outboundCount > 0;
+          if (hasPriorSubmission) {
+            return decision("SEND_STATUS_UPDATE", {
+              adjustmentInstruction: ri || "Send a status update by email instead of portal",
+              reasoning: [
+                ...reasoning,
+                outboundCount > 0
+                  ? `Prior outbound correspondence already exists (${outboundCount} message${outboundCount === 1 ? "" : "s"})`
+                  : "Case already has a recorded send date",
+                "Switching to a status update instead of drafting another initial request",
+              ],
+            });
+          }
           return decision("SEND_INITIAL_REQUEST", {
             adjustmentInstruction: ri || "Send the original FOIA request via email instead of portal",
             reasoning,
