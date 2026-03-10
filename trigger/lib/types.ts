@@ -90,6 +90,8 @@ export interface InitialRequestPayload {
   runId: number;
   caseId: number;
   autopilotMode: AutopilotMode;
+  routeMode?: "email" | "portal";
+  caseAgencyId?: number;
   // Adjustment context (when human clicks ADJUST on a proposal)
   triggerType?: string;
   reviewAction?: string;

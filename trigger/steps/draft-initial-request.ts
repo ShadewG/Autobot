@@ -10,9 +10,13 @@ import type { AutopilotMode, ProposalRecord, AIModelMetadata } from "../lib/type
 import { hasAutomatablePortal } from "../lib/portal-utils";
 const { pickSafeSubjectDescriptor } = require("../../utils/request-normalization");
 
-function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): string {
+function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean, caseAgencyId?: number | null): string {
   const action = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
-  return `${caseId}:initial:${action}:0`;
+  const normalizedCaseAgencyId = Number.isInteger(caseAgencyId) && Number(caseAgencyId) > 0
+    ? Number(caseAgencyId)
+    : null;
+  const agencyScope = normalizedCaseAgencyId ? `:ca${normalizedCaseAgencyId}` : "";
+  return `${caseId}:initial${agencyScope}:${action}:0`;
 }
 
 export interface InitialDraftResult {
@@ -33,18 +37,45 @@ export async function draftInitialRequest(
   caseId: number,
   runId: number,
   autopilotMode: AutopilotMode,
-  routeMode?: "email" | "portal"
+  routeMode?: "email" | "portal",
+  caseAgencyId?: number | null
 ): Promise<InitialDraftResult> {
   const caseData = await db.getCaseById(caseId);
   if (!caseData) throw new Error(`Case ${caseId} not found`);
 
+  const normalizedCaseAgencyId = Number.isInteger(caseAgencyId) && Number(caseAgencyId) > 0
+    ? Number(caseAgencyId)
+    : null;
+  const caseAgency = normalizedCaseAgencyId
+    ? await db.getCaseAgencyById(Number(caseAgencyId))
+    : null;
+
+  if (caseAgencyId && !caseAgency) {
+    throw new Error(`Case agency ${caseAgencyId} not found for case ${caseId}`);
+  }
+  if (caseAgency && Number(caseAgency.case_id) !== Number(caseId)) {
+    throw new Error(`Case agency ${caseAgencyId} does not belong to case ${caseId}`);
+  }
+
   const effectiveCaseData = {
     ...caseData,
-    portal_url: routeMode === "email" ? null : caseData.portal_url,
-    portal_provider: routeMode === "email" ? null : caseData.portal_provider,
-    last_portal_status: routeMode === "email" ? null : caseData.last_portal_status,
-    agency_email: routeMode === "portal" ? null : caseData.agency_email,
+    agency_id: caseAgency ? (caseAgency.agency_id ?? null) : caseData.agency_id,
+    agency_name: caseAgency?.agency_name || caseData.agency_name,
+    agency_email: caseAgency ? (caseAgency.agency_email ?? null) : caseData.agency_email,
+    portal_url: caseAgency ? (caseAgency.portal_url ?? null) : caseData.portal_url,
+    portal_provider: caseAgency ? (caseAgency.portal_provider ?? null) : caseData.portal_provider,
+    case_agency_id: caseAgency?.id ?? null,
+    last_portal_status: caseData.last_portal_status,
   };
+
+  if (routeMode === "email") {
+    effectiveCaseData.portal_url = null;
+    effectiveCaseData.portal_provider = null;
+    effectiveCaseData.last_portal_status = null;
+  }
+  if (routeMode === "portal") {
+    effectiveCaseData.agency_email = null;
+  }
 
   const hasPortal = hasAutomatablePortal(
     effectiveCaseData.portal_url,
@@ -52,7 +83,7 @@ export async function draftInitialRequest(
     effectiveCaseData.last_portal_status
   );
   const actionType = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
-  const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal);
+  const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal, caseAgency?.id ?? null);
 
   // Check for existing proposal (idempotency)
   // Only reuse if in a non-terminal state
@@ -144,6 +175,7 @@ export async function draftInitialRequest(
     canAutoExecute,
     requiresHuman,
     status: requiresHuman ? "PENDING_APPROVAL" : "DRAFT",
+    caseAgencyId: caseAgency?.id ?? null,
   });
 
   return {

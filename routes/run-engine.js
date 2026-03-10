@@ -1386,7 +1386,7 @@ async function saveTriggerRunId(runId, triggerRunId) {
  */
 router.post('/cases/:id/run-initial', async (req, res) => {
   const caseId = parseInt(req.params.id);
-  const { autopilotMode = 'SUPERVISED', llmStubs, route_mode, force_restart = false } = req.body || {};
+  const { autopilotMode = 'SUPERVISED', llmStubs, route_mode, force_restart = false, case_agency_id } = req.body || {};
 
   try {
     // Verify case exists
@@ -1398,8 +1398,21 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       });
     }
 
-    const hasPortal = !!caseData.portal_url;
-    const hasEmail = !!caseData.agency_email;
+    const selectedCaseAgencyId = Number.isFinite(Number(case_agency_id)) ? Number(case_agency_id) : null;
+    const selectedCaseAgency = selectedCaseAgencyId
+      ? await db.getCaseAgencyById(selectedCaseAgencyId)
+      : null;
+    if (selectedCaseAgency && Number(selectedCaseAgency.case_id) !== Number(caseId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selected case_agency_id does not belong to this case',
+      });
+    }
+
+    const selectedPortalUrl = selectedCaseAgency?.portal_url || caseData.portal_url;
+    const selectedEmail = selectedCaseAgency?.agency_email || caseData.agency_email;
+    const hasPortal = !!selectedPortalUrl;
+    const hasEmail = !!selectedEmail;
     const normalizedRouteMode = typeof route_mode === 'string' ? route_mode.toLowerCase() : null;
 
     if (normalizedRouteMode && !['email', 'portal'].includes(normalizedRouteMode)) {
@@ -1453,12 +1466,22 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       autopilot_mode: autopilotMode,
       langgraph_thread_id: `initial:${caseId}:${Date.now()}`,
       metadata: {
-        route_mode: normalizedRouteMode || null
+        route_mode: normalizedRouteMode || null,
+        case_agency_id: selectedCaseAgencyId || null,
       }
     });
 
     const localMaterialization = await materializeInitialRequestLocally({
-      caseData,
+      caseData: selectedCaseAgency
+        ? {
+            ...caseData,
+            agency_id: selectedCaseAgency.agency_id || caseData.agency_id,
+            agency_name: selectedCaseAgency.agency_name || caseData.agency_name,
+            agency_email: selectedCaseAgency.agency_email || null,
+            portal_url: selectedCaseAgency.portal_url || null,
+            portal_provider: selectedCaseAgency.portal_provider || null,
+          }
+        : caseData,
       run,
       autopilotMode,
       llmStubs,
@@ -1488,6 +1511,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         caseId,
         autopilotMode,
         routeMode: normalizedRouteMode || undefined,
+        caseAgencyId: selectedCaseAgencyId || undefined,
       }, triggerOpts(caseId, 'initial', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });

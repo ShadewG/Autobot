@@ -21,10 +21,117 @@ import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
 const { evaluateImportAutoDispatchSafety } = require("../../utils/request-normalization");
+const { isPlaceholderAgencyEmail } = require("../../utils/request-normalization");
+const { normalizePortalUrl } = require("../../utils/portal-utils");
+const { normalizeAgencyEmailHint } = require("../../services/canonical-agency");
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 
 const RESEARCH_INSTRUCTION_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
+
+function hasRealAgencyEmail(value: unknown): boolean {
+  const normalized = normalizeAgencyEmailHint(value || null);
+  return Boolean(normalized) && !isPlaceholderAgencyEmail(normalized);
+}
+
+function hasRealPortalUrl(value: unknown): boolean {
+  return Boolean(normalizePortalUrl(value || null));
+}
+
+async function createMissingDeliveryPathProposal(caseId: number, runId: number, agency: any) {
+  const agencyName = String(agency?.agency_name || "Unknown agency").trim() || "Unknown agency";
+  return db.upsertProposal({
+    proposalKey: `${caseId}:initial:ca${agency.id}:ESCALATE:0`,
+    caseId,
+    runId,
+    triggerMessageId: null,
+    actionType: "ESCALATE",
+    draftSubject: `Manual outreach needed: ${agencyName}`,
+    draftBodyText: `No verified email or portal was found for ${agencyName}. Add a delivery path or continue research before sending a request to this agency.`,
+    draftBodyHtml: null,
+    reasoning: [
+      `Additional agency ${agencyName} was imported on this case.`,
+      "No verified email or portal was available for this agency.",
+      "Manual review is required before sending to this agency.",
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: "PENDING_APPROVAL",
+    caseAgencyId: agency?.id || null,
+    gateOptions: ["ADJUST", "DISMISS"],
+  });
+}
+
+export async function draftInitialRequestProposalsForCase(
+  caseId: number,
+  runId: number,
+  autopilotMode: "AUTO" | "SUPERVISED" | "MANUAL",
+  routeMode?: "email" | "portal",
+  caseAgencyId?: number | null
+) {
+  const explicitCaseAgencyId = Number.isInteger(caseAgencyId) && Number(caseAgencyId) > 0
+    ? Number(caseAgencyId)
+    : null;
+  const caseAgencies = await db.getCaseAgencies(caseId).catch(() => []);
+  const activeCaseAgencies = Array.isArray(caseAgencies)
+    ? caseAgencies.filter((agency: any) => agency && agency.is_active !== false)
+    : [];
+
+  if (explicitCaseAgencyId || routeMode || activeCaseAgencies.length <= 1) {
+    const singleDraft = await draftInitialRequest(
+      caseId,
+      runId,
+      autopilotMode,
+      routeMode,
+      explicitCaseAgencyId
+    );
+    return {
+      mode: "single" as const,
+      proposals: [singleDraft],
+    };
+  }
+
+  const proposals: any[] = [];
+  for (const agency of activeCaseAgencies) {
+    const hasDeliveryPath = hasRealAgencyEmail(agency.agency_email) || hasRealPortalUrl(agency.portal_url);
+    if (!hasDeliveryPath) {
+      const proposal = await createMissingDeliveryPathProposal(caseId, runId, agency);
+      proposals.push({
+        proposalId: proposal.id,
+        proposalKey: proposal.proposal_key,
+        proposalStatus: proposal.status,
+        actionType: "ESCALATE" as const,
+        subject: proposal.draft_subject,
+        bodyText: proposal.draft_body_text,
+        bodyHtml: proposal.draft_body_html,
+        canAutoExecute: false,
+        requiresHuman: true,
+        reasoning: proposal.reasoning || [],
+        caseAgencyId: agency.id,
+        agencyName: agency.agency_name,
+      });
+      continue;
+    }
+
+    const agencyDraft = await draftInitialRequest(
+      caseId,
+      runId,
+      "SUPERVISED",
+      undefined,
+      agency.id
+    );
+    proposals.push({
+      ...agencyDraft,
+      caseAgencyId: agency.id,
+      agencyName: agency.agency_name,
+    });
+  }
+
+  return {
+    mode: "multi" as const,
+    proposals,
+  };
+}
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -65,7 +172,7 @@ export const processInitialRequest = task({
   },
 
   run: async (payload: InitialRequestPayload) => {
-    const { caseId, autopilotMode, routeMode, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
+    const { caseId, autopilotMode, routeMode, caseAgencyId, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
 
     // Claim pre-flight agent_run row (preserves triggerRunId in metadata) or create new
     const ACTIVE_STATUSES = "('created', 'queued', 'running', 'processing', 'waiting')";
@@ -151,6 +258,7 @@ export const processInitialRequest = task({
       context: {
         autopilotMode,
         routeMode: routeMode || null,
+        caseAgencyId: caseAgencyId || null,
         originalActionType: originalActionType || null,
         originalProposalId: originalProposalId || null,
       },
@@ -434,14 +542,63 @@ export const processInitialRequest = task({
         }
       }
 
-      // Step 2: Draft initial FOIA request
+      // Step 2: Draft initial FOIA request(s)
       await markStep("draft_initial_request", `Run #${runId}: drafting initial request`);
-      const draft = await draftInitialRequest(caseId, runId, autopilotMode, routeMode);
+      const draftResult = await draftInitialRequestProposalsForCase(
+        caseId,
+        runId,
+        autopilotMode,
+        routeMode,
+        caseAgencyId || null
+      );
+
+      if (draftResult.mode === "multi") {
+        const proposalIds = draftResult.proposals.map((proposal) => proposal.proposalId);
+        const actionTypes = draftResult.proposals.map((proposal) => proposal.actionType);
+        const proposalCount = draftResult.proposals.length;
+
+        trace.setRouterOutput({
+          multiAgency: true,
+          proposalCount,
+          proposalIds,
+          actionTypes,
+        });
+        trace.setGateDecision({
+          multiAgency: true,
+          proposalCount,
+          proposalIds,
+        });
+
+        await db.updateCase(caseId, {
+          status: "needs_human_review",
+          requires_human: true,
+          pause_reason: "PENDING_APPROVAL",
+          substatus: `${proposalCount} agency-specific proposal${proposalCount === 1 ? "" : "s"} pending review`,
+        });
+
+        trace.markOutcome("completed", {
+          multiAgency: true,
+          proposalCount,
+        });
+        await completeRun(caseId, runId);
+        return {
+          status: "completed",
+          multiAgency: true,
+          proposals: draftResult.proposals.map((proposal) => ({
+            proposalId: proposal.proposalId,
+            caseAgencyId: proposal.caseAgencyId || null,
+            actionType: proposal.actionType,
+          })),
+        };
+      }
+
+      const draft = draftResult.proposals[0];
       trace.setRouterOutput({
         actionType: draft.actionType,
         requiresHuman: draft.requiresHuman,
         proposalId: draft.proposalId,
         routeMode: routeMode || null,
+        caseAgencyId: caseAgencyId || null,
         reasoning: draft.reasoning,
       });
       trace.setGateDecision({

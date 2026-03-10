@@ -1608,35 +1608,32 @@ router.get('/:id/workspace', async (req, res) => {
         const stateDeadline = STATE_DEADLINES[caseData.state?.toUpperCase()] || null;
         const deadlineMilestones = buildDeadlineMilestones(caseData, timelineEvents, stateDeadline);
 
-        // Fetch latest active proposal (includes DECISION_RECEIVED for review_state)
-        const pendingProposalResult = await db.query(`
-            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason, confidence, gate_options, action_chain, chain_id,
-                   human_decided_by, human_decided_at, original_draft_subject, original_draft_body_text, human_edited
-            FROM proposals
-            WHERE case_id = $1 AND status IN (${ACTIVE_PROPOSAL_STATUSES_SQL})
-            ORDER BY created_at DESC
-            LIMIT 1
-        `, [requestId]);
-        let pendingProposal = pendingProposalResult.rows[0]
-            ? {
-                ...pendingProposalResult.rows[0],
-                gate_options: Array.isArray(pendingProposalResult.rows[0].gate_options)
-                    && pendingProposalResult.rows[0].gate_options.length > 0
-                    ? pendingProposalResult.rows[0].gate_options
+        // Fetch active proposals (includes DECISION_RECEIVED for review_state)
+        let pendingProposals = await db.getPendingProposalsByCaseId(requestId);
+        pendingProposals = pendingProposals.map((proposal) => {
+            const enrichedProposal = {
+                ...proposal,
+                gate_options: Array.isArray(proposal.gate_options)
+                    && proposal.gate_options.length > 0
+                    ? proposal.gate_options
                     : deriveDefaultGateOptions(
-                        pendingProposalResult.rows[0].action_type,
-                        pendingProposalResult.rows[0].draft_body_text
+                        proposal.action_type,
+                        proposal.draft_body_text
                     ),
-            }
-            : null;
-        if (pendingProposal && String(pendingProposal.action_type || '').toUpperCase() === 'ESCALATE') {
-            pendingProposal = {
-                ...pendingProposal,
-                draft_body_text: sanitizeStaleResearchHandoffDraft(pendingProposal.draft_body_text),
-                reasoning: sanitizeStaleResearchHandoffReasoning(pendingProposal.reasoning),
             };
-        }
-        const contradictoryNoResponseProposal = isContradictoryNoResponseProposal(pendingProposal);
+            if (String(enrichedProposal.action_type || '').toUpperCase() === 'ESCALATE') {
+                return {
+                    ...enrichedProposal,
+                    draft_body_text: sanitizeStaleResearchHandoffDraft(enrichedProposal.draft_body_text),
+                    reasoning: sanitizeStaleResearchHandoffReasoning(enrichedProposal.reasoning),
+                };
+            }
+            return enrichedProposal;
+        });
+        const contradictoryNoResponseCount = pendingProposals.filter(isContradictoryNoResponseProposal).length;
+        pendingProposals = pendingProposals.filter((proposal) => !isContradictoryNoResponseProposal(proposal));
+        let pendingProposal = pendingProposals[0] || null;
+        const contradictoryNoResponseProposal = contradictoryNoResponseCount > 0 && pendingProposals.length === 0;
         if (!nextActionProposal && pendingProposal) {
             nextActionProposal = {
                 id: String(pendingProposal.id),
@@ -1660,6 +1657,7 @@ router.get('/:id/workspace', async (req, res) => {
         if (contradictoryNoResponseProposal) {
             nextActionProposal = null;
             pendingProposal = null;
+            pendingProposals = [];
         }
         const manualPasteMismatch = shouldEscalateManualPasteMismatch(
             latestInboundMessageForGuard,
@@ -1669,6 +1667,7 @@ router.get('/:id/workspace', async (req, res) => {
         if (manualPasteMismatch.mismatch) {
             nextActionProposal = null;
             pendingProposal = null;
+            pendingProposals = [];
             caseData = {
                 ...caseData,
                 requires_human: true,
@@ -1755,6 +1754,7 @@ router.get('/:id/workspace', async (req, res) => {
         if (importSafetyBlockedProposal || importSafetyBlockedCase) {
             nextActionProposal = null;
             pendingProposal = null;
+            pendingProposals = [];
             caseData = {
                 ...caseData,
                 requires_human: true,
@@ -2114,6 +2114,7 @@ router.get('/:id/workspace', async (req, res) => {
             deadline_milestones: deadlineMilestones,
             state_deadline: stateDeadline,
             pending_proposal: pendingProposal,
+            pending_proposals: pendingProposals,
             portal_helper: portalHelper,
             review_state,
             control_state,

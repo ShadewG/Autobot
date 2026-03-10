@@ -437,10 +437,13 @@ class DatabaseService {
                     ON cases(portal_request_number) WHERE portal_request_number IS NOT NULL
             `);
 
-            // Enforce at most one active proposal per case (prevents race conditions + duplicates)
+            // Enforce at most one active proposal per case scope (case_agency_id-aware).
+            // Keeps one active proposal per case_agency, while still allowing multiple
+            // agencies on the same case to each carry their own pending proposal.
+            await this.query(`DROP INDEX IF EXISTS idx_proposals_one_active_per_case`);
             await this.query(`
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_active_per_case
-                    ON proposals (case_id)
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_active_per_case_scope
+                    ON proposals (case_id, COALESCE(case_agency_id, -1))
                     WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
             `);
 
@@ -2348,18 +2351,28 @@ class DatabaseService {
             }
         }
 
-        // DEDUP GUARD: Enforce one active proposal per case.
+        const proposalScopeCaseAgencyId = Number.isInteger(proposalData.caseAgencyId) && Number(proposalData.caseAgencyId) > 0
+            ? Number(proposalData.caseAgencyId)
+            : null;
+        const activeProposalScopeSql = proposalScopeCaseAgencyId != null
+            ? 'case_id = $1 AND case_agency_id = $2'
+            : 'case_id = $1 AND case_agency_id IS NULL';
+        const activeProposalScopeParams = proposalScopeCaseAgencyId != null
+            ? [proposalData.caseId, proposalScopeCaseAgencyId]
+            : [proposalData.caseId];
+
+        // DEDUP GUARD: Enforce one active proposal per scoped agency.
         // Same key = true dedup (return existing).
-        // Different key = new analysis supersedes — dismiss ALL stale active proposals.
+        // Different key = new analysis supersedes — dismiss stale active proposals in the same scope.
         // This must run for both queued gates and auto-approved proposals,
         // otherwise auto-approved operational actions can leave stale pending gates behind.
         if (proposalData.caseId && ['PENDING_APPROVAL', 'APPROVED'].includes(incomingStatus)) {
             const dedupStatuses = [...ACTIVE_PROPOSAL_STATUSES, 'APPROVED'];
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key, status FROM proposals
-                 WHERE case_id = $1 AND status = ANY($2)
+                 WHERE ${activeProposalScopeSql} AND status = ANY($${activeProposalScopeParams.length + 1})
                  ORDER BY created_at DESC`,
-                [proposalData.caseId, dedupStatuses]
+                [...activeProposalScopeParams, dedupStatuses]
             );
 
             if (existing.rows.length > 0) {
@@ -2374,7 +2387,8 @@ class DatabaseService {
                 // Status guard prevents clobbering a proposal that transitioned (e.g. to EXECUTED) between SELECT and UPDATE
                 const staleIds = existing.rows.map(r => r.id);
                 console.log(`[DB] Superseding ${staleIds.length} stale proposals (${staleIds.join(', ')}) ` +
-                    `with new ${proposalData.actionType} for case ${proposalData.caseId}`);
+                    `with new ${proposalData.actionType} for case ${proposalData.caseId}` +
+                    `${proposalScopeCaseAgencyId != null ? ` agency ${proposalScopeCaseAgencyId}` : ''}`);
                 await this.query(
                     `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
                      WHERE id = ANY($1) AND status = ANY($2)`,
@@ -2689,19 +2703,21 @@ class DatabaseService {
             }
             return proposal;
         } catch (err) {
-            // Race condition: unique index caught a concurrent insert for same case
+            // Race condition: unique index caught a concurrent insert for same proposal scope
             if (err.code === '23505' && (
                 err.constraint === 'idx_proposals_one_active_per_case' ||
+                err.constraint === 'idx_proposals_one_active_per_case_scope' ||
                 err.constraint === 'idx_proposals_one_pending_per_case'  // legacy name
             )) {
                 const existing = await this.query(
-                    `SELECT id FROM proposals WHERE case_id = $1
+                    `SELECT id FROM proposals WHERE ${activeProposalScopeSql}
                      AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
                      ORDER BY created_at DESC LIMIT 1`,
-                    [proposalData.caseId]
+                    activeProposalScopeParams
                 );
                 if (existing.rows[0]) {
-                    console.log(`[DB] Race condition caught: returning existing proposal #${existing.rows[0].id} for case ${proposalData.caseId}`);
+                    console.log(`[DB] Race condition caught: returning existing proposal #${existing.rows[0].id} for case ${proposalData.caseId}` +
+                        `${proposalScopeCaseAgencyId != null ? ` agency ${proposalScopeCaseAgencyId}` : ''}`);
                     return await this.getProposalById(existing.rows[0].id);
                 }
             }

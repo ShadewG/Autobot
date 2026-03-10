@@ -1663,6 +1663,24 @@ Respond with JSON:
         return plain;
     }
 
+    isLikelyImportableDocumentUrl(url = '') {
+        const value = String(url || '').trim();
+        if (!value) return false;
+        return /\.(pdf|doc|docx|xls|xlsx|csv|rtf|txt)(?:[?#].*)?$/i.test(value);
+    }
+
+    shouldImportBookmarkAsAttachment(block, sectionHeading = '') {
+        if (!block || block.type !== 'bookmark') return false;
+        const url = String(block.bookmark?.url || '').trim();
+        if (!url) return false;
+
+        const normalizedSection = String(sectionHeading || '').trim().toLowerCase();
+        const inDocumentSection = /documents?\s*&\s*pdfs?|documents?|pdfs?/.test(normalizedSection);
+        if (!inDocumentSection) return false;
+
+        return this.isLikelyImportableDocumentUrl(url);
+    }
+
     findPortalInText(text = '') {
         if (!text) {
             return null;
@@ -2992,9 +3010,14 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     page_size: 100
                 });
                 const textLines = [];
+                let currentSectionHeading = '';
                 for (const block of blocks.results) {
                     const text = this.extractTextFromBlock(block);
                     if (text) textLines.push(text);
+
+                    if (['heading_1', 'heading_2', 'heading_3'].includes(block.type)) {
+                        currentSectionHeading = text;
+                    }
 
                     // Collect file and PDF blocks
                     if (block.type === 'file' || block.type === 'pdf') {
@@ -3005,6 +3028,19 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         const caption = (fileData?.caption || []).map(c => c.plain_text).join('').trim();
                         const name = fileData?.name || caption || `notion_${block.type}_${block.id.slice(0, 8)}`;
                         if (url) notionFiles.push({ url, name, type: block.type });
+                    } else if (this.shouldImportBookmarkAsAttachment(block, currentSectionHeading)) {
+                        const url = block.bookmark?.url;
+                        const caption = (block.bookmark?.caption || []).map(c => c.plain_text).join('').trim();
+                        const fallbackName = (() => {
+                            try {
+                                const pathname = new URL(url).pathname.split('/').filter(Boolean).pop();
+                                return pathname || `notion_bookmark_${block.id.slice(0, 8)}`;
+                            } catch {
+                                return `notion_bookmark_${block.id.slice(0, 8)}`;
+                            }
+                        })();
+                        const name = caption || fallbackName;
+                        notionFiles.push({ url, name, type: 'bookmark' });
                     }
                 }
                 pageContent = textLines.join('\n');
@@ -3212,10 +3248,23 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                             if (prop.type === 'url' && prop.url) pdPortalUrl = prop.url;
                         }
 
-                        await db.addCaseAgency(newCase.id, {
+                        if (!pdPortalUrl) {
+                            pdPortalUrl = this.extractFirstUrlFromProperties(deptProps);
+                        }
+
+                        const resolvedAdditionalAgency = await resolveImportedAgencyDirectoryEntry({
                             agency_name: pdName,
                             agency_email: pdEmail,
                             portal_url: pdPortalUrl,
+                            state: notionCase.state || null,
+                        }, { createIfMissing: true });
+
+                        await db.addCaseAgency(newCase.id, {
+                            agency_id: resolvedAdditionalAgency?.id || null,
+                            agency_name: pdName,
+                            agency_email: pdEmail,
+                            portal_url: pdPortalUrl,
+                            portal_provider: detectPortalProviderByUrl(pdPortalUrl)?.name || null,
                             added_source: 'notion_import'
                         });
                         console.log(`[import] Added additional agency "${pdName}"`);
