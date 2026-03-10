@@ -104,6 +104,49 @@ describe('Proposal lifecycle helper', function () {
     assert.deepStrictEqual(params[4], ['PENDING_APPROVAL', 'BLOCKED']);
   });
 
+  it('classifies resolve-review dismissals separately from wrong-action dismissals', function () {
+    const reprocessDecision = proposalLifecycle.buildDismissHumanDecision({
+      decidedBy: 'human',
+      reason: 'Superseded by human review action: reprocess',
+      supersededByAction: 'reprocess',
+    });
+    const supersededDecision = proposalLifecycle.buildDismissHumanDecision({
+      decidedBy: 'human',
+      reason: 'Superseded by human review action: send_via_email',
+      supersededByAction: 'send_via_email',
+    });
+    const plainDismissDecision = proposalLifecycle.buildDismissHumanDecision({
+      decidedBy: 'human',
+      reason: 'Bad draft',
+    });
+
+    assert.strictEqual(reprocessDecision.dismissal_type, 'reprocess');
+    assert.strictEqual(supersededDecision.dismissal_type, 'superseded_by_manual_action');
+    assert.strictEqual(plainDismissDecision.dismissal_type, 'wrong_action');
+  });
+
+  it('counts only wrong-action dismissals toward the circuit breaker', function () {
+    assert.strictEqual(proposalLifecycle.countsTowardDismissCircuitBreaker({
+      status: 'DISMISSED',
+      human_decision: { action: 'DISMISS', dismissal_type: 'wrong_action' },
+    }), true);
+
+    assert.strictEqual(proposalLifecycle.countsTowardDismissCircuitBreaker({
+      status: 'DISMISSED',
+      human_decision: { action: 'DISMISS', dismissal_type: 'reprocess' },
+    }), false);
+
+    assert.strictEqual(proposalLifecycle.countsTowardDismissCircuitBreaker({
+      status: 'DISMISSED',
+      human_decision: { action: 'DISMISS', dismissal_type: 'superseded_by_manual_action' },
+    }), false);
+
+    assert.strictEqual(proposalLifecycle.countsTowardDismissCircuitBreaker({
+      status: 'DISMISSED',
+      human_decision: { action: 'DISMISS', auto_dismiss_reason: 'portal_failed_auto_dismiss' },
+    }), false);
+  });
+
   it('uses conditional updates for DECISION_RECEIVED claims', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [{ id: 404, status: 'DECISION_RECEIVED' }] });
     const humanDecision = proposalLifecycle.buildHumanDecision('APPROVE', {

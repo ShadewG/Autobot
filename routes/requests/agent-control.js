@@ -305,6 +305,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
                      human_decision = COALESCE(human_decision, '{}'::jsonb)
                         || jsonb_build_object(
                             'auto_dismiss_reason', 'reset_to_last_inbound',
+                            'dismissal_type', 'stale_after_case_change',
                             'auto_dismissed_at', NOW()::text,
                             'reset_anchor_message_id', $2::int
                         ),

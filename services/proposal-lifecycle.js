@@ -17,6 +17,14 @@ const FIELD_MAP = {
 
 const ACTIVE_REVIEW_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 
+const DISMISSAL_TYPES = {
+  WRONG_ACTION: 'wrong_action',
+  REPROCESS: 'reprocess',
+  SUPERSEDED_BY_MANUAL_ACTION: 'superseded_by_manual_action',
+  STALE_AFTER_CASE_CHANGE: 'stale_after_case_change',
+  SYSTEM_AUTO_DISMISS: 'system_auto_dismiss',
+};
+
 function buildHumanDecision(action, extras = {}) {
   const {
     decidedAt = new Date().toISOString(),
@@ -27,6 +35,70 @@ function buildHumanDecision(action, extras = {}) {
   return Object.fromEntries(
     Object.entries({ action, decidedAt, decidedBy, ...rest }).filter(([, value]) => value !== undefined)
   );
+}
+
+function inferDismissalType(extras = {}) {
+  const supersededByAction = String(extras?.supersededByAction || '').trim().toLowerCase();
+  const autoDismissReason = String(extras?.auto_dismiss_reason || extras?.autoDismissReason || '').trim().toLowerCase();
+  const reason = String(extras?.reason || '').trim().toLowerCase();
+
+  if (autoDismissReason) {
+    if (autoDismissReason === 'reset_to_last_inbound') {
+      return DISMISSAL_TYPES.STALE_AFTER_CASE_CHANGE;
+    }
+    return DISMISSAL_TYPES.SYSTEM_AUTO_DISMISS;
+  }
+
+  if (supersededByAction === 'reprocess') {
+    return DISMISSAL_TYPES.REPROCESS;
+  }
+  if (supersededByAction) {
+    return DISMISSAL_TYPES.SUPERSEDED_BY_MANUAL_ACTION;
+  }
+
+  if (reason.includes('reset to latest inbound') || reason.includes('reset_to_last_inbound')) {
+    return DISMISSAL_TYPES.STALE_AFTER_CASE_CHANGE;
+  }
+  if (reason.includes('reprocess')) {
+    return DISMISSAL_TYPES.REPROCESS;
+  }
+  if (reason.includes('superseded by human review action') || reason.includes('superseded')) {
+    return DISMISSAL_TYPES.SUPERSEDED_BY_MANUAL_ACTION;
+  }
+
+  return DISMISSAL_TYPES.WRONG_ACTION;
+}
+
+function buildDismissHumanDecision(extras = {}) {
+  return buildHumanDecision('DISMISS', {
+    dismissal_type: inferDismissalType(extras),
+    ...extras,
+  });
+}
+
+function getDismissalType(humanDecision) {
+  if (!humanDecision || typeof humanDecision !== 'object') {
+    return null;
+  }
+  const typed = String(humanDecision.dismissal_type || '').trim().toLowerCase();
+  if (typed) {
+    return typed;
+  }
+  return inferDismissalType(humanDecision);
+}
+
+function countsTowardDismissCircuitBreaker(proposal) {
+  if (!proposal || String(proposal.status || '').toUpperCase() !== 'DISMISSED') {
+    return false;
+  }
+  const decision = proposal.human_decision || proposal.humanDecision || null;
+  if (!decision) {
+    return true;
+  }
+  if (decision.auto_dismiss_reason) {
+    return false;
+  }
+  return getDismissalType(decision) === DISMISSAL_TYPES.WRONG_ACTION;
 }
 
 function buildDecisionAuditUpdates(humanDecision) {
@@ -216,10 +288,15 @@ module.exports = {
   ACTIVE_REVIEW_PROPOSAL_STATUSES,
   applyHumanReviewDecision,
   buildDecisionAuditUpdates,
+  buildDismissHumanDecision,
   buildHumanDecision,
   clearHumanReviewDecision,
   conditionalUpdateProposal,
+  countsTowardDismissCircuitBreaker,
   dismissActiveCaseProposals,
+  DISMISSAL_TYPES,
+  getDismissalType,
+  inferDismissalType,
   markProposalDecisionReceived,
   markProposalExecuted,
   markProposalPendingPortal,

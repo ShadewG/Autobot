@@ -7,7 +7,7 @@ const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { sanitizeValue } = require('../../services/decision-trace-service');
 const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
 const recordsDeliveryService = require('../../services/records-delivery-service');
-const { buildHumanDecision } = proposalLifecycle;
+const { buildDismissHumanDecision } = proposalLifecycle;
 
 const SENSITIVE_PAYLOAD_KEY_PATTERNS = [
     /authorization/i,
@@ -589,7 +589,7 @@ router.post('/:id/resolve-review', async (req, res) => {
 
         // Dismiss all active proposals — human is taking a new direction
         await proposalLifecycle.dismissActiveCaseProposals(requestId, {
-            humanDecision: buildHumanDecision('DISMISS', {
+            humanDecision: buildDismissHumanDecision({
                 decidedBy: 'human',
                 reason: `Superseded by human review action: ${action}`,
                 supersededByAction: action,

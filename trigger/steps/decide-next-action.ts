@@ -474,6 +474,7 @@ async function preComputeDecisionContext(
          AND status = 'DISMISSED'
          AND human_decision IS NOT NULL
          AND COALESCE(human_decision->>'auto_dismiss_reason', '') = ''
+         AND COALESCE(human_decision->>'dismissal_type', 'wrong_action') = 'wrong_action'
        ORDER BY created_at DESC LIMIT 5`,
       [caseId]
     ).then((r: any) => r.rows),
@@ -1890,6 +1891,7 @@ async function aiDecision(params: {
            AND status = 'DISMISSED'
            AND human_decision IS NOT NULL
            AND COALESCE(human_decision->>'auto_dismiss_reason', '') = ''
+           AND COALESCE(human_decision->>'dismissal_type', 'wrong_action') = 'wrong_action'
          ORDER BY created_at DESC LIMIT 5`,
         [params.caseId]
       ).then((r: any) => r.rows),

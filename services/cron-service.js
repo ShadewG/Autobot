@@ -14,6 +14,7 @@ const qualityReportService = require('./quality-report-service');
 const errorTrackingService = require('./error-tracking-service');
 const portalStatusMonitorService = require('./portal-status-monitor-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
+const { countsTowardDismissCircuitBreaker } = require('./proposal-lifecycle');
 const { tasks } = require('@trigger.dev/sdk');
 
 function normalizePortalTimeoutError(rawError) {
@@ -1172,7 +1173,8 @@ class CronService {
 
                     // Hard circuit breaker: if 3+ proposals have been dismissed for this case,
                     // force ESCALATE — the AI keeps proposing actions the human doesn't want.
-                    const dismissedCount = priorProposals.filter(p => p.status === 'DISMISSED').length;
+                    const countedDismissals = priorProposals.filter((p) => countsTowardDismissCircuitBreaker(p));
+                    const dismissedCount = countedDismissals.length;
                     if (dismissedCount >= 3) {
                         console.log(`Circuit breaker: case ${caseData.id} has ${dismissedCount} dismissed proposals — forcing ESCALATE`);
                         await db.upsertProposal({
@@ -1181,13 +1183,13 @@ class CronService {
                             actionType: 'ESCALATE',
                             reasoning: [
                                 { step: 'Circuit breaker', detail: `${dismissedCount} proposals have been dismissed for this case — AI cannot find an acceptable action` },
-                                { step: 'Prior dismissed actions', detail: priorProposals.filter(p => p.status === 'DISMISSED').map(p => p.action_type).join(', ') }
+                                { step: 'Prior dismissed actions', detail: countedDismissals.map(p => p.action_type).join(', ') }
                             ],
                             confidence: 0,
                             requiresHuman: true,
                             canAutoExecute: false,
                             draftSubject: `Manual attention needed: ${caseData.case_name}`,
-                            draftBodyText: `This case has had ${dismissedCount} proposals dismissed. The automated system cannot determine the right action.\n\nPrior dismissed actions: ${priorProposals.filter(p => p.status === 'DISMISSED').map(p => p.action_type).join(', ')}\n\nPlease review the case and decide the next step manually.`,
+                            draftBodyText: `This case has had ${dismissedCount} proposals dismissed. The automated system cannot determine the right action.\n\nPrior dismissed actions: ${countedDismissals.map(p => p.action_type).join(', ')}\n\nPlease review the case and decide the next step manually.`,
                             status: 'PENDING_APPROVAL'
                         });
                         await db.logActivity('circuit_breaker_escalation',

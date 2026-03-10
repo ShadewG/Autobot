@@ -3,7 +3,7 @@ const router = express.Router();
 const { db, logger, triggerDispatch } = require('./_helpers');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
-const { buildHumanDecision } = proposalLifecycle;
+const { buildHumanDecision, buildDismissHumanDecision } = proposalLifecycle;
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 const {
   sanitizeStaleResearchHandoffDraft,
@@ -499,7 +499,7 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
         // Update proposal as dismissed
         await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'DISMISSED',
-            humanDecision: buildHumanDecision('DISMISS', {
+            humanDecision: buildDismissHumanDecision({
                 proposalId,
                 decidedBy: req.body?.decidedBy || 'human',
                 reason: reason || null,
