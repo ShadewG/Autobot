@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = require('../../services/canonical-agency');
@@ -1994,6 +1994,14 @@ router.get('/:id/workspace', async (req, res) => {
             forceCorrectedAgencyDisplay,
             useResearchSuggestedDisplay,
         });
+        const missingImportDeliveryPath =
+            hasMissingImportDeliveryPath({
+                agency_email: requestDetail.agency_email || caseData.agency_email,
+                portal_url: requestDetail.portal_url || caseData.portal_url,
+                import_warnings: requestDetail.import_warnings,
+            }) &&
+            !pendingProposal &&
+            !activeRun;
 
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
@@ -2014,6 +2022,15 @@ router.get('/:id/workspace', async (req, res) => {
             review_state === 'DECISION_REQUIRED' ||
             Boolean(reviewStateCaseData?.requires_human) ||
             isHumanReviewStatus;
+        if (missingImportDeliveryPath) {
+            requestDetail.status = 'NEEDS_HUMAN_REVIEW';
+            requestDetail.substatus = requestDetail.substatus || 'Imported case is missing a real delivery path. Add the correct agency email or portal before sending.';
+            requestDetail.pause_reason = 'IMPORT_REVIEW';
+            requestDetail.review_state = 'IDLE';
+            requestDetail.control_state = 'BLOCKED';
+            requestDetail.control_mismatches = [];
+            effectiveRequiresHuman = true;
+        }
         if (contradictoryNoResponseProposal) {
             requestDetail.status = 'AWAITING_RESPONSE';
             requestDetail.substatus = requestDetail.substatus || 'No response needed — automated portal/account message';
@@ -2022,6 +2039,9 @@ router.get('/:id/workspace', async (req, res) => {
         }
         if (review_state !== 'DECISION_REQUIRED' && !isHumanReviewStatus) {
             requestDetail.pause_reason = null;
+        }
+        if (missingImportDeliveryPath) {
+            requestDetail.pause_reason = 'IMPORT_REVIEW';
         }
         const runStatus = String(activeRun?.status || '').toLowerCase();
         const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);

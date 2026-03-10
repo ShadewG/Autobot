@@ -46,6 +46,26 @@ function normalizeImportWarnings(importWarnings) {
     return filtered.length > 0 ? filtered : null;
 }
 
+function hasMissingImportDeliveryPath(caseData) {
+    const importWarnings = Array.isArray(caseData?.import_warnings) ? caseData.import_warnings : [];
+    const warningTypes = new Set(
+        importWarnings
+            .map((warning) => String(warning?.type || '').trim().toUpperCase())
+            .filter(Boolean)
+    );
+    const agencyEmail = String(caseData?.agency_email || '').trim().toLowerCase();
+    const portalUrl = normalizePortalUrl(caseData?.portal_url);
+
+    return Boolean(
+        !portalUrl &&
+        (
+            isPlaceholderAgencyEmail(agencyEmail) ||
+            warningTypes.has('MISSING_DELIVERY_PATH') ||
+            warningTypes.has('MISSING_EMAIL')
+        )
+    );
+}
+
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
  */
@@ -763,7 +783,7 @@ function toRequestListItem(caseData) {
     const feeQuote = parseFeeQuote(caseData);
 
     // Derive review_state from available lateral join data
-    const review_state = resolveReviewState({
+    let review_state = resolveReviewState({
         caseData,
         activeProposal: caseData.active_proposal_status
             ? { status: caseData.active_proposal_status }
@@ -780,14 +800,14 @@ function toRequestListItem(caseData) {
         ? { status: caseData.active_proposal_status }
         : null;
 
-    const control_state = resolveControlState({
+    let control_state = resolveControlState({
         caseData,
         reviewState: review_state,
         pendingProposal: activeProposal,
         activeRun,
         activePortalTaskStatus: caseData.active_portal_task_status || null,
     });
-    const control_mismatches = detectControlMismatches({
+    let control_mismatches = detectControlMismatches({
         caseData,
         reviewState: review_state,
         pendingProposal: activeProposal,
@@ -796,6 +816,7 @@ function toRequestListItem(caseData) {
     });
 
     let effectiveDbStatus = String(caseData.status || '').toLowerCase();
+    const missingImportDeliveryPath = hasMissingImportDeliveryPath(caseData) && !activeProposal && !activeRun;
     if (
         REVIEW_DB_STATUSES.has(effectiveDbStatus) &&
         !Boolean(caseData.requires_human) &&
@@ -806,6 +827,12 @@ function toRequestListItem(caseData) {
         } else {
             effectiveDbStatus = 'awaiting_response';
         }
+    }
+    if (missingImportDeliveryPath) {
+        effectiveDbStatus = 'needs_human_review';
+        review_state = 'IDLE';
+        control_state = 'BLOCKED';
+        control_mismatches = [];
     }
     // Use derived review/control state as the UI source of truth so stale
     // requires_human flags in DB don't hide blocked manual work.
@@ -1430,5 +1457,5 @@ module.exports = {
     extractLatestSupportedPortalUrl, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
     detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
-    toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones
+    toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones, hasMissingImportDeliveryPath
 };

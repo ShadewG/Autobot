@@ -68,6 +68,43 @@ describe('Request alignment regressions', function () {
     assert.strictEqual(item.state, 'TX');
   });
 
+  it('toRequestListItem blocks placeholder import cases with no real delivery path', function () {
+    const item = requestHelpers.toRequestListItem({
+      id: 26672,
+      subject_name: "Ohio sex worker guilty of killing 4 men is sentenced to 4 life terms in 'serial murder'",
+      requested_records: ['Interview/interrogation recordings'],
+      agency_name: '—',
+      agency_email: 'pending-research@intake.autobot',
+      portal_url: null,
+      import_warnings: [
+        { type: 'MISSING_DELIVERY_PATH' },
+        { type: 'MISSING_EMAIL' },
+      ],
+      state: null,
+      status: 'awaiting_response',
+      substatus: null,
+      updated_at: '2026-03-10T00:00:00.000Z',
+      created_at: '2026-03-09T00:00:00.000Z',
+      requires_human: false,
+      active_run_status: null,
+      active_proposal_status: null,
+      active_portal_task_status: null,
+      active_portal_task_type: null,
+      pause_reason: null,
+      autopilot_mode: 'SUPERVISED',
+      due_info_jsonb: null,
+      fee_quote_jsonb: null,
+      last_fee_quote_amount: null,
+      last_response_date: null,
+      next_due_at: null,
+    });
+
+    assert.strictEqual(item.status, 'NEEDS_HUMAN_REVIEW');
+    assert.strictEqual(item.review_state, 'IDLE');
+    assert.strictEqual(item.control_state, 'BLOCKED');
+    assert.strictEqual(item.requires_human, true);
+  });
+
   it('extractAgencyCandidatesFromResearchNotes falls back to execution suggested agency', function () {
     const candidates = requestHelpers.extractAgencyCandidatesFromResearchNotes(JSON.stringify({
       brief: {
@@ -2420,6 +2457,108 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
       assert.strictEqual(response.body.case_agencies[0].agency_name, 'Unknown agency');
       assert.strictEqual(response.body.case_agencies[0].portal_url, null);
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
+  it('GET /api/requests/:id/workspace keeps placeholder intake imports blocked until a real delivery path exists', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 26672,
+      subject_name: "Ohio sex worker guilty of killing 4 men is sentenced to 4 life terms in 'serial murder'",
+      case_name: "Ohio sex worker guilty of killing 4 men is sentenced to 4 life terms in 'serial murder'",
+      agency_id: null,
+      agency_name: '—',
+      agency_email: 'pending-research@intake.autobot',
+      portal_url: null,
+      portal_provider: null,
+      state: null,
+      status: 'awaiting_response',
+      requires_human: false,
+      pause_reason: null,
+      substatus: null,
+      contact_research_notes: null,
+      requested_records: ['Interview/interrogation recordings'],
+      additional_details: 'Title: Ohio sex worker guilty of killing 4 men is sentenced to 4 life terms in serial murder',
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-10T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: [
+        { type: 'MISSING_DELIVERY_PATH', message: 'Case has request content but no portal URL or agency email after import research' },
+        { type: 'MISSING_EMAIL', message: 'No agency email and no portal URL — case cannot be sent' },
+      ],
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 242,
+      case_id: 26672,
+      agency_id: null,
+      agency_name: '—',
+      agency_email: 'pending-research@intake.autobot',
+      portal_url: null,
+      portal_provider: null,
+      is_primary: true,
+      is_active: true,
+      added_source: 'case_row_backfill',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) return { rows: [] };
+      if (sql.includes('UPDATE cases')) return { rows: [] };
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in placeholder intake block test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/26672/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal, null);
+      assert.strictEqual(response.body.next_action_proposal, null);
+      assert.strictEqual(response.body.request.status, 'NEEDS_HUMAN_REVIEW');
+      assert.strictEqual(response.body.request.review_state, 'IDLE');
+      assert.strictEqual(response.body.request.control_state, 'BLOCKED');
+      assert.strictEqual(response.body.request.pause_reason, 'IMPORT_REVIEW');
+      assert.match(response.body.request.substatus, /missing a real delivery path/i);
+      assert.strictEqual(response.body.request.agency_email, null);
+      assert.strictEqual(response.body.request.portal_url, null);
+      assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;

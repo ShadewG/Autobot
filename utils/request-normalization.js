@@ -21,7 +21,8 @@ function safeJsonParse(value) {
 }
 
 function isPlaceholderAgencyEmail(email) {
-  return /placeholder\.invalid/i.test(String(email || '').trim());
+  const normalized = String(email || '').trim().toLowerCase();
+  return normalized === 'pending-research@intake.autobot' || /placeholder\.invalid/i.test(normalized);
 }
 
 function isPlaceholderCaseTitle(value = '') {
