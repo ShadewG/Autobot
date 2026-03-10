@@ -113,6 +113,9 @@ describe('import review workspace blocking', function () {
       assert.strictEqual(response.body.request.status, 'NEEDS_HUMAN_REVIEW');
       assert.strictEqual(response.body.request.review_state, 'IDLE');
       assert.strictEqual(response.body.request.control_state, 'BLOCKED');
+      assert.strictEqual(response.body.review_state, 'IDLE');
+      assert.strictEqual(response.body.control_state, 'BLOCKED');
+      assert.deepStrictEqual(response.body.control_mismatches, []);
       assert.strictEqual(response.body.request.pause_reason, 'IMPORT_REVIEW');
       assert.match(response.body.request.substatus, /imported case/i);
     } finally {
