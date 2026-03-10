@@ -320,24 +320,40 @@ export default function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             {statusData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
                     data={statusData}
                     dataKey="value"
                     nameKey="name"
                     cx="50%"
-                    cy="50%"
-                    outerRadius={90}
-                    innerRadius={50}
+                    cy="45%"
+                    outerRadius={80}
+                    innerRadius={45}
                     paddingAngle={2}
-                    label={({ name, value }: any) => `${name} (${value})`}
+                    label={({ name, value, percent }: any) => {
+                      // Hide labels for slices under 5% to prevent overlap
+                      if (percent < 0.05) return null;
+                      return `${name} (${value})`;
+                    }}
+                    labelLine={false}
                   >
                     {statusData.map((entry, i) => (
                       <Cell key={i} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip formatter={(value: any, name: any) => [value, name]} />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={36}
+                    iconType="circle"
+                    iconSize={8}
+                    formatter={(value: string) => {
+                      const entry = statusData.find((s) => s.name === value);
+                      return `${value} (${entry?.value ?? 0})`;
+                    }}
+                    wrapperStyle={{ fontSize: "11px" }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -355,18 +371,40 @@ export default function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             {denialData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={Math.max(denialData.length * 40, 260)}>
                 <BarChart
                   data={denialData}
                   layout="vertical"
-                  margin={{ left: 100, right: 16, top: 8, bottom: 8 }}
+                  margin={{ left: 16, right: 16, top: 8, bottom: 8 }}
                 >
                   <XAxis type="number" tick={{ fontSize: 11 }} />
                   <YAxis
                     type="category"
                     dataKey="name"
-                    tick={{ fontSize: 11 }}
-                    width={95}
+                    width={160}
+                    tick={({ x, y, payload }: any) => {
+                      const maxLen = 28;
+                      const label =
+                        payload.value.length > maxLen
+                          ? payload.value.slice(0, maxLen - 1) + "\u2026"
+                          : payload.value;
+                      return (
+                        <g transform={`translate(${x},${y})`}>
+                          <title>{payload.value}</title>
+                          <text
+                            x={-4}
+                            y={0}
+                            dy={4}
+                            textAnchor="end"
+                            fill="#a1a1aa"
+                            fontSize={11}
+                          >
+                            {label}
+                          </text>
+                        </g>
+                      );
+                    }}
+                    interval={0}
                   />
                   <Tooltip />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]}>
