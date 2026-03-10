@@ -584,7 +584,7 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
     }}>
       <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
         <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
-        Portal Submissions
+        Portal Activity
         {hasLoaded && <span className="ml-auto text-muted-foreground">{submissions.length}</span>}
       </summary>
       <div className="px-3 pb-2">
@@ -2919,13 +2919,16 @@ function DetailV2Content() {
                       </details>
                     )}
 
-                    {/* Manual submit helper for portal submissions and manual portal fallback */}
+                    {/* Inline portal workflow for portal submissions and manual portal fallback */}
                     {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(pending_proposal.action_type) && (
-                      <details className="text-xs">
+                      <details className="text-xs" open>
                         <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
-                          <Globe className="h-2.5 w-2.5" /> Manual Submit Helper
+                          <Globe className="h-2.5 w-2.5" /> Portal Submission
                         </summary>
                         <div className="mt-1 space-y-2">
+                          <p className="text-[10px] text-muted-foreground">
+                            Handle the portal work on this case page. Use the controls below, then mark the case submitted here.
+                          </p>
                           {portal_helper.portal_url && (
                             <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => window.open(portal_helper.portal_url!, "_blank")}>
                               <ExternalLink className="h-2.5 w-2.5 mr-1" /> Open Portal
@@ -3335,7 +3338,7 @@ function DetailV2Content() {
               <PortalSubmissionsSection caseId={id!} />
               <ProviderPayloadsSection caseId={id!} />
               {hasPortalHistory && (
-                <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
+                <CollapsibleSection title="PORTAL SCREENSHOTS" defaultOpen={false}>
                   <PortalLiveView caseId={id!} portalTaskUrl={request.last_portal_task_url} isLive={false} />
                 </CollapsibleSection>
               )}
@@ -3514,7 +3517,7 @@ function DetailV2Content() {
 
               {/* Portal history */}
               {hasPortalHistory && (
-                <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
+                <CollapsibleSection title="PORTAL SCREENSHOTS" defaultOpen={false}>
                   <PortalLiveView
                     caseId={id!}
                     portalTaskUrl={request.last_portal_task_url}

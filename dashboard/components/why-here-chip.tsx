@@ -47,7 +47,7 @@ function getWhyHereInfo(request: RequestListItem, variant: TableVariant): {
         return { text: "Agent error — needs review", tone: "red", icon: "alert" };
       case "stuck_portal_task":
       case "portal_stuck":
-        return { text: "Portal task stuck", tone: "amber", icon: "alert" };
+        return { text: "Portal submission stuck", tone: "amber", icon: "alert" };
       case "portal_timed_out":
         return { text: "Portal timed out", tone: "amber", icon: "clock" };
       case "execution_blocked":

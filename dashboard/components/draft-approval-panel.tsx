@@ -81,8 +81,8 @@ function buildActionPreview(
   // Step 2: Execute action based on type
   if (isPortalAgency) {
     steps.push({
-      action: "Create portal task",
-      detail: "Manual submission task will be created for team",
+      action: "Queue portal submission",
+      detail: "This case will stay on the case page for portal submission instead of sending email",
       icon: <Globe className="h-4 w-4 text-cyan-500" />,
     });
   } else {
@@ -251,7 +251,7 @@ export function DraftApprovalPanel({
             <Globe className="h-4 w-4 text-cyan-400" />
             <AlertTitle className="text-sm text-cyan-300">Portal Agency</AlertTitle>
             <AlertDescription className="text-xs text-cyan-400">
-              This agency requires portal submission. A portal task will be created instead of sending email.
+              This agency requires portal submission. The portal work stays on the case page instead of sending email.
             </AlertDescription>
           </Alert>
         )}
