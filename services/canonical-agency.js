@@ -1,5 +1,25 @@
 const { normalizePortalUrl } = require('../utils/portal-utils');
 
+const STATE_NAME_BY_CODE = {
+    AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california',
+    CO: 'colorado', CT: 'connecticut', DE: 'delaware', DC: 'district of columbia',
+    FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
+    IN: 'indiana', IA: 'iowa', KS: 'kansas', KY: 'kentucky', LA: 'louisiana',
+    ME: 'maine', MD: 'maryland', MA: 'massachusetts', MI: 'michigan',
+    MN: 'minnesota', MS: 'mississippi', MO: 'missouri', MT: 'montana',
+    NE: 'nebraska', NV: 'nevada', NH: 'new hampshire', NJ: 'new jersey',
+    NM: 'new mexico', NY: 'new york', NC: 'north carolina', ND: 'north dakota',
+    OH: 'ohio', OK: 'oklahoma', OR: 'oregon', PA: 'pennsylvania',
+    RI: 'rhode island', SC: 'south carolina', SD: 'south dakota', TN: 'tennessee',
+    TX: 'texas', UT: 'utah', VT: 'vermont', VA: 'virginia', WA: 'washington',
+    WV: 'west virginia', WI: 'wisconsin', WY: 'wyoming',
+};
+
+const STATE_SUFFIX_PATTERN = new RegExp(
+    `,\\s*(?:${Object.values(STATE_NAME_BY_CODE).map((name) => name.replace(/\s+/g, '\\\\s+')).join('|')})\\.?$`,
+    'i'
+);
+
 function normalizeAgencyEmailHint(email) {
     const value = String(email || '').trim().toLowerCase().replace(/^mailto:/, '');
     return value.includes('@') ? value : null;
@@ -27,6 +47,31 @@ function normalizeAgencyTenantHint(value) {
     return stateCodes.has(match[2]) ? match[1] : compact;
 }
 
+function normalizeAgencyNameHint(value) {
+    return String(value || '')
+        .replace(/[.]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeAgencyComparable(value) {
+    return normalizeAgencyNameHint(value)
+        .toLowerCase()
+        .replace(/[’'`´]/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function buildAgencyNameBaseHint(value) {
+    const normalized = normalizeAgencyNameHint(value)
+        .replace(STATE_SUFFIX_PATTERN, '')
+        .split(/[–—/]/)[0]
+        .split('(')[0]
+        .trim();
+    return normalized;
+}
+
 async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, agencyName, stateHint }) {
     const normalizedPortalUrl = normalizePortalUrl(portalUrl);
     const normalizedAgencyEmail = isTestAgencyEmail(agencyEmail) ? null : normalizeAgencyEmailHint(agencyEmail);
@@ -34,8 +79,12 @@ async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, 
     const portalHost = normalizedPortalUrl ? new URL(normalizedPortalUrl).hostname.toLowerCase() : null;
     const portalTenantHint = normalizeAgencyTenantHint(portalHost ? portalHost.split('.')[0] : '');
     const mailboxTenantHint = normalizeAgencyTenantHint(normalizedPortalMailbox ? normalizedPortalMailbox.split('@')[0] : '');
-    const normalizedAgencyName = String(agencyName || '').trim();
+    const normalizedAgencyName = normalizeAgencyNameHint(agencyName);
+    const comparableAgencyName = normalizeAgencyComparable(normalizedAgencyName);
+    const agencyBaseName = buildAgencyNameBaseHint(normalizedAgencyName);
+    const comparableAgencyBaseName = normalizeAgencyComparable(agencyBaseName);
     const normalizedStateHint = stateHint && stateHint !== '{}' ? String(stateHint).trim() : null;
+    const stateNameHint = normalizedStateHint ? (STATE_NAME_BY_CODE[normalizedStateHint.toUpperCase()] || '') : '';
 
     const candidateQuery = await db.query(
         `SELECT
@@ -85,10 +134,21 @@ async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, 
                     ) THEN 7 ELSE 0
                 END
                 + CASE
-                    WHEN $6::text <> '' AND LOWER(a.name) = LOWER($6) THEN 6 ELSE 0
+                    WHEN $6::text <> '' AND LOWER(a.name) = LOWER($6) THEN 10 ELSE 0
                 END
                 + CASE
-                    WHEN $7::text IS NOT NULL AND a.state = $7 THEN 2 ELSE 0
+                    WHEN $7::text <> '' AND regexp_replace(lower(a.name), '[^a-z0-9]+', ' ', 'g') = $7 THEN 9 ELSE 0
+                END
+                + CASE
+                    WHEN $8::text <> '' AND regexp_replace(lower(a.name), '[^a-z0-9]+', ' ', 'g') LIKE '%' || $8 || '%'
+                     AND (
+                        ($9::text IS NOT NULL AND a.state = $9)
+                        OR ($10::text <> '' AND LOWER(a.name) LIKE '%' || $10 || '%')
+                     )
+                    THEN 8 ELSE 0
+                END
+                + CASE
+                    WHEN $9::text IS NOT NULL AND a.state = $9 THEN 2 ELSE 0
                 END
             ) AS score,
             (
@@ -126,6 +186,8 @@ async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, 
                 OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) LIKE '%' || $5 || '%'
             ))
             OR ($6::text <> '' AND LOWER(a.name) = LOWER($6))
+            OR ($7::text <> '' AND regexp_replace(lower(a.name), '[^a-z0-9]+', ' ', 'g') = $7)
+            OR ($8::text <> '' AND regexp_replace(lower(a.name), '[^a-z0-9]+', ' ', 'g') LIKE '%' || $8 || '%')
          ORDER BY score DESC, completeness DESC, a.id DESC
          LIMIT 5`,
         [
@@ -135,7 +197,10 @@ async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, 
             portalTenantHint,
             mailboxTenantHint,
             normalizedAgencyName,
+            comparableAgencyName,
+            comparableAgencyBaseName && comparableAgencyBaseName !== comparableAgencyName ? comparableAgencyBaseName : '',
             normalizedStateHint,
+            stateNameHint,
         ]
     );
 

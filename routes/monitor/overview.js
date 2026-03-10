@@ -18,6 +18,7 @@ const {
     sanitizeStaleResearchHandoffDraft,
     sanitizeStaleResearchHandoffReasoning,
 } = require('../../utils/request-normalization');
+const { findCanonicalAgency } = require('../../services/canonical-agency');
 const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 
 const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
@@ -607,6 +608,7 @@ router.get('/live-overview', async (req, res) => {
             const caseAgencyCtx = await db.query(`
                 SELECT DISTINCT ON (ca.case_id)
                     ca.case_id,
+                    ca.agency_id,
                     ca.agency_name,
                     ca.agency_email,
                     ca.portal_url,
@@ -747,7 +749,7 @@ router.get('/live-overview', async (req, res) => {
             }, new Map());
         }
 
-        const pendingApprovalsWithAttachments = pendingApprovalRows.map((row) => {
+        const pendingApprovalsWithAttachments = (await Promise.all(pendingApprovalRows.map(async (row) => {
             const normalizedActionType = String(row.action_type || '').toUpperCase();
             const sanitizedRow = normalizedActionType === 'ESCALATE'
                 ? {
@@ -818,22 +820,31 @@ router.get('/live-overview', async (req, res) => {
             const last_inbound_preview = row.last_inbound_preview || triggerInbound?.body_preview || null;
             const last_inbound_subject = row.last_inbound_subject || triggerInbound?.subject || null;
             const last_inbound_from_email = row.last_inbound_from_email || triggerInbound?.from_email || null;
+            const canonicalQueueAgency = primaryCaseAgency?.agency_id
+                ? null
+                : await findCanonicalAgency(db, {
+                    portalUrl: primaryCaseAgency?.portal_url || sanitizedRow.portal_url,
+                    portalMailbox: last_inbound_from_email || row.effective_agency_email || null,
+                    agencyEmail: primaryCaseAgency?.agency_email || row.effective_agency_email || sanitizedRow.agency_email,
+                    agencyName: primaryCaseAgency?.agency_name || sanitizedRow.agency_name,
+                    stateHint: sanitizedRow.state,
+                });
+            const resolvedAgencyId = primaryCaseAgency?.agency_id || canonicalQueueAgency?.id || row.agency_id || null;
+            const resolvedAgencyName = suppressPlaceholderDisplay
+                ? 'Unknown agency'
+                : (researchSuggestedAgency?.name || canonicalQueueAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name);
             return {
                 ...sanitizedRow,
                 import_warnings: filterStaleImportWarnings(sanitizedRow.import_warnings, {
                     originalAgencyName: row.agency_name,
-                    resolvedAgencyName: suppressPlaceholderDisplay
-                        ? 'Unknown agency'
-                        : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name),
-                    resolvedAgencyId: primaryCaseAgency?.agency_id || null,
+                    resolvedAgencyName,
+                    resolvedAgencyId,
                     currentAgencyId: row.agency_id || null,
                     suppressPlaceholderAgencyDisplay: suppressPlaceholderDisplay,
                     forceCorrectedAgencyDisplay: false,
                     useResearchSuggestedDisplay: Boolean(researchSuggestedAgency?.name),
                 }),
-                agency_name: suppressPlaceholderDisplay
-                    ? 'Unknown agency'
-                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name),
+                agency_name: resolvedAgencyName,
                 case_substatus: normalizePortalTimeoutSubstatus(sanitizedRow.case_substatus),
                 inbound_count,
                 last_inbound_preview,
@@ -852,7 +863,7 @@ router.get('/live-overview', async (req, res) => {
                 attachments,
                 attachment_insights: extractAttachmentInsights(attachments)
             };
-        }).filter(Boolean);
+        }))).filter(Boolean);
 
         const activeRunsResult = await db.query(`
             SELECT
@@ -1031,7 +1042,7 @@ router.get('/live-overview', async (req, res) => {
             }, new Map());
         }
 
-        const humanReviewCases = (humanReviewResult.rows || []).map((row) => {
+        const humanReviewCases = (await Promise.all((humanReviewResult.rows || []).map(async (row) => {
             const research_summary = buildReadableResearchSummary(row.contact_research_notes);
             const phone_call_plan = extractPhoneCallPlan(row.contact_research_notes, row);
             const primaryCaseAgency = primaryHumanReviewAgencyByCase.get(Number(row.id)) || null;
@@ -1047,6 +1058,19 @@ router.get('/live-overview', async (req, res) => {
                 portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
                 addedSource: primaryCaseAgency?.added_source || 'case_row_backfill',
             });
+            const canonicalQueueAgency = primaryCaseAgency?.agency_id
+                ? null
+                : await findCanonicalAgency(db, {
+                    portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+                    portalMailbox: row.agency_email || null,
+                    agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
+                    agencyName: primaryCaseAgency?.agency_name || row.agency_name,
+                    stateHint: row.state,
+                });
+            const resolvedAgencyId = primaryCaseAgency?.agency_id || canonicalQueueAgency?.id || row.agency_id || null;
+            const resolvedAgencyName = suppressPlaceholderDisplay
+                ? 'Unknown agency'
+                : (researchSuggestedAgency?.name || canonicalQueueAgency?.name || primaryCaseAgency?.agency_name || row.agency_name);
             const truth = buildCaseTruth({
                 caseData: {
                     id: row.id,
@@ -1061,24 +1085,20 @@ router.get('/live-overview', async (req, res) => {
                 ...row,
                 import_warnings: filterStaleImportWarnings(row.import_warnings, {
                     originalAgencyName: row.agency_name,
-                    resolvedAgencyName: suppressPlaceholderDisplay
-                        ? 'Unknown agency'
-                        : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
-                    resolvedAgencyId: primaryCaseAgency?.agency_id || null,
+                    resolvedAgencyName,
+                    resolvedAgencyId,
                     currentAgencyId: row.agency_id || null,
                     suppressPlaceholderAgencyDisplay: suppressPlaceholderDisplay,
                     forceCorrectedAgencyDisplay: false,
                     useResearchSuggestedDisplay: Boolean(researchSuggestedAgency?.name),
                 }),
-                agency_name: suppressPlaceholderDisplay
-                    ? 'Unknown agency'
-                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
+                agency_name: resolvedAgencyName,
                 substatus: normalizePortalTimeoutSubstatus(row.substatus),
                 review_state: truth.review_state,
                 research_summary,
                 phone_call_plan,
             };
-        });
+        })));
 
         const payload = {
             success: true,

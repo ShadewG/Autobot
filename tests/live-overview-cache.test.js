@@ -308,4 +308,117 @@ describe('Live overview cache fallback', function () {
       restore();
     }
   });
+
+  it('suppresses stale queue warnings when a canonical agency can be inferred from the case row', async function () {
+    const dbStub = {
+      query: async (sql) => {
+        if (sql.includes('COUNT(*) FILTER') && sql.includes('FROM messages m')) {
+          return { rows: [{ inbound_24h: '0', unmatched_inbound_total: '0', unprocessed_inbound_total: '0' }] };
+        }
+        if (sql.includes('portal_hard_timeout_total_1h')) {
+          return { rows: [{ portal_hard_timeout_total_1h: 0, portal_soft_timeout_total_1h: 0 }] };
+        }
+        if (sql.includes('process_inbound_superseded_total_1h')) {
+          return { rows: [{ process_inbound_superseded_total_1h: 0 }] };
+        }
+        if (sql.includes('FROM proposals p') && sql.includes('LEFT JOIN cases c ON c.id = p.case_id')) {
+          return {
+            rows: [{
+              id: 2088,
+              case_id: 25155,
+              action_type: 'SEND_INITIAL_REQUEST',
+              proposal_status: 'PENDING_APPROVAL',
+              confidence: '0.88',
+              created_at: '2026-03-10T00:00:00.000Z',
+              trigger_message_id: null,
+              reasoning: ['Ready to send'],
+              draft_subject: 'Public records request',
+              draft_body_text: 'Hello records unit',
+              proposal_pause_reason: null,
+              risk_flags: [],
+              warnings: [],
+              gate_options: null,
+              case_name: 'Santa Rosa case',
+              subject_name: 'Santa Rosa case',
+              agency_name: 'Santa Rosa County Sheriff’s Office',
+              agency_id: null,
+              state: 'FL',
+              case_status: 'needs_human_review',
+              case_substatus: 'Proposal #2088 pending review',
+              portal_url: null,
+              agency_email: null,
+              additional_details: null,
+              import_warnings: [{
+                type: 'AGENCY_NOT_IN_DIRECTORY',
+                message: 'Agency \"Santa Rosa County Sheriff’s Office\" not found in directory',
+              }],
+              deadline_date: null,
+              contact_research_notes: null,
+              effective_agency_email: null,
+              user_id: null,
+              case_pause_reason: 'INITIAL_REQUEST',
+              last_fee_quote_amount: null,
+              message_count: '0',
+              inbound_count: 0,
+              last_inbound_preview: null,
+              last_inbound_subject: null,
+              last_inbound_from_email: null,
+              last_inbound_date: null,
+            }],
+          };
+        }
+        if (sql.includes('SELECT DISTINCT ON (p.case_id)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT DISTINCT ON (ca.case_id)')) {
+          return {
+            rows: [{
+              case_id: 25155,
+              agency_id: null,
+              agency_name: 'Santa Rosa County Sheriff’s Office',
+              agency_email: null,
+              portal_url: null,
+              added_source: 'notion_import',
+            }],
+          };
+        }
+        if (sql.includes('FROM agencies a') && sql.includes('score DESC')) {
+          return {
+            rows: [{
+              id: 1102,
+              name: 'Santa Rosa County Sheriff’s Office, Florida',
+              state: null,
+              portal_url: 'https://srsofl.justfoia.com/publicportal',
+              email_main: null,
+              score: 8,
+            }],
+          };
+        }
+        if (sql.includes('FROM agent_runs r') || sql.includes('FROM messages m') || sql.includes('FROM cases c') || sql.includes('FROM attachments a')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL in inferred canonical warning suppression test: ${sql}`);
+      },
+      getUserById: async () => null,
+    };
+
+    const { router, restore } = loadOverviewRouter(dbStub, {
+      evaluateImportAutoDispatchSafety: actualNormalization.evaluateImportAutoDispatchSafety,
+      filterStaleImportWarnings: actualNormalization.filterStaleImportWarnings,
+    });
+
+    try {
+      const app = express();
+      app.use('/api/monitor', router);
+
+      const response = await supertest(app).get('/api/monitor/live-overview');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_approvals.length, 1);
+      assert.strictEqual(response.body.pending_approvals[0].import_warnings, null);
+      assert.strictEqual(response.body.pending_approvals[0].agency_name, 'Santa Rosa County Sheriff’s Office, Florida');
+    } finally {
+      restore();
+    }
+  });
 });
