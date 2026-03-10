@@ -7,6 +7,8 @@ const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
+const canonicalAgency = require('./canonical-agency');
+const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 const {
     normalizeMessageBody,
     isSubstantiveMessage,
@@ -3831,19 +3833,125 @@ class DatabaseService {
 
         await this.query(`
             UPDATE cases SET
-                agency_name = $2,
-                agency_email = $3,
-                portal_url = $4,
-                portal_provider = $5,
+                agency_id = $2,
+                agency_name = $3,
+                agency_email = $4,
+                portal_url = $5,
+                portal_provider = $6,
                 updated_at = NOW()
             WHERE id = $1
         `, [
             caseId,
+            primaryCaseAgency.agency_id || currentCase?.agency_id || null,
             primaryCaseAgency.agency_name,
             primaryCaseAgency.agency_email,
             normalizedPortalUrl,
             normalizedPortalProvider
         ]);
+    }
+
+    async backfillCanonicalAgencyIds({ caseIds = null, limit = 500, dryRun = true } = {}) {
+        const filters = [];
+        const params = [];
+
+        filters.push(`(${buildRealCaseWhereClause('c', 'm')})`);
+        filters.push(`(c.agency_id IS NULL OR COALESCE(pca.agency_id, 0) = 0)`);
+        filters.push(`COALESCE(NULLIF(BTRIM(COALESCE(pca.agency_name, c.agency_name, '')), ''), '') <> ''`);
+        filters.push(`LOWER(BTRIM(COALESCE(pca.agency_name, c.agency_name, ''))) NOT IN ('unknown agency', 'police department', '—')`);
+
+        if (Array.isArray(caseIds) && caseIds.length > 0) {
+            params.push(caseIds);
+            filters.push(`c.id = ANY($${params.length}::int[])`);
+        }
+
+        params.push(Number(limit) > 0 ? Number(limit) : 500);
+
+        const candidateResult = await this.query(
+            `SELECT
+                c.id,
+                c.state,
+                c.agency_id AS case_agency_id,
+                c.agency_name AS case_agency_name,
+                c.agency_email AS case_agency_email,
+                c.portal_url AS case_portal_url,
+                pca.id AS primary_case_agency_id,
+                pca.agency_id AS primary_agency_id,
+                pca.agency_name AS primary_agency_name,
+                pca.agency_email AS primary_agency_email,
+                pca.portal_url AS primary_portal_url
+             FROM cases c
+             LEFT JOIN LATERAL (
+                SELECT *
+                FROM case_agencies ca
+                WHERE ca.case_id = c.id
+                  AND ca.is_primary = true
+                  AND ca.is_active = true
+                ORDER BY ca.updated_at DESC NULLS LAST, ca.created_at DESC NULLS LAST, ca.id DESC
+                LIMIT 1
+             ) pca ON TRUE
+             WHERE ${filters.join(' AND ')}
+             ORDER BY c.id ASC
+             LIMIT $${params.length}`,
+            params
+        );
+
+        const touched = [];
+
+        for (const row of candidateResult.rows) {
+            const matched = await canonicalAgency.findCanonicalAgency(this, {
+                portalUrl: row.primary_portal_url || row.case_portal_url || null,
+                agencyEmail: row.primary_agency_email || row.case_agency_email || null,
+                agencyName: row.primary_agency_name || row.case_agency_name || null,
+                stateHint: row.state || null,
+            });
+
+            if (!matched) continue;
+
+            const item = {
+                case_id: row.id,
+                matched_agency_id: matched.id,
+                matched_agency_name: matched.name,
+                primary_case_agency_id: row.primary_case_agency_id || null,
+                previous_case_agency_id: row.case_agency_id || null,
+                previous_primary_agency_id: row.primary_agency_id || null,
+            };
+
+            touched.push(item);
+
+            if (dryRun) continue;
+
+            if (row.primary_case_agency_id) {
+                const updatedPrimary = await this.updateCaseAgency(row.primary_case_agency_id, {
+                    agency_id: matched.id,
+                });
+                await this.syncPrimaryAgencyToCase(row.id, updatedPrimary || {
+                    agency_id: matched.id,
+                    agency_name: row.primary_agency_name || row.case_agency_name || matched.name,
+                    agency_email: row.primary_agency_email || row.case_agency_email || null,
+                    portal_url: row.primary_portal_url || row.case_portal_url || null,
+                    portal_provider: null,
+                });
+            } else {
+                await this.addCaseAgency(row.id, {
+                    agency_id: matched.id,
+                    agency_name: row.case_agency_name || matched.name,
+                    agency_email: row.case_agency_email || null,
+                    portal_url: row.case_portal_url || null,
+                    is_primary: true,
+                    added_source: 'canonical_backfill',
+                    status: 'active',
+                    notes: 'Seeded canonical agency linkage during backfill.',
+                });
+            }
+        }
+
+        return {
+            scanned: candidateResult.rows.length,
+            matched: touched.length,
+            updated: dryRun ? 0 : touched.length,
+            dryRun,
+            cases: touched,
+        };
     }
 
     async getThreadByCaseAgencyId(caseAgencyId) {
