@@ -271,4 +271,19 @@ test('APPROVED proposal → not DECISION_REQUIRED', () => {
     assert(result === REVIEW_STATES.WAITING_AGENCY, `Expected WAITING_AGENCY, got ${result}`);
 });
 
+test('AGENT_RUN_FAILED without a proposal → IDLE', () => {
+    const result = resolveReviewState({
+        caseData: {
+            id: 25,
+            status: 'needs_human_review',
+            requires_human: true,
+            pause_reason: 'AGENT_RUN_FAILED',
+            substatus: 'Agent run failed: error: sorry, too many clients already',
+        },
+        activeProposal: null,
+        activeRun: null,
+    });
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
+});
+
 console.log('\nAll tests completed.');

@@ -681,6 +681,7 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
         caseStatus === 'needs_contact_info' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
         pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
+        pauseReason === 'AGENT_RUN_FAILED' ||
         pauseReason === 'IMPORT_REVIEW' ||
         /placeholder notion page|imported case/i.test(substatus) ||
         (
@@ -728,6 +729,7 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
         caseStatus === 'needs_contact_info' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
         pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
+        pauseReason === 'AGENT_RUN_FAILED' ||
         pauseReason === 'IMPORT_REVIEW' ||
         /placeholder notion page|imported case/i.test(substatus) ||
         (
