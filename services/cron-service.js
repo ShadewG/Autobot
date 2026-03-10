@@ -134,7 +134,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Health check / keep-alive every 5 minutes
-        this.jobs.healthCheck = new CronJob('*/5 * * * *', async () => {
+        // Staggered to minute 2,7,12,... to avoid pile-up with Notion sync
+        this.jobs.healthCheck = new CronJob('2,7,12,17,22,27,32,37,42,47,52,57 * * * *', async () => {
             try {
                 const health = await db.healthCheck();
                 if (!health.healthy) {
@@ -150,7 +151,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Operational alerting: check key failure/supersede counters in a rolling 1h window.
-        this.jobs.operationalAlerts = new CronJob('*/15 * * * *', async () => {
+        // Staggered to minute 3,18,33,48 to avoid pile-up with other */5 and */15 jobs
+        this.jobs.operationalAlerts = new CronJob('3,18,33,48 * * * *', async () => {
             try {
                 await this.runWithoutOverlap('operational_alert_check', () => this.checkOperationalAlerts());
             } catch (error) {
@@ -215,7 +217,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Check for stuck responses every 30 minutes
-        this.jobs.stuckResponseCheck = new CronJob('*/30 * * * *', async () => {
+        // Staggered to minute 9 and 39 to avoid pile-up
+        this.jobs.stuckResponseCheck = new CronJob('9,39 * * * *', async () => {
             try {
                 console.log('Checking for stuck responses...');
                 const result = await stuckResponseDetector.detectAndFlagStuckResponses();
@@ -229,7 +232,8 @@ class CronService {
 
         // Safety net: dispatch any orphaned ready_to_send cases every 10 minutes via Run Engine
         // Catches cases that entered ready_to_send before reactive dispatch, or where dispatch failed
-        this.jobs.readyToSendSweep = new CronJob('*/10 * * * *', async () => {
+        // Staggered to 2,12,22,32,42,52 to avoid pile-up with */5 jobs
+        this.jobs.readyToSendSweep = new CronJob('2,12,22,32,42,52 * * * *', async () => {
             try {
                 const readyCases = await db.getCasesByStatus('ready_to_send');
                 if (readyCases.length === 0) return;
@@ -286,18 +290,22 @@ class CronService {
 
         // Deadline escalation: sweep overdue cases continuously, research contacts,
         // and route to phone/proposals/human review.
-        this.jobs.deadlineEscalationSweep = new CronJob('*/15 * * * *', async () => {
+        // Staggered to minute 7,22,37,52 to avoid pile-up with other periodic jobs
+        this.jobs.deadlineEscalationSweep = new CronJob('7,22,37,52 * * * *', async () => {
             try {
                 console.log('Running deadline escalation sweep...');
-                const result = await this.sweepOverdueCases();
-                console.log(`Deadline escalation sweep: ${result.phoneCalls} phone calls, ${result.humanReviews} human reviews, ${result.contactUpdates} contact updates, ${result.skipped} skipped`);
+                const result = await this.runWithoutOverlap('deadline_escalation_sweep', () => this.sweepOverdueCases());
+                if (result) {
+                    console.log(`Deadline escalation sweep: ${result.phoneCalls} phone calls, ${result.humanReviews} human reviews, ${result.contactUpdates} contact updates, ${result.skipped} skipped`);
+                }
             } catch (error) {
                 console.error('Error in deadline escalation sweep cron:', error);
             }
         }, null, true, 'America/New_York');
 
         // Stuck portal & orphaned review sweep (every 30 minutes)
-        this.jobs.stuckPortalSweep = new CronJob('*/30 * * * *', async () => {
+        // Staggered to minute 12 and 42 to avoid pile-up
+        this.jobs.stuckPortalSweep = new CronJob('12,42 * * * *', async () => {
             try {
                 console.log('Running stuck portal & orphaned review sweep...');
                 const result = await this.sweepStuckPortalCases();
@@ -308,7 +316,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Stale run reaper: clean up stuck agent_runs every 15 minutes
-        this.jobs.staleRunReaper = new CronJob('*/15 * * * *', async () => {
+        // Staggered to minute 5,20,35,50 to avoid pile-up
+        this.jobs.staleRunReaper = new CronJob('5,20,35,50 * * * *', async () => {
             try {
                 // Mark runs stuck in created/queued/running for >2 hours as failed
                 // NOTE: 'waiting' is excluded — it's the normal state while paused for human input
@@ -350,7 +359,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Loop breaker: detect cases with excessive failed runs (circuit breaker)
-        this.jobs.loopBreaker = new CronJob('*/30 * * * *', async () => {
+        // Staggered to minute 17 and 47 to avoid pile-up
+        this.jobs.loopBreaker = new CronJob('17,47 * * * *', async () => {
             try {
                 // Find cases with 10+ failed runs in the last 24 hours
                 const result = await db.query(`
@@ -390,7 +400,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Proposal recovery watchdog: unstick decisions that were accepted but never dispatched.
-        this.jobs.proposalDispatchRecovery = new CronJob('*/5 * * * *', async () => {
+        // Staggered to minute 1,6,11,... to avoid pile-up with other */5 jobs
+        this.jobs.proposalDispatchRecovery = new CronJob('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', async () => {
             try {
                 const result = await db.query(`
                     UPDATE proposals p
@@ -424,7 +435,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Trigger dispatch recovery: re-dispatch runs stuck in queued + pending-version/no-machine states.
-        this.jobs.triggerDispatchRecovery = new CronJob('*/5 * * * *', async () => {
+        // Staggered to minute 3,8,13,... to avoid pile-up
+        this.jobs.triggerDispatchRecovery = new CronJob('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', async () => {
             try {
                 const result = await triggerDispatch.recoverStaleQueuedRuns({
                     maxAgeMinutes: 6,
@@ -445,7 +457,8 @@ class CronService {
 
         // Orphaned human-review recovery: case says "decision required" but has no actionable proposal.
         // Auto-reprocesses from latest inbound up to 2 times/day before leaving it for human triage.
-        this.jobs.orphanReviewRecovery = new CronJob('*/5 * * * *', async () => {
+        // Staggered to minute 4,9,14,... to avoid pile-up
+        this.jobs.orphanReviewRecovery = new CronJob('4,9,14,19,24,29,34,39,44,49,54,59 * * * *', async () => {
             try {
                 const candidates = await db.query(`
                     SELECT c.id AS case_id, c.case_name, c.autopilot_mode,
@@ -536,10 +549,11 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        // Portal submission dispatch (every 2 minutes)
+        // Portal submission dispatch (every 3 minutes)
         // submit-portal is dispatched from Railway (top-level) instead of from within
         // Trigger.dev tasks to avoid child-task PENDING_VERSION during deploys.
-        this.jobs.portalDispatch = new CronJob('*/2 * * * *', async () => {
+        // Runs at minute 1,4,7,10,... to avoid pile-up with */5 jobs
+        this.jobs.portalDispatch = new CronJob('1-59/3 * * * *', async () => {
             try {
                 const dispatched = await this.dispatchPendingPortalTasks();
                 if (dispatched > 0) {
@@ -565,20 +579,20 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        console.log('✓ Notion sync: Every 5 minutes');
+        console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
         console.log('✓ Cleanup: Daily at midnight');
-        console.log('✓ Health check: Every 5 minutes');
-        console.log('✓ Operational alerts: Every 15 minutes');
-        console.log('✓ Stuck response check: Every 30 minutes');
+        console.log('✓ Health check: Every 5 min (:00,:05,:10,...)');
+        console.log('✓ Operational alerts: ~15 min (:03,:18,:33,:48)');
+        console.log('✓ Stuck response check: ~30 min (:09,:39)');
         console.log('✓ Agency sync: Every hour + on startup');
-        console.log('✓ Deadline escalation sweep: Every 15 minutes');
-        console.log('✓ Stuck portal sweep: Every 30 minutes');
-        console.log('✓ Stale run reaper: Every 15 minutes');
-        console.log('✓ Loop breaker: Every 30 minutes');
-        console.log('✓ Proposal dispatch recovery: Every 5 minutes');
-        console.log('✓ Trigger dispatch recovery: Every 5 minutes');
-        console.log('✓ Orphan review recovery: Every 5 minutes');
-        console.log('✓ Portal submission dispatch: Every 2 minutes');
+        console.log('✓ Deadline escalation sweep: ~15 min (:07,:22,:37,:52)');
+        console.log('✓ Stuck portal sweep: ~30 min (:12,:42)');
+        console.log('✓ Stale run reaper: ~15 min (:05,:20,:35,:50)');
+        console.log('✓ Loop breaker: ~30 min (:17,:47)');
+        console.log('✓ Proposal dispatch recovery: ~5 min (:01,:06,:11,...)');
+        console.log('✓ Trigger dispatch recovery: ~5 min (:03,:08,:13,...)');
+        console.log('✓ Orphan review recovery: ~5 min (:04,:09,:14,...)');
+        console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
         console.log('✓ Portal status monitoring: Every 6 hours');
     }
 
@@ -1314,18 +1328,29 @@ class CronService {
         try {
             const feeStranded = await db.query(`
                 SELECT DISTINCT c.id, c.case_name, c.agency_email,
-                    ra.intent, ra.extracted_fee_amount,
+                    latest_ra.intent, latest_ra.extracted_fee_amount,
+                    latest_ra.requires_action,
+                    latest_ra.suggested_action,
                     p.action_type as dismissed_action
                 FROM cases c
-                JOIN messages m ON m.case_id = c.id AND m.direction = 'inbound'
-                JOIN response_analysis ra ON ra.message_id = m.id
-                    AND ra.intent IN ('FEE_QUOTE', 'PARTIAL_DELIVERY')
-                    AND ra.created_at > NOW() - INTERVAL '7 days'
+                JOIN LATERAL (
+                    SELECT ra.*
+                    FROM messages m
+                    JOIN response_analysis ra ON ra.message_id = m.id
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(ra.created_at, m.received_at, m.created_at) DESC, ra.id DESC
+                    LIMIT 1
+                ) latest_ra ON TRUE
                 LEFT JOIN proposals dp ON dp.case_id = c.id
                     AND dp.action_type IN ('ACCEPT_FEE', 'NEGOTIATE_FEE', 'DECLINE_FEE', 'SEND_FEE_WAIVER_REQUEST')
                     AND dp.status = 'DISMISSED'
                     AND dp.updated_at > NOW() - INTERVAL '7 days'
                 WHERE c.status NOT IN ('completed', 'cancelled', 'closed')
+                  AND latest_ra.intent IN ('FEE_QUOTE', 'PARTIAL_DELIVERY')
+                  AND latest_ra.created_at > NOW() - INTERVAL '7 days'
+                  AND COALESCE(latest_ra.requires_action, false) = true
+                  AND COALESCE(NULLIF(UPPER(TRIM(latest_ra.suggested_action)), ''), 'WAIT') NOT IN ('WAIT', 'NONE', 'MONITOR')
                   AND NOT EXISTS (
                     SELECT 1 FROM proposals p2
                     WHERE p2.case_id = c.id

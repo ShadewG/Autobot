@@ -56,6 +56,7 @@ class DatabaseService {
             allowExitOnIdle: process.env.NODE_ENV === 'production' ? false : true,
         };
         this.pool = this._createPool();
+        this._lastPoolResetAt = 0; // Timestamp of last pool reset (debounce guard)
     }
 
     _createPool() {
@@ -95,7 +96,9 @@ class DatabaseService {
         const message = String(error?.message || '').toLowerCase();
 
         if (code === '53300' || message.includes('too many clients already')) {
-            return 1000 * attempt;
+            // Aggressive backoff for connection exhaustion — give the server time
+            // to free connections before we retry.
+            return 2000 * attempt;
         }
 
         if (
@@ -108,15 +111,38 @@ class DatabaseService {
         return 150 * attempt;
     }
 
+    /**
+     * Returns true if the error is a server-side connection limit error (53300)
+     * where resetting our pool would be counterproductive — the server is overloaded,
+     * so creating new connections would make things worse.
+     */
+    _isTooManyClientsError(error) {
+        const code = String(error?.code || '').toUpperCase();
+        const message = String(error?.message || '').toLowerCase();
+        return code === '53300' || message.includes('too many clients already');
+    }
+
     async _resetPool() {
+        // Debounce: don't reset the pool more than once per 5 seconds.
+        // When multiple concurrent queries all fail at the same time (e.g., during
+        // a connection burst), each retry would call _resetPool(), each creating a
+        // brand new pool that opens fresh connections — cascading the exhaustion.
+        const now = Date.now();
+        if (now - this._lastPoolResetAt < 5000) {
+            return;
+        }
+        this._lastPoolResetAt = now;
+
         const previousPool = this.pool;
         this.pool = this._createPool();
         if (previousPool) {
-            try {
-                await previousPool.end();
-            } catch (_) {
+            // Drain the old pool in the background instead of awaiting .end()
+            // synchronously. This prevents blocking callers while in-flight queries
+            // on the old pool finish, and avoids the scenario where .end() hangs
+            // because connections are still checked out.
+            previousPool.end().catch(() => {
                 // Ignore teardown failures while replacing a poisoned pool.
-            }
+            });
         }
     }
 
@@ -206,7 +232,13 @@ class DatabaseService {
                     throw error;
                 }
 
-                await this._resetPool();
+                // For "too many clients" (53300): do NOT reset the pool.
+                // The server is at its connection limit — creating a new pool
+                // would open more connections and make the problem worse.
+                // Just back off and retry with the existing pool.
+                if (!this._isTooManyClientsError(error)) {
+                    await this._resetPool();
+                }
                 const backoffMs = this._getRetryBackoffMs(error, attempt);
                 await new Promise((resolve) => setTimeout(resolve, backoffMs));
             }
