@@ -6,7 +6,7 @@ const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { getCanonicalMessageText } = require('../../lib/message-normalization');
 const { resolveReviewState } = require('../../lib/resolve-review-state');
-const { normalizePortalUrl, isSupportedPortalUrl } = require('../../utils/portal-utils');
+const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const {
     normalizePortalTimeoutSubstatus,
     deriveDisplayState,
@@ -55,12 +55,24 @@ function hasMissingImportDeliveryPath(caseData) {
     );
     const agencyEmail = String(caseData?.agency_email || '').trim().toLowerCase();
     const portalUrl = normalizePortalUrl(caseData?.portal_url);
-    const hasAnyRealDeliveryPath = Boolean(portalUrl || (agencyEmail && !isPlaceholderAgencyEmail(agencyEmail)));
+    const portalProvider = caseData?.portal_provider || detectPortalProviderByUrl(portalUrl);
+    const hasSupportedPortal = Boolean(
+        portalUrl &&
+        isSupportedPortalUrl(portalUrl) &&
+        (!warningTypes.has('NO_MX_RECORD') || portalProvider)
+    );
+    const hasReachableEmail = Boolean(
+        agencyEmail &&
+        !isPlaceholderAgencyEmail(agencyEmail) &&
+        !warningTypes.has('NO_MX_RECORD')
+    );
+    const hasAnyRealDeliveryPath = Boolean(hasSupportedPortal || hasReachableEmail);
 
     return Boolean(
         !hasAnyRealDeliveryPath &&
         (
             isPlaceholderAgencyEmail(agencyEmail) ||
+            warningTypes.has('NO_MX_RECORD') ||
             warningTypes.has('AGENCY_NOT_IN_DIRECTORY') ||
             warningTypes.has('MISSING_DELIVERY_PATH') ||
             warningTypes.has('MISSING_EMAIL')

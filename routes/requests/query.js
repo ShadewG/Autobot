@@ -248,8 +248,13 @@ function hasImportReviewSignals({ importWarnings, agencies = [], casePauseReason
 
 function hasImportSafetyContext({ notionPageId, importWarnings, agencies = [], casePauseReason, caseSubstatus }) {
     return Boolean(
+        notionPageId ||
         hasImportReviewSignals({ importWarnings, agencies, casePauseReason, caseSubstatus })
     );
+}
+
+function hasImportSafetyBlock(importSafety, importSafetyContext) {
+    return Boolean(importSafety?.shouldBlockAutoDispatch && importSafetyContext);
 }
 
 function stripTrailingStateLabel(name, state) {
@@ -605,7 +610,8 @@ router.get('/', async (req, res) => {
                     casePauseReason: row.pause_reason,
                     caseSubstatus: row.substatus,
                 });
-                const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && importSafetyContext && (hasImportReviewSignals({
+                const importSafetyBlocked = hasImportSafetyBlock(importSafety, importSafetyContext);
+                const suppressImportBlockedAgencyDisplay = importSafetyBlocked && (hasImportReviewSignals({
                     importWarnings: row.import_warnings,
                     agencies: [displayRow],
                     casePauseReason: row.pause_reason,
@@ -637,7 +643,7 @@ router.get('/', async (req, res) => {
                 );
                 return applyManualPasteMismatchListOverride(toRequestListItem({
                     ...displayRow,
-                    ...(importSafety.shouldBlockAutoDispatch && importSafetyContext
+                    ...(importSafetyBlocked
                         ? {
                             status: 'needs_human_review',
                             pause_reason: 'IMPORT_REVIEW',
@@ -757,12 +763,13 @@ router.get('/', async (req, res) => {
                 agencyEmail: override.agency_email || row.agency_email,
                 portalUrl: override.portal_url || row.portal_url,
             });
-            const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && hasImportReviewSignals({
+            const importSafetyBlocked = hasImportSafetyBlock(importSafety, hasImportReviewSignals({
                 importWarnings: row.import_warnings,
                 agencies: [override],
                 casePauseReason: row.pause_reason,
                 caseSubstatus: row.substatus,
-            });
+            }));
+            const suppressImportBlockedAgencyDisplay = importSafetyBlocked;
             const importBlockedAgencyDisplay = buildImportBlockedAgencyDisplay({
                 metadataAgencyHint,
                 narrativeAgencyName,
@@ -1726,19 +1733,18 @@ router.get('/:id/workspace', async (req, res) => {
             casePauseReason: caseData.pause_reason,
             caseSubstatus: caseData.substatus,
         });
+        const importSafetyBlocked = hasImportSafetyBlock(importSafety, importSafetyContext);
         const importSafetyBlockedProposal = Boolean(
-            importSafety.shouldBlockAutoDispatch &&
-            importSafetyContext &&
+            importSafetyBlocked &&
             pendingProposal &&
             ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(pendingProposal.action_type || '').toUpperCase())
         );
         const importSafetyBlockedCase = Boolean(
-            importSafety.shouldBlockAutoDispatch &&
-            importSafetyContext &&
+            importSafetyBlocked &&
             !pendingProposal &&
             !activeRun
         );
-        const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && (hasImportReviewSignals({
+        const suppressImportBlockedAgencyDisplay = importSafetyBlocked && (hasImportReviewSignals({
             importWarnings: caseData.import_warnings,
             agencies: sortedCaseAgencies,
             casePauseReason: caseData.pause_reason,
@@ -1751,7 +1757,8 @@ router.get('/:id/workspace', async (req, res) => {
                 caseState: caseData.state,
             })
             : null;
-        if (importSafetyBlockedProposal || importSafetyBlockedCase) {
+        const blockedImportReview = importSafetyBlockedProposal || importSafetyBlockedCase;
+        if (blockedImportReview) {
             nextActionProposal = null;
             pendingProposal = null;
             pendingProposals = [];
@@ -2031,6 +2038,15 @@ router.get('/:id/workspace', async (req, res) => {
             if (!requestDetail.substatus || /agency_research_complete|research_followup_proposed/i.test(String(requestDetail.substatus))) {
                 requestDetail.substatus = 'Imported case is missing a real delivery path. Add the correct agency email or portal before sending.';
             }
+            requestDetail.pause_reason = 'IMPORT_REVIEW';
+            requestDetail.review_state = 'IDLE';
+            requestDetail.control_state = 'BLOCKED';
+            requestDetail.control_mismatches = [];
+            effectiveRequiresHuman = true;
+        }
+        if (blockedImportReview) {
+            requestDetail.status = 'NEEDS_HUMAN_REVIEW';
+            requestDetail.substatus = importSafetyReasonDetail;
             requestDetail.pause_reason = 'IMPORT_REVIEW';
             requestDetail.review_state = 'IDLE';
             requestDetail.control_state = 'BLOCKED';

@@ -3,7 +3,8 @@ const router = express.Router();
 const {
     db,
     normalizeProposalReasoning,
-    extractAttachmentInsights
+    extractAttachmentInsights,
+    hasMissingImportDeliveryPath
 } = require('./_helpers');
 const {
     HUMAN_REVIEW_PROPOSAL_STATUSES_SQL,
@@ -1046,6 +1047,22 @@ router.get('/live-overview', async (req, res) => {
             const research_summary = buildReadableResearchSummary(row.contact_research_notes);
             const phone_call_plan = extractPhoneCallPlan(row.contact_research_notes, row);
             const primaryCaseAgency = primaryHumanReviewAgencyByCase.get(Number(row.id)) || null;
+            const importSafety = evaluateImportAutoDispatchSafety({
+                caseName: row.case_name,
+                subjectName: row.subject_name,
+                agencyName: primaryCaseAgency?.agency_name || row.agency_name,
+                state: row.state,
+                additionalDetails: row.additional_details,
+                importWarnings: row.import_warnings,
+                agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
+                portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+            });
+            const importSafetyBlocked = Boolean(importSafety.shouldBlockAutoDispatch && importSafety.reasonCode);
+            const missingImportDeliveryPath = hasMissingImportDeliveryPath({
+                agency_email: primaryCaseAgency?.agency_email || row.agency_email,
+                portal_url: primaryCaseAgency?.portal_url || row.portal_url,
+                import_warnings: row.import_warnings,
+            });
             const researchSuggestedAgency = (
                 row.pause_reason === 'RESEARCH_HANDOFF'
                 || String(row.substatus || '').includes('agency_research')
@@ -1074,9 +1091,10 @@ router.get('/live-overview', async (req, res) => {
             const truth = buildCaseTruth({
                 caseData: {
                     id: row.id,
-                    status: row.status,
+                    status: (importSafetyBlocked || missingImportDeliveryPath) ? 'needs_human_review' : row.status,
                     requires_human: true,
-                    pause_reason: row.pause_reason,
+                    pause_reason: (importSafetyBlocked || missingImportDeliveryPath) ? 'IMPORT_REVIEW' : row.pause_reason,
+                    import_warnings: row.import_warnings,
                 },
                 activeProposal: null,
                 activeRun: null,
