@@ -16,6 +16,8 @@ const {
     isPlaceholderAgencyEmail,
     evaluateImportAutoDispatchSafety,
     shouldSuppressPlaceholderAgencyDisplay,
+    sanitizeStaleResearchHandoffDraft,
+    sanitizeStaleResearchHandoffReasoning,
 } = require('../../utils/request-normalization');
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 
@@ -1640,6 +1642,13 @@ router.get('/:id/workspace', async (req, res) => {
                     ),
             }
             : null;
+        if (pendingProposal && String(pendingProposal.action_type || '').toUpperCase() === 'ESCALATE') {
+            pendingProposal = {
+                ...pendingProposal,
+                draft_body_text: sanitizeStaleResearchHandoffDraft(pendingProposal.draft_body_text),
+                reasoning: sanitizeStaleResearchHandoffReasoning(pendingProposal.reasoning),
+            };
+        }
         const contradictoryNoResponseProposal = isContradictoryNoResponseProposal(pendingProposal);
         if (!nextActionProposal && pendingProposal) {
             nextActionProposal = {

@@ -140,6 +140,61 @@ function shouldSuppressPlaceholderAgencyDisplay({ contactResearchNotes, agencyEm
   );
 }
 
+const SYNTHETIC_CHANNEL_PATTERNS = [
+  /test@agency\.gov/i,
+  /placeholder\.invalid/i,
+  /localhost qa/i,
+  /synthetic qa/i,
+  /scenario agency/i,
+];
+
+function textContainsSyntheticChannel(text = '') {
+  const value = String(text || '');
+  return SYNTHETIC_CHANNEL_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function sanitizeStaleResearchHandoffDraft(draftText) {
+  const original = String(draftText || '').trim();
+  if (!original || !textContainsSyntheticChannel(original)) {
+    return original || null;
+  }
+
+  let sanitized = original;
+
+  sanitized = sanitized.replace(
+    /Research completed but no new channels were found\.\s*Existing channels:\s*[^.]+?\.\s*Review and decide whether to retry via existing channels or try a different approach\./i,
+    'Research completed but no verified existing channels were found. Review and decide whether to retry research or try a different approach.'
+  );
+
+  sanitized = sanitized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (/^Existing channels:/i.test(line) && textContainsSyntheticChannel(line)) return false;
+      return !textContainsSyntheticChannel(line);
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (!sanitized) {
+    return 'Research completed but no verified existing channels were found. Review and decide whether to retry research or try a different approach.';
+  }
+
+  return sanitized;
+}
+
+function sanitizeStaleResearchHandoffReasoning(reasoning) {
+  if (!Array.isArray(reasoning)) return reasoning;
+  const filtered = reasoning
+    .map((line) => String(line || '').trim())
+    .filter(Boolean)
+    .filter((line) => !textContainsSyntheticChannel(line));
+
+  return filtered.length > 0 ? filtered : ['Research completed but existing synthetic channels were ignored.'];
+}
+
 function cleanMetadataLine(value) {
     return String(value || '')
         .replace(/\u200c/g, ' ')
@@ -226,11 +281,19 @@ function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
   const lines = String(additionalDetails || '').split(/\r?\n/);
   for (const rawLine of lines) {
     const line = String(rawLine || '').trim();
+    const bulletAgencyMatch = line.match(/^[-*]\s*\*{0,2}([^:\n\r*]+?(?:Police Department|Sheriff(?:'s)? Office|Police Services)[^:\n\r*]*)\*{0,2}\s*:/i);
+    if (bulletAgencyMatch?.[1]) {
+      const candidate = cleanMetadataLine(bulletAgencyMatch[1]);
+      if (candidate && !normalizeNotionReferenceId(candidate) && !isNotionReferenceList(candidate) && !isGenericAgencyLabel(candidate)) {
+        return candidate;
+      }
+    }
+
     if (!/^(?:\*\*)?Police Department:?/i.test(line)) continue;
 
     const candidate = line
-      .replace(/^(?:\*\*)?Police Department:?\s*/i, '')
-      .replace(/\*\*$/g, '')
+        .replace(/^(?:\*\*)?Police Department:?\s*/i, '')
+        .replace(/\*\*$/g, '')
       .trim();
 
     if (!candidate || normalizeNotionReferenceId(candidate) || isNotionReferenceList(candidate)) {
@@ -436,4 +499,7 @@ module.exports = {
   detectAgencyStateMismatch,
   evaluateImportAutoDispatchSafety,
   isNotionReferenceList,
+  textContainsSyntheticChannel,
+  sanitizeStaleResearchHandoffDraft,
+  sanitizeStaleResearchHandoffReasoning,
 };

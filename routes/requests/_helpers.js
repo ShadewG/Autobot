@@ -658,6 +658,7 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
     const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
         caseStatus === 'needs_phone_call' ||
+        caseStatus === 'needs_contact_info' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
         pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
         pauseReason === 'IMPORT_REVIEW' ||
@@ -704,6 +705,7 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
     const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
         caseStatus === 'needs_phone_call' ||
+        caseStatus === 'needs_contact_info' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
         pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
         pauseReason === 'IMPORT_REVIEW' ||

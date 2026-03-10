@@ -14,6 +14,8 @@ const {
     extractResearchSuggestedAgency,
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
+    sanitizeStaleResearchHandoffDraft,
+    sanitizeStaleResearchHandoffReasoning,
 } = require('../../utils/request-normalization');
 const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 
@@ -744,6 +746,14 @@ router.get('/live-overview', async (req, res) => {
         }
 
         const pendingApprovalsWithAttachments = pendingApprovalRows.map((row) => {
+            const normalizedActionType = String(row.action_type || '').toUpperCase();
+            const sanitizedRow = normalizedActionType === 'ESCALATE'
+                ? {
+                    ...row,
+                    draft_body_text: sanitizeStaleResearchHandoffDraft(row.draft_body_text),
+                    reasoning: sanitizeStaleResearchHandoffReasoning(row.reasoning),
+                }
+                : row;
             const messageId = Number(row.trigger_message_id);
             const messageAttachments = attachmentsByMessage.get(messageId) || [];
             const caseAttachments = caseRelevantAttachmentsByCase.get(Number(row.case_id)) || [];
@@ -768,30 +778,30 @@ router.get('/live-overview', async (req, res) => {
                 return null;
             }
             if (
-                CONTRADICTORY_NO_RESPONSE_ACTIONS.has(String(row.action_type || '').toUpperCase()) &&
-                proposalSignalsNoResponseDraft(row.draft_body_text)
+                CONTRADICTORY_NO_RESPONSE_ACTIONS.has(normalizedActionType) &&
+                proposalSignalsNoResponseDraft(sanitizedRow.draft_body_text)
             ) {
                 return null;
             }
-            const researchSuggestedAgency = row.action_type === 'RESEARCH_AGENCY'
-                ? extractResearchSuggestedAgency(row.contact_research_notes)
+            const researchSuggestedAgency = normalizedActionType === 'RESEARCH_AGENCY'
+                ? extractResearchSuggestedAgency(sanitizedRow.contact_research_notes)
                 : null;
             const suppressPlaceholderDisplay = shouldSuppressPlaceholderAgencyDisplay({
-                contactResearchNotes: row.contact_research_notes,
-                agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
-                portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+                contactResearchNotes: sanitizedRow.contact_research_notes,
+                agencyEmail: primaryCaseAgency?.agency_email || sanitizedRow.agency_email,
+                portalUrl: primaryCaseAgency?.portal_url || sanitizedRow.portal_url,
                 addedSource: primaryCaseAgency?.added_source || 'case_row_backfill',
             });
             const truth = buildCaseTruth({
                 caseData: {
-                    id: row.case_id,
-                    status: row.case_status,
+                    id: sanitizedRow.case_id,
+                    status: sanitizedRow.case_status,
                     requires_human: true,
-                    pause_reason: row.case_pause_reason,
+                    pause_reason: sanitizedRow.case_pause_reason,
                 },
                 activeProposal: {
-                    id: row.id,
-                    status: row.proposal_status,
+                    id: sanitizedRow.id,
+                    status: sanitizedRow.proposal_status,
                 },
                 activeRun: null,
             });
@@ -807,17 +817,17 @@ router.get('/live-overview', async (req, res) => {
             const last_inbound_subject = row.last_inbound_subject || triggerInbound?.subject || null;
             const last_inbound_from_email = row.last_inbound_from_email || triggerInbound?.from_email || null;
             return {
-                ...row,
+                ...sanitizedRow,
                 agency_name: suppressPlaceholderDisplay
                     ? 'Unknown agency'
-                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
-                case_substatus: normalizePortalTimeoutSubstatus(row.case_substatus),
+                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name),
+                case_substatus: normalizePortalTimeoutSubstatus(sanitizedRow.case_substatus),
                 inbound_count,
                 last_inbound_preview,
                 last_inbound_subject,
                 last_inbound_from_email,
                 review_state: truth.review_state,
-                reasoning: normalizeProposalReasoning(row, {
+                reasoning: normalizeProposalReasoning(sanitizedRow, {
                     reviewAction: reviewCtx.review_action,
                     reviewInstruction: reviewCtx.review_instruction,
                 }),
@@ -1052,7 +1062,7 @@ router.get('/live-overview', async (req, res) => {
                 inbound_24h: parseInt(summaryResult.rows[0]?.inbound_24h || 0, 10),
                 unmatched_inbound_total: parseInt(summaryResult.rows[0]?.unmatched_inbound_total || 0, 10),
                 unprocessed_inbound_total: parseInt(summaryResult.rows[0]?.unprocessed_inbound_total || 0, 10),
-                pending_approvals_total: pendingApprovalsResult.rows.length,
+                pending_approvals_total: pendingApprovalsWithAttachments.length,
                 active_runs_total: activeRunsResult.rows.length,
                 stuck_runs_total: stuckRunsResult.rows.length,
                 human_review_total: humanReviewResult.rows.length,

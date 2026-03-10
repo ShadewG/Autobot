@@ -303,4 +303,40 @@ describe('Review and control state regressions', function () {
     assert.strictEqual(listItem.pause_reason, 'DEADLINE_PHONE_CALL');
     assert.strictEqual(listItem.control_state, 'BLOCKED');
   });
+
+  it('treats needs_contact_info without a pending proposal as blocked manual work', function () {
+    const caseData = {
+      id: 26672,
+      status: 'needs_contact_info',
+      requires_human: true,
+      pause_reason: 'UNSPECIFIED',
+      substatus: 'Need a real department mailbox or portal before sending',
+    };
+
+    const reviewState = resolveReviewState({
+      caseData,
+      activeProposal: null,
+      activeRun: null,
+    });
+
+    const controlState = resolveControlState({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    const mismatches = detectControlMismatches({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    assert.strictEqual(reviewState, 'IDLE');
+    assert.strictEqual(controlState, 'BLOCKED');
+    assert.deepStrictEqual(mismatches, []);
+  });
 });

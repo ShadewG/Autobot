@@ -142,4 +142,49 @@ describe('Request proposals route regressions', function () {
     assert.strictEqual(response.body.count, 0);
     assert.deepStrictEqual(response.body.proposals, []);
   });
+
+  it('sanitizes stale research handoff drafts that reference synthetic channels', async function () {
+    db.getCaseById = async () => ({
+      id: 25525,
+      status: 'needs_human_review',
+    });
+    db.getPendingProposalsByCaseId = async () => ([
+      {
+        id: 1777,
+        proposal_key: '25525:research:ESCALATE:0',
+        action_type: 'ESCALATE',
+        status: 'PENDING_APPROVAL',
+        draft_subject: 'Manual handoff required',
+        draft_body_text: 'Research completed but no new channels were found. Existing channels: email: test@agency.gov, portal: https://sanfrancisco.nextrequest.com. Review and decide whether to retry via existing channels or try a different approach.',
+        reasoning: [
+          'Research completed but no new channels were found.',
+          'Existing channels: email: test@agency.gov, portal: https://sanfrancisco.nextrequest.com',
+        ],
+        warnings: [],
+        risk_flags: [],
+        can_auto_execute: false,
+        requires_human: true,
+        adjustment_count: 0,
+        created_at: '2026-03-10T12:37:25.000Z',
+      },
+    ]);
+    db.getThreadsByCaseId = async () => ([]);
+    db.getMessagesByThreadId = async () => ([]);
+
+    const app = express();
+    app.use('/api/requests', proposalsRouter);
+
+    const response = await supertest(app).get('/api/requests/25525/proposals');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.count, 1);
+    assert.strictEqual(
+      response.body.proposals[0].draft_preview,
+      'Research completed but no verified existing channels were found. Review and decide whether to retry research or try a different approach.'
+    );
+    assert.deepStrictEqual(
+      response.body.proposals[0].reasoning,
+      ['Research completed but no new channels were found.']
+    );
+  });
 });

@@ -5,6 +5,10 @@ const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
 const { buildHumanDecision } = proposalLifecycle;
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
+const {
+  sanitizeStaleResearchHandoffDraft,
+  sanitizeStaleResearchHandoffReasoning,
+} = require('../../utils/request-normalization');
 
 const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
     'SEND_INITIAL_REQUEST',
@@ -137,6 +141,15 @@ router.get('/:id/proposals', async (req, res) => {
             if (manualPasteMismatch?.mismatch) {
                 proposals = [];
             }
+            proposals = proposals.map((proposal) => (
+              String(proposal.action_type || '').toUpperCase() === 'ESCALATE'
+                ? {
+                    ...proposal,
+                    draft_body_text: sanitizeStaleResearchHandoffDraft(proposal.draft_body_text),
+                    reasoning: sanitizeStaleResearchHandoffReasoning(proposal.reasoning),
+                  }
+                : proposal
+            ));
             proposals = proposals.filter((proposal) => !isContradictoryNoResponseProposal(proposal));
         }
 
