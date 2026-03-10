@@ -72,7 +72,7 @@ describe('Legacy request actions bridge to proposals', function () {
         getCaseById: sinon.stub().resolves(null),
         getMessageById: sinon.stub().resolves(null),
         getLatestInboundMessage: sinon.stub().resolves(null),
-        createProposal: sinon.stub().resolves(null),
+        upsertProposal: sinon.stub().resolves(null),
         updateProposal: sinon.stub().resolves(null),
         query: sinon.stub().resolves({ rows: [] }),
         ...dbOverrides,
@@ -217,7 +217,7 @@ describe('Legacy request actions bridge to proposals', function () {
         id: 501,
         subject: 'Agency reply',
       }),
-      createProposal: sinon.stub().resolves({
+      upsertProposal: sinon.stub().resolves({
         id: 101,
         case_id: 25169,
         action_type: 'SEND_CLARIFICATION',
@@ -251,8 +251,8 @@ describe('Legacy request actions bridge to proposals', function () {
       assert.strictEqual(response.body.next_action_proposal.id, '101');
       assert.strictEqual(response.body.next_action_proposal.draft_content, 'Fresh body from AI');
       assert.strictEqual(helpersStub.db.getLatestInboundMessage.calledOnceWithExactly(25169), true);
-      assert.strictEqual(helpersStub.db.createProposal.calledOnce, true);
-      assert.strictEqual(helpersStub.db.createProposal.firstCall.args[0].actionType, 'SEND_CLARIFICATION');
+      assert.strictEqual(helpersStub.db.upsertProposal.calledOnce, true);
+      assert.strictEqual(helpersStub.db.upsertProposal.firstCall.args[0].actionType, 'SEND_CLARIFICATION');
       const wroteLegacyQueue = helpersStub.db.query.args.some(([sql]) => /INSERT INTO auto_reply_queue/i.test(String(sql)));
       assert.strictEqual(wroteLegacyQueue, false);
       assert.strictEqual(processProposalDecisionStub.called, false);
