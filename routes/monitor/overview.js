@@ -504,6 +504,7 @@ router.get('/live-overview', async (req, res) => {
                 c.case_name,
                 c.subject_name,
                 c.agency_name,
+                c.state,
                 c.status AS case_status,
                 c.substatus AS case_substatus,
                 c.portal_url,

@@ -134,13 +134,13 @@ test('needs_phone_call without proposal → IDLE manual handoff', () => {
     assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
 });
 
-test('needs_contact_info status → DECISION_REQUIRED', () => {
+test('needs_contact_info without proposal → IDLE manual handoff', () => {
     const result = resolveReviewState({
         caseData: { id: 13, status: 'needs_contact_info', requires_human: false },
         activeProposal: null,
         activeRun: null,
     });
-    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
 });
 
 test('PENDING_PORTAL proposal → DECISION_REQUIRED', () => {

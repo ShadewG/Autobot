@@ -2028,6 +2028,7 @@ router.get('/:id/workspace', async (req, res) => {
         const portalStatus = String(caseData.active_portal_task_status || '').toUpperCase();
         const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
         const isManualHandoffReview =
+            dbStatus === 'needs_contact_info' ||
             dbStatus === 'needs_phone_call' ||
             String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'RESEARCH_HANDOFF' ||
             String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'AGENCY_RESEARCH_COMPLETE' ||
