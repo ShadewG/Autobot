@@ -2,7 +2,10 @@ const assert = require('assert');
 
 const {
   extractMetadataAgencyHint,
+  extractMetadataCityHint,
+  extractAgencyNameFromAdditionalDetails,
   detectCaseMetadataAgencyMismatch,
+  detectAgencyCityMismatch,
   evaluateImportAutoDispatchSafety,
   isGenericAgencyLabel,
   isPlaceholderCaseTitle,
@@ -19,6 +22,18 @@ describe('request normalization helpers', function () {
     assert.deepStrictEqual(hint, {
       name: 'Gwinnett County Police Department, Georgia',
       state: 'GA',
+      source: 'additional_details',
+    });
+  });
+
+  it('extracts a city hint from additional details metadata', function () {
+    const hint = extractMetadataCityHint(`
+**Case Summary:** Example
+City : Princeton
+`);
+
+    assert.deepStrictEqual(hint, {
+      name: 'Princeton',
       source: 'additional_details',
     });
   });
@@ -50,6 +65,22 @@ describe('request normalization helpers', function () {
     });
 
     assert.strictEqual(mismatch, null);
+  });
+
+  it('detects a police-department city mismatch when metadata city conflicts with the routed department city', function () {
+    const mismatch = detectAgencyCityMismatch({
+      currentAgencyName: 'Westbrook Police Department',
+      additionalDetails: `
+**Case Summary:** Example
+City : Princeton
+`,
+    });
+
+    assert.deepStrictEqual(mismatch, {
+      currentAgencyName: 'Westbrook Police Department',
+      expectedCity: 'Princeton',
+      source: 'additional_details',
+    });
   });
 
   it('treats a generic agency label as a mismatch when metadata names the real department', function () {
@@ -141,6 +172,27 @@ describe('request normalization helpers', function () {
     });
   });
 
+  it('blocks auto-dispatch when metadata city conflicts with a routed police department', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Princeton Dad Sentenced To Life',
+      subjectName: 'Kevin Dixon',
+      agencyName: 'Westbrook Police Department',
+      state: 'TX',
+      agencyEmail: null,
+      portalUrl: 'https://www.princetontx.gov/296/Submit-an-Open-Records-Request',
+      additionalDetails: 'City : Princeton',
+      importWarnings: [],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, true);
+    assert.strictEqual(result.reasonCode, 'AGENCY_CITY_MISMATCH');
+    assert.deepStrictEqual(result.agencyCityMismatch, {
+      currentAgencyName: 'Westbrook Police Department',
+      expectedCity: 'Princeton',
+      source: 'additional_details',
+    });
+  });
+
   it('ignores raw Notion relation ids in metadata agency hints', function () {
     const hint = extractMetadataAgencyHint(`
 **Case Summary:** Example
@@ -148,5 +200,15 @@ describe('request normalization helpers', function () {
 `);
 
     assert.strictEqual(hint, null);
+  });
+
+  it('extracts a concrete agency from Police Departments Involved bullet lines', function () {
+    const agency = extractAgencyNameFromAdditionalDetails(`
+### Police Departments Involved
+- **Chattanooga Police Department:** Handled the initial investigation, crime scene processing, and arrest.
+- **Tennessee Bureau of Investigation:** Assisted with forensic analysis.
+`);
+
+    assert.strictEqual(agency, 'Chattanooga Police Department');
   });
 });

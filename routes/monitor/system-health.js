@@ -1,6 +1,55 @@
 const express = require('express');
 const router = express.Router();
 const { db } = require('./_helpers');
+const { resolveReviewState, resolveControlState } = require('../requests/_helpers');
+
+const STUCK_CASES_CANDIDATE_SQL = `
+    SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason, c.substatus, c.requires_human, c.updated_at
+    FROM cases c
+    WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+      AND NOT EXISTS (
+          SELECT 1 FROM proposals p WHERE p.case_id = c.id
+          AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
+          AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+          AND pcq.status IN ('pending', 'claimed')
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
+          AND pt.status IN ('PENDING', 'IN_PROGRESS')
+      )
+      AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+      AND COALESCE(c.agency_name, '') NOT LIKE 'Synthetic %'
+`;
+
+function normalizeStuckCases(rows = []) {
+    return rows
+        .map((row) => {
+            const reviewState = resolveReviewState({
+                caseData: row,
+                activeProposal: null,
+                activeRun: null,
+            });
+            const controlState = resolveControlState({
+                caseData: row,
+                reviewState,
+                pendingProposal: null,
+                activeRun: null,
+                activePortalTaskStatus: null,
+            });
+            return {
+                ...row,
+                review_state: reviewState,
+                control_state: controlState,
+            };
+        })
+        .filter((row) => row.review_state === 'DECISION_REQUIRED' || row.control_state === 'OUT_OF_SYNC');
+}
 
 /**
  * GET /api/monitor/system-health
@@ -9,7 +58,7 @@ const { db } = require('./_helpers');
 router.get('/system-health', async (req, res) => {
     try {
         const [
-            stuckCasesGrouped,
+            stuckCaseCandidates,
             orphanedRuns,
             staleProposals,
             overdueDeadlines,
@@ -19,31 +68,7 @@ router.get('/system-health', async (req, res) => {
             emptyNormalizedInbound,
             proposalMessageMismatches,
         ] = await Promise.all([
-            // Stuck cases grouped by status and pause_reason
-            db.query(`
-                SELECT c.status, COALESCE(c.pause_reason, 'none') AS pause_reason, COUNT(*)::int AS count
-                FROM cases c
-                WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
-                  AND NOT EXISTS (
-                      SELECT 1 FROM proposals p WHERE p.case_id = c.id
-                      AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
-                      AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
-                      AND pcq.status IN ('pending', 'claimed')
-                  )
-                  AND NOT EXISTS (
-                      SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
-                      AND pt.status IN ('PENDING', 'IN_PROGRESS')
-                  )
-                  AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
-                  AND c.agency_name NOT LIKE 'Synthetic %'
-                GROUP BY c.status, c.pause_reason
-            `),
+            db.query(STUCK_CASES_CANDIDATE_SQL),
 
             // Orphaned runs: running for > 2h
             db.query(`
@@ -130,7 +155,9 @@ router.get('/system-health', async (req, res) => {
             `),
         ]);
 
-        // Build stuck cases breakdown from grouped query
+        const normalizedStuckCases = normalizeStuckCases(stuckCaseCandidates.rows);
+
+        // Build stuck cases breakdown from normalized rows
         const stuckBreakdown = {
             needs_human_review: 0,
             needs_phone_call: 0,
@@ -138,16 +165,15 @@ router.get('/system-health', async (req, res) => {
             needs_human_fee_approval: 0,
             research_handoff: 0,
         };
-        let stuckTotal = 0;
-        for (const row of stuckCasesGrouped.rows) {
-            stuckTotal += row.count;
+        for (const row of normalizedStuckCases) {
             if (stuckBreakdown[row.status] !== undefined) {
-                stuckBreakdown[row.status] += row.count;
+                stuckBreakdown[row.status] += 1;
             }
             if (row.pause_reason === 'RESEARCH_HANDOFF') {
-                stuckBreakdown.research_handoff += row.count;
+                stuckBreakdown.research_handoff += 1;
             }
         }
+        const stuckTotal = normalizedStuckCases.length;
 
         const metrics = {
             stuck_cases: stuckTotal,
@@ -182,29 +208,7 @@ router.get('/system-health', async (req, res) => {
 router.get('/system-health/details', async (req, res) => {
     const { metric } = req.query;
     const queries = {
-        stuck_cases: `
-            SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason, c.updated_at
-            FROM cases c
-            WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
-              AND NOT EXISTS (
-                  SELECT 1 FROM proposals p WHERE p.case_id = c.id
-                  AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
-                  AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
-                  AND pcq.status IN ('pending', 'claimed')
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
-                  AND pt.status IN ('PENDING', 'IN_PROGRESS')
-              )
-              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
-              AND c.agency_name NOT LIKE 'Synthetic %'
-            ORDER BY c.updated_at DESC LIMIT 100`,
+        stuck_cases: `${STUCK_CASES_CANDIDATE_SQL} ORDER BY c.updated_at DESC LIMIT 100`,
         stale_proposals: `
             SELECT p.id as proposal_id, p.case_id, p.action_type, p.status as proposal_status, p.created_at,
                    c.agency_name, c.state, c.status as case_status, c.pause_reason
@@ -309,6 +313,10 @@ router.get('/system-health/details', async (req, res) => {
 
     try {
         const result = await db.query(queries[metric]);
+        if (metric === 'stuck_cases') {
+            const items = normalizeStuckCases(result.rows);
+            return res.json({ success: true, metric, count: items.length, items });
+        }
         res.json({ success: true, metric, count: result.rows.length, items: result.rows });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

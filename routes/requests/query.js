@@ -245,6 +245,13 @@ function hasImportReviewSignals({ importWarnings, agencies = [], casePauseReason
     );
 }
 
+function hasImportSafetyContext({ notionPageId, importWarnings, agencies = [], casePauseReason, caseSubstatus }) {
+    return Boolean(
+        String(notionPageId || '').trim() ||
+        hasImportReviewSignals({ importWarnings, agencies, casePauseReason, caseSubstatus })
+    );
+}
+
 function stripTrailingStateLabel(name, state) {
     const value = String(name || '').trim();
     if (!value) return null;
@@ -575,6 +582,15 @@ router.get('/', async (req, res) => {
                     agencyEmail: displayRow.agency_email,
                     portalUrl: displayRow.portal_url,
                 });
+                const importSafetyReasonDetail = importSafety.metadataMismatch?.expectedAgencyName
+                    ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+                    : importSafety.agencyStateMismatch
+                        ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState})`
+                        : importSafety.agencyCityMismatch
+                            ? `Imported case city (${importSafety.agencyCityMismatch.expectedCity}) does not match routed agency (${importSafety.agencyCityMismatch.currentAgencyName})`
+                            : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
+                                ? 'Imported case title/subject is still placeholder text'
+                                : 'Imported case needs human review before sending';
                 const canForceCorrectedAgencyDisplay = !override || ['case_row_backfill', 'case_row_fallback'].includes(String(override.added_source || ''));
                 const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
                     currentAgencyName: displayRow.agency_name,
@@ -626,12 +642,19 @@ router.get('/', async (req, res) => {
                 )
                     ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(row.additional_details))
                     : null;
-                const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && hasImportReviewSignals({
+                const importSafetyContext = hasImportSafetyContext({
+                    notionPageId: row.notion_page_id,
                     importWarnings: row.import_warnings,
                     agencies: [displayRow],
                     casePauseReason: row.pause_reason,
                     caseSubstatus: row.substatus,
                 });
+                const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && importSafetyContext && (hasImportReviewSignals({
+                    importWarnings: row.import_warnings,
+                    agencies: [displayRow],
+                    casePauseReason: row.pause_reason,
+                    caseSubstatus: row.substatus,
+                }) || !displayRow.active_proposal_status);
                 const importBlockedAgencyDisplay = buildImportBlockedAgencyDisplay({
                     metadataAgencyHint,
                     narrativeAgencyName,
@@ -658,6 +681,14 @@ router.get('/', async (req, res) => {
                 );
                 return applyManualPasteMismatchListOverride(toRequestListItem({
                     ...displayRow,
+                    ...(importSafety.shouldBlockAutoDispatch && importSafetyContext
+                        ? {
+                            status: 'needs_human_review',
+                            pause_reason: 'IMPORT_REVIEW',
+                            substatus: importSafetyReasonDetail,
+                            requires_human: true,
+                        }
+                        : {}),
                     agency_id: suppressImportBlockedAgencyDisplay
                         ? null
                         : suppressPlaceholderDisplay
@@ -1698,17 +1729,66 @@ router.get('/:id/workspace', async (req, res) => {
             agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
             portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
         });
-        const importSafetyBlockedProposal = Boolean(
-            importSafety.shouldBlockAutoDispatch &&
-            pendingProposal &&
-            ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(pendingProposal.action_type || '').toUpperCase())
-        );
-        const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && hasImportReviewSignals({
+        const activeRunResult = await db.query(`
+            SELECT
+                id,
+                status,
+                trigger_type,
+                started_at,
+                metadata->>'triggerRunId' AS trigger_run_id,
+                metadata->>'trigger_run_id' AS trigger_run_id_legacy,
+                metadata->>'current_node' AS current_node,
+                COALESCE(
+                    metadata->>'skyvern_task_url',
+                    metadata->>'skyvernTaskUrl',
+                    metadata->>'portal_task_url',
+                    metadata->>'portalTaskUrl'
+                ) AS skyvern_task_url
+            FROM agent_runs
+            WHERE case_id = $1 AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
+            ORDER BY started_at DESC NULLS LAST
+            LIMIT 1
+        `, [requestId]);
+        const activeRun = activeRunResult.rows[0]
+            ? {
+                ...activeRunResult.rows[0],
+                trigger_run_id: activeRunResult.rows[0].trigger_run_id || activeRunResult.rows[0].trigger_run_id_legacy || null
+            }
+            : null;
+        const importSafetyReasonDetail = importSafety.metadataMismatch?.expectedAgencyName
+            ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+            : importSafety.agencyStateMismatch
+                ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState})`
+                : importSafety.agencyCityMismatch
+                    ? `Imported case city (${importSafety.agencyCityMismatch.expectedCity}) does not match routed agency (${importSafety.agencyCityMismatch.currentAgencyName})`
+                    : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
+                        ? 'Imported case title/subject is still placeholder text'
+                        : 'Imported case needs human review before sending';
+        const importSafetyContext = hasImportSafetyContext({
+            notionPageId: caseData.notion_page_id,
             importWarnings: caseData.import_warnings,
             agencies: sortedCaseAgencies,
             casePauseReason: caseData.pause_reason,
             caseSubstatus: caseData.substatus,
         });
+        const importSafetyBlockedProposal = Boolean(
+            importSafety.shouldBlockAutoDispatch &&
+            importSafetyContext &&
+            pendingProposal &&
+            ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(pendingProposal.action_type || '').toUpperCase())
+        );
+        const importSafetyBlockedCase = Boolean(
+            importSafety.shouldBlockAutoDispatch &&
+            importSafetyContext &&
+            !pendingProposal &&
+            !activeRun
+        );
+        const suppressImportBlockedAgencyDisplay = Boolean(importSafety.shouldBlockAutoDispatch) && (hasImportReviewSignals({
+            importWarnings: caseData.import_warnings,
+            agencies: sortedCaseAgencies,
+            casePauseReason: caseData.pause_reason,
+            caseSubstatus: caseData.substatus,
+        }) || importSafetyBlockedCase);
         const importBlockedAgencyDisplay = suppressImportBlockedAgencyDisplay
             ? buildImportBlockedAgencyDisplay({
                 metadataAgencyHint,
@@ -1716,20 +1796,14 @@ router.get('/:id/workspace', async (req, res) => {
                 caseState: caseData.state,
             })
             : null;
-        if (importSafetyBlockedProposal) {
+        if (importSafetyBlockedProposal || importSafetyBlockedCase) {
             nextActionProposal = null;
             pendingProposal = null;
             caseData = {
                 ...caseData,
                 requires_human: true,
                 status: 'needs_human_review',
-                substatus: importSafety.metadataMismatch?.expectedAgencyName
-                    ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
-                    : importSafety.agencyStateMismatch
-                        ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState})`
-                    : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
-                        ? 'Imported case title/subject is still placeholder text'
-                        : 'Imported case needs human review before sending',
+                substatus: importSafetyReasonDetail,
                 pause_reason: 'IMPORT_REVIEW',
             };
         }
@@ -1836,34 +1910,6 @@ router.get('/:id/workspace', async (req, res) => {
             [requestId]
         );
         const agentDecisions = agentDecisionsResult.rows;
-
-        // Fetch active agent run for review_state
-        const activeRunResult = await db.query(`
-            SELECT
-                id,
-                status,
-                trigger_type,
-                started_at,
-                metadata->>'triggerRunId' AS trigger_run_id,
-                metadata->>'trigger_run_id' AS trigger_run_id_legacy,
-                metadata->>'current_node' AS current_node,
-                COALESCE(
-                    metadata->>'skyvern_task_url',
-                    metadata->>'skyvernTaskUrl',
-                    metadata->>'portal_task_url',
-                    metadata->>'portalTaskUrl'
-                ) AS skyvern_task_url
-            FROM agent_runs
-            WHERE case_id = $1 AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
-            ORDER BY started_at DESC NULLS LAST
-            LIMIT 1
-        `, [requestId]);
-        const activeRun = activeRunResult.rows[0]
-            ? {
-                ...activeRunResult.rows[0],
-                trigger_run_id: activeRunResult.rows[0].trigger_run_id || activeRunResult.rows[0].trigger_run_id_legacy || null
-            }
-            : null;
 
         // Compute derived review_state
         const reviewStateCaseData = contradictoryNoResponseProposal

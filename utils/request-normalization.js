@@ -273,6 +273,33 @@ function extractMetadataAgencyHint(additionalDetails) {
   return null;
 }
 
+function extractMetadataCityHint(additionalDetails = '') {
+  const text = normalizeMetadataText(additionalDetails);
+  if (!text.trim()) return null;
+
+  const patterns = [
+    /(?:^|\n)\*{0,2}City\s*:?\*{0,2}\s*([^\n\r]+)/gi,
+    /(?:^|\n)\*{0,2}Incident Location\s*:?\*{0,2}\s*([^\n\r]+)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const value = cleanMetadataLine(match[1]);
+      if (!value || isReferenceLikeMetadataValue(value)) continue;
+      const city = value.split(',')[0]?.trim();
+      if (city && hasAlphabeticCharacters(city)) {
+        return {
+          name: city,
+          source: 'additional_details',
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
   const metadataHint = extractMetadataAgencyHint(additionalDetails);
   if (metadataHint?.name) {
@@ -419,6 +446,26 @@ function detectAgencyStateMismatch({ currentAgencyName, caseState }) {
   };
 }
 
+function detectAgencyCityMismatch({ currentAgencyName, additionalDetails }) {
+  const cityHint = extractMetadataCityHint(additionalDetails);
+  const currentName = String(currentAgencyName || '').trim();
+  if (!cityHint?.name || !currentName) return null;
+  if (!/police department/i.test(currentName)) return null;
+
+  const currentTokens = agencyComparisonTokens(currentName);
+  const cityTokens = agencyComparisonTokens(cityHint.name);
+  if (!currentTokens.length || !cityTokens.length) return null;
+
+  const overlap = cityTokens.filter((token) => currentTokens.includes(token));
+  if (overlap.length > 0) return null;
+
+  return {
+    currentAgencyName: currentName,
+    expectedCity: cityHint.name,
+    source: cityHint.source,
+  };
+}
+
 function evaluateImportAutoDispatchSafety({
   caseName,
   subjectName,
@@ -443,6 +490,10 @@ function evaluateImportAutoDispatchSafety({
     currentAgencyName: agencyName,
     caseState: state,
   });
+  const agencyCityMismatch = detectAgencyCityMismatch({
+    currentAgencyName: agencyName,
+    additionalDetails,
+  });
   const metadataHint = extractMetadataAgencyHint(additionalDetails);
   const notionReferenceAgency = Boolean(
     normalizeNotionReferenceId(agencyName) ||
@@ -454,7 +505,7 @@ function evaluateImportAutoDispatchSafety({
   const hasDeliveryPath = Boolean(normalizeImportText(agencyEmail) || normalizePortalUrl(portalUrl));
 
   const shouldBlockAutoDispatch = Boolean(
-    ((!notionReferenceAgency) && (metadataMismatch || agencyStateMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
+    ((!notionReferenceAgency) && (metadataMismatch || agencyStateMismatch || agencyCityMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
     (placeholderCaseTitle && placeholderSubject) ||
     (genericAgency && metadataHint && hasDeliveryPath)
   );
@@ -464,6 +515,8 @@ function evaluateImportAutoDispatchSafety({
     reasonCode = 'AGENCY_METADATA_MISMATCH';
   } else if (agencyStateMismatch) {
     reasonCode = 'AGENCY_STATE_MISMATCH';
+  } else if (agencyCityMismatch) {
+    reasonCode = 'AGENCY_CITY_MISMATCH';
   } else if (placeholderCaseTitle && placeholderSubject) {
     reasonCode = 'PLACEHOLDER_TITLE';
   } else if (genericAgency && metadataHint && hasDeliveryPath) {
@@ -475,6 +528,7 @@ function evaluateImportAutoDispatchSafety({
     reasonCode,
     metadataMismatch,
     agencyStateMismatch,
+    agencyCityMismatch,
     metadataHint,
     warningTypes,
     placeholderCaseTitle,
@@ -498,6 +552,8 @@ module.exports = {
   isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
   detectAgencyStateMismatch,
+  extractMetadataCityHint,
+  detectAgencyCityMismatch,
   evaluateImportAutoDispatchSafety,
   isNotionReferenceList,
   textContainsSyntheticChannel,
