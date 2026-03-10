@@ -38,6 +38,18 @@ function hasRealPortalUrl(value: unknown): boolean {
   return Boolean(normalizePortalUrl(value || null));
 }
 
+async function dismissLegacyInitialCaseLevelProposals(caseId: number) {
+  await db.query(`
+    UPDATE proposals
+       SET status = 'DISMISSED',
+           updated_at = NOW()
+     WHERE case_id = $1
+       AND case_agency_id IS NULL
+       AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+       AND proposal_key LIKE $2
+  `, [caseId, `${caseId}:initial:%`]);
+}
+
 async function createMissingDeliveryPathProposal(caseId: number, runId: number, agency: any) {
   const agencyName = String(agency?.agency_name || "Unknown agency").trim() || "Unknown agency";
   return db.upsertProposal({
@@ -90,6 +102,8 @@ export async function draftInitialRequestProposalsForCase(
       proposals: [singleDraft],
     };
   }
+
+  await dismissLegacyInitialCaseLevelProposals(caseId);
 
   const proposals: any[] = [];
   for (const agency of activeCaseAgencies) {

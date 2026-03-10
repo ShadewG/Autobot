@@ -11,6 +11,7 @@ const {
 
 describe("multi-agency initial request proposal fan-out", function () {
   beforeEach(function () {
+    sinon.stub(db, "query").resolves({ rowCount: 0, rows: [] });
     sinon.stub(db, "getCaseById").resolves({
       id: 26688,
       subject_name: "Example Incident",
@@ -76,6 +77,9 @@ describe("multi-agency initial request proposal fan-out", function () {
 
     assert.strictEqual(result.mode, "multi");
     assert.strictEqual(result.proposals.length, 2);
+    assert.ok(db.query.calledOnce);
+    assert.match(db.query.firstCall.args[0], /UPDATE proposals/);
+    assert.deepStrictEqual(db.query.firstCall.args[1], [26688, "26688:initial:%"]);
     assert.deepStrictEqual(
       result.proposals.map((proposal) => proposal.caseAgencyId),
       [501, 502]
