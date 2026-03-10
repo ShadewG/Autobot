@@ -318,14 +318,14 @@ class DashboardService {
     async getHourlyActivity() {
         const result = await db.query(`
             SELECT
-                date_trunc('hour', created_at) as hour,
+                date_trunc('hour', activity_log.created_at) as hour,
                 event_type,
                 COUNT(*) as count
             FROM activity_log
             LEFT JOIN cases c ON c.id = activity_log.case_id
-            WHERE created_at >= NOW() - INTERVAL '24 hours'
+            WHERE activity_log.created_at >= NOW() - INTERVAL '24 hours'
               AND (activity_log.case_id IS NULL OR ${buildRealCaseWhereClause('c')})
-            GROUP BY date_trunc('hour', created_at), event_type
+            GROUP BY date_trunc('hour', activity_log.created_at), event_type
             ORDER BY hour DESC
         `);
         return result.rows;
