@@ -54,6 +54,7 @@ import type {
   CaseAgency,
   AgencyCandidate,
   ThreadMessage,
+  PendingProposal,
 } from "@/lib/types";
 import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency, isTrackingUrl, stripHtmlTags } from "@/lib/utils";
 import {
@@ -120,6 +121,22 @@ const DISMISS_REASONS = [
   "Bad timing",
   "Not needed",
 ];
+
+const EMAIL_ACTION_TYPES = [
+  "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL",
+  "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL",
+  "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
+  "RESPOND_PARTIAL_APPROVAL", "REFORMULATE_REQUEST",
+];
+
+interface DraftState {
+  editedBody: string;
+  editedSubject: string;
+  editedRecipient: string;
+  editedChainSubject: string;
+  editedChainBody: string;
+  proposalAttachments: Array<{ filename: string; content: string; type: string }>;
+}
 
 
 function getControlStateDisplay(controlState?: string | null) {
@@ -1252,11 +1269,20 @@ function DetailV2Content() {
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [bugDescription, setBugDescription] = useState("");
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
-  const [editedBody, setEditedBody] = useState<string>("");
-  const [editedSubject, setEditedSubject] = useState<string>("");
-  const [editedRecipient, setEditedRecipient] = useState<string>("");
-  const [proposalAttachments, setProposalAttachments] = useState<Array<{ filename: string; content: string; type: string }>>([]);
+  const [draftStates, setDraftStates] = useState<Map<number, DraftState>>(new Map());
+  const getDraft = useCallback((proposalId: number): DraftState => {
+    return draftStates.get(proposalId) || { editedBody: "", editedSubject: "", editedRecipient: "", editedChainSubject: "", editedChainBody: "", proposalAttachments: [] };
+  }, [draftStates]);
+  const setDraft = useCallback((proposalId: number, updates: Partial<DraftState>) => {
+    setDraftStates(prev => {
+      const next = new Map(prev);
+      const current = prev.get(proposalId) || { editedBody: "", editedSubject: "", editedRecipient: "", editedChainSubject: "", editedChainBody: "", proposalAttachments: [] };
+      next.set(proposalId, { ...current, ...updates });
+      return next;
+    });
+  }, []);
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
+  const [pendingAdjustProposalId, setPendingAdjustProposalId] = useState<number | null>(null);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
   const [manualSubmitOpen, setManualSubmitOpen] = useState(false);
   const [isManualSubmitting, setIsManualSubmitting] = useState(false);
@@ -1276,9 +1302,7 @@ function DetailV2Content() {
   const [optimisticMessages, setOptimisticMessages] = useState<Array<ThreadMessage & { _sending: true }>>([]);
   const [pendingSubmission, setPendingSubmission] = useState<{ proposalId: number; startedAt: number } | null>(null);
   const [pendingUiLockUntil, setPendingUiLockUntil] = useState<number>(0);
-  // Chain draft editing
-  const [editedChainSubject, setEditedChainSubject] = useState<string>("");
-  const [editedChainBody, setEditedChainBody] = useState<string>("");
+  // Chain draft editing is now part of DraftState (draftStates map)
   // Constraint management
   const [constraintEditing, setConstraintEditing] = useState(false);
   const [addConstraintOpen, setAddConstraintOpen] = useState(false);
@@ -1364,21 +1388,6 @@ function DetailV2Content() {
 
   const originalRecipient = data?.request?.agency_email || "";
 
-  useEffect(() => {
-    setEditedBody(data?.pending_proposal?.draft_body_text || "");
-    setEditedSubject(data?.pending_proposal?.draft_subject || "");
-    setEditedRecipient(originalRecipient);
-    setProposalAttachments([]);
-    const chain = data?.pending_proposal?.action_chain;
-    if (chain && chain.length > 1) {
-      setEditedChainSubject(chain[1].draftSubject || "");
-      setEditedChainBody(chain[1].draftBodyText || "");
-    } else {
-      setEditedChainSubject("");
-      setEditedChainBody("");
-    }
-  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject, data?.pending_proposal?.action_chain, originalRecipient]);
-
   const lastInboundMessage = useMemo(() => {
     if (!data?.thread_messages) return null;
     const inbound = data.thread_messages.filter(m => m.direction === "INBOUND");
@@ -1395,16 +1404,30 @@ function DetailV2Content() {
     setPollingUntil(Date.now() + 30_000);
   }, []);
 
-  const optimisticClear = useCallback(() => {
+  const optimisticClear = useCallback((clearedProposalId?: number) => {
     mutate(
-      (cur) => cur ? {
-        ...cur,
-        request: { ...cur.request, requires_human: false, pause_reason: null, status: 'AWAITING_RESPONSE' as const },
-        pending_proposal: null,
-        next_action_proposal: null,
-        review_state: 'PROCESSING',
-        control_state: 'WORKING',
-      } : cur,
+      (cur) => {
+        if (!cur) return cur;
+        // Resolve current proposals from data
+        const currentProposals: PendingProposal[] = (cur as any).pending_proposals?.length > 0
+          ? (cur as any).pending_proposals
+          : cur.pending_proposal ? [cur.pending_proposal] : [];
+        const remainingProposals = clearedProposalId != null
+          ? currentProposals.filter(p => p.id !== clearedProposalId)
+          : [];
+        const noProposalsLeft = remainingProposals.length === 0;
+        return {
+          ...cur,
+          request: noProposalsLeft
+            ? { ...cur.request, requires_human: false, pause_reason: null, status: 'AWAITING_RESPONSE' as const }
+            : cur.request,
+          pending_proposal: remainingProposals.length > 0 ? remainingProposals[0] : null,
+          pending_proposals: remainingProposals,
+          next_action_proposal: noProposalsLeft ? null : cur.next_action_proposal,
+          review_state: noProposalsLeft ? 'PROCESSING' : cur.review_state,
+          control_state: noProposalsLeft ? 'WORKING' : cur.control_state,
+        };
+      },
       { revalidate: true }
     );
     mutateRuns();
@@ -1415,6 +1438,54 @@ function DetailV2Content() {
   const _threadMessages = data?.thread_messages || [];
   const _caseAgencies: CaseAgency[] = (data as any)?.case_agencies || [];
   const _activeCaseAgencies = _caseAgencies.filter((ca: CaseAgency) => ca.is_active !== false);
+
+  const _pendingProposals: PendingProposal[] = useMemo(() => {
+    const plural = (data as any)?.pending_proposals as PendingProposal[] | undefined;
+    if (plural && plural.length > 0) return plural;
+    if (data?.pending_proposal) return [data.pending_proposal];
+    return [];
+  }, [data]);
+
+  const proposalsByAgencyBucket = useMemo(() => {
+    const map = new Map<string, PendingProposal[]>();
+    for (const p of _pendingProposals) {
+      const key = p.case_agency_id != null ? `agency-${p.case_agency_id}` : "unscoped";
+      const arr = map.get(key) || [];
+      arr.push(p);
+      map.set(key, arr);
+    }
+    return map;
+  }, [_pendingProposals]);
+
+  // Initialize draft state for each pending proposal
+  useEffect(() => {
+    setDraftStates(prev => {
+      const next = new Map(prev);
+      const activeIds = new Set<number>();
+      for (const p of _pendingProposals) {
+        activeIds.add(p.id);
+        if (next.has(p.id)) continue; // preserve user edits
+        let recipient = originalRecipient;
+        if (p.case_agency_id != null) {
+          const ag = _caseAgencies.find(ca => ca.id === p.case_agency_id);
+          if (ag?.agency_email) recipient = ag.agency_email;
+        }
+        const chain = p.action_chain;
+        next.set(p.id, {
+          editedBody: p.draft_body_text || "",
+          editedSubject: p.draft_subject || "",
+          editedRecipient: recipient,
+          editedChainSubject: chain && chain.length > 1 ? (chain[1].draftSubject || "") : "",
+          editedChainBody: chain && chain.length > 1 ? (chain[1].draftBodyText || "") : "",
+          proposalAttachments: [],
+        });
+      }
+      for (const key of next.keys()) {
+        if (!activeIds.has(key)) next.delete(key);
+      }
+      return next;
+    });
+  }, [_pendingProposals, originalRecipient, _caseAgencies]);
 
   const conversationAgencies = useMemo(() => {
     const dedup = new Map<string, CaseAgency>();
@@ -1431,12 +1502,16 @@ function DetailV2Content() {
     }
     return Array.from(dedup.values());
   }, [_activeCaseAgencies]);
-  const shouldShowConversationTabs = conversationAgencies.length > 1;
+  const distinctProposalAgencies = useMemo(() => {
+    const ids = new Set(_pendingProposals.map(p => p.case_agency_id).filter(id => id != null));
+    return ids.size;
+  }, [_pendingProposals]);
+  const shouldShowConversationTabs = conversationAgencies.length > 1 || distinctProposalAgencies >= 2;
 
   const conversationBuckets = useMemo(() => {
     const allIds = new Set(_threadMessages.map((m) => m.id));
-    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number> }> = [
-      { id: "all", label: "All", count: _threadMessages.length, messageIds: allIds },
+    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number>; proposals: PendingProposal[] }> = [
+      { id: "all", label: "All", count: _threadMessages.length, messageIds: allIds, proposals: _pendingProposals },
     ];
     if (!shouldShowConversationTabs) return buckets;
 
@@ -1493,8 +1568,10 @@ function DetailV2Content() {
     }
 
     // Build per-agency buckets from assignments
+    const coveredAgencyIds = new Set<number>();
     for (const ag of conversationAgencies) {
       const bucketId = `agency-${ag.id}`;
+      coveredAgencyIds.add(ag.id);
       const messageIds = new Set<number>();
       for (const [msgId, bid] of assigned) {
         if (bid === bucketId) messageIds.add(msgId);
@@ -1504,7 +1581,25 @@ function DetailV2Content() {
         label: ag.agency_name || `Agency ${ag.id}`,
         count: messageIds.size,
         messageIds,
+        proposals: proposalsByAgencyBucket.get(bucketId) || [],
       });
+    }
+
+    // Synthetic tabs for proposals whose case_agency_id doesn't match any existing bucket
+    for (const p of _pendingProposals) {
+      if (p.case_agency_id != null && !coveredAgencyIds.has(p.case_agency_id)) {
+        const bucketId = `agency-${p.case_agency_id}`;
+        if (buckets.some(b => b.id === bucketId)) continue;
+        const agencyFromCase = _caseAgencies.find(ca => ca.id === p.case_agency_id);
+        coveredAgencyIds.add(p.case_agency_id);
+        buckets.push({
+          id: bucketId,
+          label: agencyFromCase?.agency_name || p.agency_name || `Agency ${p.case_agency_id}`,
+          count: 0,
+          messageIds: new Set(),
+          proposals: proposalsByAgencyBucket.get(bucketId) || [],
+        });
+      }
     }
 
     // "Other" for unassigned messages
@@ -1512,10 +1607,10 @@ function DetailV2Content() {
       _threadMessages.filter((m) => !assigned.has(m.id)).map((m) => m.id)
     );
     if (otherIds.size > 0) {
-      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
+      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds, proposals: [] });
     }
     return buckets;
-  }, [_threadMessages, conversationAgencies, shouldShowConversationTabs]);
+  }, [_threadMessages, conversationAgencies, shouldShowConversationTabs, _pendingProposals, proposalsByAgencyBucket, _caseAgencies]);
 
   const agencyMessageStats = useMemo(() => {
     const stats = new Map<number, { total: number; inbound: number; outbound: number; lastMessageAt: string | null }>();
@@ -1548,7 +1643,14 @@ function DetailV2Content() {
     const real = (!selected || conversationTab === "all")
       ? _threadMessages
       : _threadMessages.filter((message) => selected.messageIds.has(message.id));
-    return [...real, ...optimisticMessages];
+    // Filter optimistic messages by agency tab
+    const filteredOptimistic = conversationTab === "all"
+      ? optimisticMessages
+      : optimisticMessages.filter((m: any) => {
+          if (m.case_agency_id == null) return true;
+          return conversationTab === `agency-${m.case_agency_id}`;
+        });
+    return [...real, ...filteredOptimistic];
   }, [_threadMessages, conversationBuckets, conversationTab, optimisticMessages]);
 
   const liveRun = useMemo(() => {
@@ -1606,14 +1708,12 @@ function DetailV2Content() {
 
   useEffect(() => {
     if (!pendingSubmission) return;
-    const activePendingId = data?.pending_proposal?.id ? Number(data.pending_proposal.id) : null;
-    // Only clear when we can positively identify that a different proposal is active.
-    // Do not clear on transient nulls during optimistic mutate/refetch, which can cause
-    // the same proposal controls to flicker back in.
-    if (activePendingId && activePendingId !== pendingSubmission.proposalId) {
+    const stillExists = _pendingProposals.some(p => p.id === pendingSubmission.proposalId);
+    // Clear when the submitted proposal is no longer in the array and other proposals exist
+    if (!stillExists && _pendingProposals.length > 0) {
       setPendingSubmission(null);
     }
-  }, [pendingSubmission, data?.pending_proposal?.id]);
+  }, [pendingSubmission, _pendingProposals]);
 
   useEffect(() => {
     if (!pendingSubmission) return;
@@ -1623,54 +1723,56 @@ function DetailV2Content() {
 
   useEffect(() => {
     if (!pendingSubmission) return;
-    const noPendingProposal = !data?.pending_proposal;
+    const noPendingProposal = _pendingProposals.length === 0;
     const noExecutionInFlight = !hasExecutionInFlight;
     if (noPendingProposal && noExecutionInFlight) {
       setPendingSubmission(null);
       setPendingUiLockUntil(0);
       setOptimisticMessages([]);
     }
-  }, [pendingSubmission, data?.pending_proposal, hasExecutionInFlight]);
+  }, [pendingSubmission, _pendingProposals, hasExecutionInFlight]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  const handleApprovePending = async () => {
-    if (!data?.pending_proposal) return;
+  const handleApprovePending = async (proposalId: number) => {
+    const proposal = _pendingProposals.find(p => p.id === proposalId);
+    if (!proposal) return;
+    const draft = getDraft(proposalId);
     setIsApproving(true);
-    const proposalId = Number(data.pending_proposal.id);
-    const actionType = data.pending_proposal.action_type || "";
+    const actionType = proposal.action_type || "";
     const nonEmailActions = ["RESEARCH_AGENCY", "ESCALATE", "WITHDRAW"];
-    const shouldOptimisticMessage = !nonEmailActions.includes(actionType) && Boolean(editedBody || data.pending_proposal.draft_body_text);
+    const shouldOptimisticMessage = !nonEmailActions.includes(actionType) && Boolean(draft.editedBody || proposal.draft_body_text);
     const optimisticMessageId = -Date.now();
     if (shouldOptimisticMessage) {
       setOptimisticMessages(prev => [...prev, {
         id: optimisticMessageId, direction: 'OUTBOUND' as const, channel: 'EMAIL' as const,
-        from_email: '', to_email: editedRecipient || data.request.agency_email || '',
-        subject: editedSubject || data.pending_proposal!.draft_subject || '',
-        body: editedBody || data.pending_proposal!.draft_body_text || '',
+        from_email: '', to_email: draft.editedRecipient || data!.request.agency_email || '',
+        subject: draft.editedSubject || proposal.draft_subject || '',
+        body: draft.editedBody || proposal.draft_body_text || '',
         sent_at: new Date().toISOString(), timestamp: new Date().toISOString(),
         attachments: [], _sending: true as const,
-      }]);
+        case_agency_id: proposal.case_agency_id ?? undefined,
+      } as any]);
     }
     setPendingSubmission({ proposalId, startedAt: Date.now() });
     setPendingUiLockUntil(Date.now() + 45_000);
     try {
       const body: Record<string, unknown> = { action: "APPROVE" };
-      if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
-      if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
-      if (proposalAttachments.length > 0) body.attachments = proposalAttachments;
-      if (editedRecipient && editedRecipient !== originalRecipient) body.recipient_override = editedRecipient;
+      if (draft.editedBody && draft.editedBody !== (proposal.draft_body_text || "")) body.draft_body_text = draft.editedBody;
+      if (draft.editedSubject && draft.editedSubject !== (proposal.draft_subject || "")) body.draft_subject = draft.editedSubject;
+      if (draft.proposalAttachments.length > 0) body.attachments = draft.proposalAttachments;
+      if (draft.editedRecipient && draft.editedRecipient !== originalRecipient) body.recipient_override = draft.editedRecipient;
       if (actionType === "ESCALATE") {
-        body.instruction = (typeof editedBody === "string" && editedBody.trim().length > 0)
-          ? editedBody.trim()
+        body.instruction = (typeof draft.editedBody === "string" && draft.editedBody.trim().length > 0)
+          ? draft.editedBody.trim()
           : "Use the current primary agency and existing contact data to generate a concrete next proposal to restart the request (prefer SUBMIT_PORTAL or SEND_INITIAL_REQUEST). Do not return ESCALATE again unless truly blocked.";
       }
-      const chain = data.pending_proposal.action_chain;
+      const chain = proposal.action_chain;
       if (chain && chain.length > 1) {
-        if (editedChainBody && editedChainBody !== (chain[1].draftBodyText || "")) body.chain_draft_body_text = editedChainBody;
-        if (editedChainSubject && editedChainSubject !== (chain[1].draftSubject || "")) body.chain_draft_subject = editedChainSubject;
+        if (draft.editedChainBody && draft.editedChainBody !== (chain[1].draftBodyText || "")) body.chain_draft_body_text = draft.editedChainBody;
+        if (draft.editedChainSubject && draft.editedChainSubject !== (chain[1].draftSubject || "")) body.chain_draft_subject = draft.editedChainSubject;
       }
-      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+      const res = await fetch(`/api/proposals/${proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -1682,7 +1784,7 @@ function DetailV2Content() {
       } else {
         toast.success("Approved");
       }
-      optimisticClear();
+      optimisticClear(proposalId);
     } catch (e: any) {
       if (shouldOptimisticMessage) {
         setOptimisticMessages(prev => prev.filter((m) => m.id !== optimisticMessageId));
@@ -1695,17 +1797,18 @@ function DetailV2Content() {
     }
   };
 
-  const handleDismissPending = async (reason: string) => {
-    if (!data?.pending_proposal) return;
+  const handleDismissPending = async (proposalId: number, reason: string) => {
+    const proposal = _pendingProposals.find(p => p.id === proposalId);
+    if (!proposal) return;
     try {
-      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+      const res = await fetch(`/api/proposals/${proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "DISMISS", dismiss_reason: reason }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      optimisticClear();
+      optimisticClear(proposalId);
       toast.success("Proposal dismissed");
     } catch (e: any) {
       toast.error(e.message);
@@ -1713,10 +1816,12 @@ function DetailV2Content() {
   };
 
   const handleAdjustPending = async (instruction: string) => {
-    if (!data?.pending_proposal) return;
+    if (pendingAdjustProposalId == null) return;
+    const proposal = _pendingProposals.find(p => p.id === pendingAdjustProposalId);
+    if (!proposal) return;
     setIsAdjustingPending(true);
     try {
-      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+      const res = await fetch(`/api/proposals/${proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "ADJUST", instruction: instruction.trim() }),
@@ -1724,7 +1829,8 @@ function DetailV2Content() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       setPendingAdjustModalOpen(false);
-      optimisticClear();
+      setPendingAdjustProposalId(null);
+      optimisticClear(pendingAdjustProposalId);
       toast.success("Adjusting draft...");
     } catch (e: any) {
       toast.error(e.message);
@@ -1733,18 +1839,19 @@ function DetailV2Content() {
     }
   };
 
-  const handleRetryResearch = async () => {
-    if (!data?.pending_proposal) return;
+  const handleRetryResearch = async (proposalId: number) => {
+    const proposal = _pendingProposals.find(p => p.id === proposalId);
+    if (!proposal) return;
     setIsApproving(true);
     try {
-      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+      const res = await fetch(`/api/proposals/${proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "RETRY_RESEARCH" }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      optimisticClear();
+      optimisticClear(proposalId);
       toast.success("Research retry started...");
     } catch (e: any) {
       toast.error(e.message);
@@ -1753,18 +1860,19 @@ function DetailV2Content() {
     }
   };
 
-  const handleManualSubmit = async () => {
-    if (!data?.pending_proposal) return;
+  const handleManualSubmit = async (proposalId: number) => {
+    const proposal = _pendingProposals.find(p => p.id === proposalId);
+    if (!proposal) return;
     setIsManualSubmitting(true);
     try {
-      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+      const res = await fetch(`/api/proposals/${proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "MANUAL_SUBMIT" }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      optimisticClear();
+      optimisticClear(proposalId);
       toast.success("Marked as submitted");
     } catch (e: any) {
       toast.error(e.message);
@@ -2303,23 +2411,8 @@ function DetailV2Content() {
     }
   };
 
-  const pendingActionType = pending_proposal?.action_type || "";
-  const pendingProposalStatus = String((pending_proposal as any)?.status || "").toUpperCase();
-  const isEmailLikePendingAction = [
-    "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL",
-    "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL",
-    "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
-    "RESPOND_PARTIAL_APPROVAL", "REFORMULATE_REQUEST",
-  ].includes(pendingActionType);
-  const hasChain = (pending_proposal?.action_chain?.length ?? 0) > 1;
-  const pendingApproveLabel = hasChain
-    ? `Approve ${pending_proposal!.action_chain!.length} Actions`
-    : isEmailLikePendingAction ? "Send" : "Approve";
-  const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
-  const pendingManualPdfEscalation =
-    pendingActionType === "ESCALATE"
-      ? extractManualPdfEscalation(pending_proposal?.reasoning || [])
-      : null;
+  // Per-proposal derived values (pendingActionType, isEmailLikePendingAction, etc.)
+  // are now computed inside the proposal card render loop.
 
   const statusValue = String(request.status || "").toUpperCase();
   const isPausedStatus = [
@@ -2344,13 +2437,12 @@ function DetailV2Content() {
     ? review_state === "DECISION_REQUIRED"
     : (Boolean(request.pause_reason) || request.requires_human || isPausedStatus);
   const isPaused = decisionRequired && !hasExecutionInFlight;
-  const isPendingApplying =
-    Boolean(pending_proposal) &&
+  // Global: are ANY proposals currently being applied? Used for broad UI gating
+  const isAnyProposalApplying =
+    _pendingProposals.length > 0 &&
     (
       Date.now() < pendingUiLockUntil ||
-      pendingProposalStatus === "DECISION_RECEIVED" ||
       review_state === "DECISION_APPLYING" ||
-      (pendingSubmission?.proposalId != null && Number(pending_proposal?.id) === pendingSubmission.proposalId) ||
       (hasExecutionInFlight && review_state !== "DECISION_REQUIRED")
     );
 
@@ -2704,6 +2796,9 @@ function DetailV2Content() {
                           <Badge variant="secondary" className="ml-1 text-[10px] px-1">
                             {bucket.count}
                           </Badge>
+                          {bucket.proposals.length > 0 && (
+                            <span className="ml-1 h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                          )}
                         </Button>
                       ))}
                     </div>
@@ -2735,303 +2830,340 @@ function DetailV2Content() {
 
               {/* Bottom action area (shrink-0, pinned at bottom) */}
               <div className="shrink-0 border-t border-border/50 max-h-[50%] overflow-y-auto">
-                {pending_proposal ? (
-                  <div className="px-3 py-3 space-y-2">
-                    {/* Action type + confidence */}
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className={cn("text-[10px] px-1 py-0", ACTION_TYPE_LABELS[pending_proposal.action_type]?.color || "")}>
-                        {ACTION_TYPE_LABELS[pending_proposal.action_type]?.label || pending_proposal.action_type.replace(/_/g, " ")}
-                      </Badge>
-                      {typeof pending_proposal.confidence === "number" && (
-                        <span className="text-[10px] text-muted-foreground">{Math.round(pending_proposal.confidence * 100)}%</span>
-                      )}
-                      {pendingDelivery && !isEmailLikePendingAction && (
-                        <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
-                          {pendingDelivery.method} → {pendingDelivery.target || "not set"}
-                        </span>
-                      )}
-                    </div>
+                {(() => {
+                  const selectedBucket = conversationBuckets.find(b => b.id === conversationTab);
+                  const currentTabProposals = selectedBucket?.proposals || _pendingProposals;
+                  if (currentTabProposals.length === 0) return null;
+                  return currentTabProposals.map(proposal => {
+                    const draft = getDraft(proposal.id);
+                    const actionType = proposal.action_type || "";
+                    const isEmailLike = EMAIL_ACTION_TYPES.includes(actionType);
+                    const hasChain = (proposal.action_chain?.length ?? 0) > 1;
+                    const approveLabel = hasChain
+                      ? `Approve ${proposal.action_chain!.length} Actions`
+                      : isEmailLike ? "Send" : "Approve";
+                    const delivery = getDeliveryTarget(actionType || null, request, agency_summary || null);
+                    const manualPdfEscalation = actionType === "ESCALATE"
+                      ? extractManualPdfEscalation(proposal.reasoning || [])
+                      : null;
+                    const isThisProposalApplying =
+                      (pendingSubmission?.proposalId === proposal.id && Date.now() < pendingUiLockUntil) ||
+                      String(proposal.status || "").toUpperCase() === "DECISION_RECEIVED";
+                    // Resolve per-proposal recipient for display
+                    const proposalRecipient = draft.editedRecipient || originalRecipient;
 
-                    {/* Proposal content: email draft vs action card */}
-                    {isEmailLikePendingAction ? (
-                      /* ── Email draft: editable To + subject + body ── */
-                      (pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-muted-foreground font-medium shrink-0">To:</span>
-                            <input
-                              className="flex-1 bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
-                              value={editedRecipient}
-                              onChange={(e) => setEditedRecipient(e.target.value)}
-                              placeholder="recipient@agency.gov"
-                            />
+                    return (
+                      <div key={proposal.id} className="px-3 py-3 space-y-2">
+                        {/* Agency label when multiple proposals visible */}
+                        {currentTabProposals.length > 1 && proposal.agency_name && (
+                          <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                            {proposal.agency_name}
                           </div>
-                          {(pending_proposal.draft_subject || editedSubject) && (
-                            <input
-                              className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
-                              value={editedSubject}
-                              onChange={(e) => setEditedSubject(e.target.value)}
-                              placeholder="Subject"
-                            />
+                        )}
+                        {/* Action type + confidence */}
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className={cn("text-[10px] px-1 py-0", ACTION_TYPE_LABELS[proposal.action_type]?.color || "")}>
+                            {ACTION_TYPE_LABELS[proposal.action_type]?.label || proposal.action_type.replace(/_/g, " ")}
+                          </Badge>
+                          {typeof proposal.confidence === "number" && (
+                            <span className="text-[10px] text-muted-foreground">{Math.round(proposal.confidence * 100)}%</span>
                           )}
-                          <textarea
-                            className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
-                            rows={8}
-                            value={editedBody}
-                            onChange={(e) => setEditedBody(e.target.value)}
-                          />
-                          {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "") || editedRecipient !== originalRecipient) && (
-                            <button
-                              className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-                              onClick={() => {
-                                setEditedBody(pending_proposal.draft_body_text || "");
-                                setEditedSubject(pending_proposal.draft_subject || "");
-                                setEditedRecipient(originalRecipient);
-                              }}
-                            >
-                              <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
-                            </button>
+                          {delivery && !isEmailLike && (
+                            <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
+                              {delivery.method} → {delivery.target || "not set"}
+                            </span>
                           )}
-                          {/* Prepared outbound attachments */}
-                          {(() => {
-                            const prepared = (request.attachments || []).filter((a: any) => a.direction === 'outbound');
-                            if (prepared.length === 0) return null;
-                            return (
-                              <div className="space-y-1">
-                                <p className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                                  Prepared Attachments
-                                </p>
-                                {prepared.map((att: any) => (
-                                  <div key={att.id} className="flex items-center gap-1.5 text-xs">
-                                    <a
-                                      href={att.download_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1.5 text-blue-400 hover:underline min-w-0"
-                                    >
-                                      <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
-                                      <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
-                                    </a>
-                                    <button
-                                      type="button"
-                                      className="text-red-400 hover:text-red-300 p-0.5 flex-shrink-0"
-                                      title="Delete attachment"
-                                      onClick={async () => {
-                                        if (!confirm(`Delete "${att.filename}"?`)) return;
-                                        try {
-                                          const res = await fetch(`/api/requests/${request.id}/attachments/${att.id}`, { method: 'DELETE' });
-                                          if (!res.ok) throw new Error('Delete failed');
-                                          mutate();
-                                        } catch (err) {
-                                          alert('Failed to delete attachment');
-                                        }
-                                      }}
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                          <AttachmentPicker
-                            attachments={proposalAttachments}
-                            onChange={setProposalAttachments}
-                            disabled={isApproving}
-                          />
-                          {/* Chain follow-up */}
-                          {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
-                            <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
-                                  <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
-                                </span>
-                                {(() => {
-                                  const chainTarget = getDeliveryTarget(pending_proposal.action_chain[1].actionType, request, agency_summary || null);
-                                  return chainTarget ? (
-                                    <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
-                                      {chainTarget.method} → {chainTarget.target || "not set"}
-                                    </span>
-                                  ) : null;
-                                })()}
-                              </div>
-                              {pending_proposal.action_chain[1].draftSubject && (
+                        </div>
+
+                        {/* Proposal content: email draft vs action card */}
+                        {isEmailLike ? (
+                          (proposal.draft_body_text || proposal.draft_subject) ? (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-muted-foreground font-medium shrink-0">To:</span>
                                 <input
-                                  className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
-                                  value={editedChainSubject}
-                                  onChange={(e) => setEditedChainSubject(e.target.value)}
-                                  placeholder="Follow-up Subject"
+                                  className="flex-1 bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
+                                  value={proposalRecipient}
+                                  onChange={(e) => setDraft(proposal.id, { editedRecipient: e.target.value })}
+                                  placeholder="recipient@agency.gov"
+                                />
+                              </div>
+                              {(proposal.draft_subject || draft.editedSubject) && (
+                                <input
+                                  className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
+                                  value={draft.editedSubject}
+                                  onChange={(e) => setDraft(proposal.id, { editedSubject: e.target.value })}
+                                  placeholder="Subject"
                                 />
                               )}
                               <textarea
-                                className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
-                                rows={4}
-                                value={editedChainBody}
-                                onChange={(e) => setEditedChainBody(e.target.value)}
+                                className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
+                                rows={8}
+                                value={draft.editedBody}
+                                onChange={(e) => setDraft(proposal.id, { editedBody: e.target.value })}
                               />
+                              {(draft.editedBody !== (proposal.draft_body_text || "") || draft.editedSubject !== (proposal.draft_subject || "") || draft.editedRecipient !== originalRecipient) && (
+                                <button
+                                  className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                                  onClick={() => {
+                                    let recipient = originalRecipient;
+                                    if (proposal.case_agency_id != null) {
+                                      const ag = _caseAgencies.find(ca => ca.id === proposal.case_agency_id);
+                                      if (ag?.agency_email) recipient = ag.agency_email;
+                                    }
+                                    setDraft(proposal.id, {
+                                      editedBody: proposal.draft_body_text || "",
+                                      editedSubject: proposal.draft_subject || "",
+                                      editedRecipient: recipient,
+                                    });
+                                  }}
+                                >
+                                  <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
+                                </button>
+                              )}
+                              {/* Prepared outbound attachments */}
+                              {(() => {
+                                const prepared = (request.attachments || []).filter((a: any) => a.direction === 'outbound');
+                                if (prepared.length === 0) return null;
+                                return (
+                                  <div className="space-y-1">
+                                    <p className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                      Prepared Attachments
+                                    </p>
+                                    {prepared.map((att: any) => (
+                                      <div key={att.id} className="flex items-center gap-1.5 text-xs">
+                                        <a
+                                          href={att.download_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex items-center gap-1.5 text-blue-400 hover:underline min-w-0"
+                                        >
+                                          <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
+                                          <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
+                                        </a>
+                                        <button
+                                          type="button"
+                                          className="text-red-400 hover:text-red-300 p-0.5 flex-shrink-0"
+                                          title="Delete attachment"
+                                          onClick={async () => {
+                                            if (!confirm(`Delete "${att.filename}"?`)) return;
+                                            try {
+                                              const res = await fetch(`/api/requests/${request.id}/attachments/${att.id}`, { method: 'DELETE' });
+                                              if (!res.ok) throw new Error('Delete failed');
+                                              mutate();
+                                            } catch (err) {
+                                              alert('Failed to delete attachment');
+                                            }
+                                          }}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
+                              <AttachmentPicker
+                                attachments={draft.proposalAttachments}
+                                onChange={(atts) => setDraft(proposal.id, { proposalAttachments: atts })}
+                                disabled={isApproving}
+                              />
+                              {/* Chain follow-up */}
+                              {proposal.action_chain && proposal.action_chain.length > 1 && (
+                                <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                                      <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[proposal.action_chain[1].actionType]?.label || proposal.action_chain[1].actionType}
+                                    </span>
+                                    {(() => {
+                                      const chainTarget = getDeliveryTarget(proposal.action_chain[1].actionType, request, agency_summary || null);
+                                      return chainTarget ? (
+                                        <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
+                                          {chainTarget.method} → {chainTarget.target || "not set"}
+                                        </span>
+                                      ) : null;
+                                    })()}
+                                  </div>
+                                  {proposal.action_chain[1].draftSubject && (
+                                    <input
+                                      className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
+                                      value={draft.editedChainSubject}
+                                      onChange={(e) => setDraft(proposal.id, { editedChainSubject: e.target.value })}
+                                      placeholder="Follow-up Subject"
+                                    />
+                                  )}
+                                  <textarea
+                                    className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
+                                    rows={4}
+                                    value={draft.editedChainBody}
+                                    onChange={(e) => setDraft(proposal.id, { editedChainBody: e.target.value })}
+                                  />
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      ) : (
-                        <p className="text-[10px] text-muted-foreground">No draft. Approve to continue processing.</p>
-                      )
-                    ) : (
-                      /* ── Non-email action: proposal card ── */
-                      <div className={cn(
-                        "rounded-md border p-3 space-y-2",
-                        pendingActionType === "SUBMIT_PORTAL" && "border-cyan-700/40 bg-cyan-500/5",
-                        pendingActionType === "RESEARCH_AGENCY" && "border-violet-700/40 bg-violet-500/5",
-                        pendingActionType === "CLOSE_CASE" && "border-gray-700/40 bg-muted/50",
-                        pendingActionType === "WITHDRAW" && "border-red-700/40 bg-red-500/5",
-                        pendingActionType === "ESCALATE" && "border-yellow-700/40 bg-yellow-500/5",
-                        pendingActionType === "REFORMULATE_REQUEST" && "border-fuchsia-700/40 bg-fuchsia-500/5",
-                        !["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(pendingActionType) && "border-border/60 bg-muted/30",
-                      )}>
-                        <div className="flex items-center gap-2">
-                          {pendingActionType === "SUBMIT_PORTAL" && <Globe className="h-4 w-4 text-cyan-400" />}
-                          {pendingActionType === "RESEARCH_AGENCY" && <Search className="h-4 w-4 text-violet-400" />}
-                          {pendingActionType === "CLOSE_CASE" && <CheckCircle className="h-4 w-4 text-gray-400" />}
-                          {pendingActionType === "WITHDRAW" && <XCircle className="h-4 w-4 text-red-400" />}
-                          {pendingActionType === "ESCALATE" && <AlertTriangle className="h-4 w-4 text-yellow-400" />}
-                          {pendingActionType === "REFORMULATE_REQUEST" && <RotateCcw className="h-4 w-4 text-fuchsia-400" />}
-                          {!["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(pendingActionType) && <Bot className="h-4 w-4 text-muted-foreground" />}
-                          <span className="text-xs font-medium">
-                            {ACTION_TYPE_LABELS[pendingActionType]?.label || pendingActionType.replace(/_/g, " ")}
-                          </span>
-                        </div>
-                        {pending_proposal.draft_body_text && (
-                          <LinkifiedText text={pending_proposal.draft_body_text || ""} className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed" />
-                        )}
-                        {!pending_proposal.draft_body_text && pendingManualPdfEscalation && (
-                          <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-2 text-xs text-amber-200 space-y-1">
-                            <p>{pendingManualPdfEscalation.instruction}</p>
-                            {pendingDelivery?.target && (
-                              <p>
-                                <span className="text-amber-100/80">Send to:</span>{" "}
-                                <span className="font-medium">{pendingDelivery.target}</span>
-                              </p>
+                          ) : (
+                            <p className="text-[10px] text-muted-foreground">No draft. Approve to continue processing.</p>
+                          )
+                        ) : (
+                          /* ── Non-email action: proposal card ── */
+                          <div className={cn(
+                            "rounded-md border p-3 space-y-2",
+                            actionType === "SUBMIT_PORTAL" && "border-cyan-700/40 bg-cyan-500/5",
+                            actionType === "RESEARCH_AGENCY" && "border-violet-700/40 bg-violet-500/5",
+                            actionType === "CLOSE_CASE" && "border-gray-700/40 bg-muted/50",
+                            actionType === "WITHDRAW" && "border-red-700/40 bg-red-500/5",
+                            actionType === "ESCALATE" && "border-yellow-700/40 bg-yellow-500/5",
+                            actionType === "REFORMULATE_REQUEST" && "border-fuchsia-700/40 bg-fuchsia-500/5",
+                            !["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(actionType) && "border-border/60 bg-muted/30",
+                          )}>
+                            <div className="flex items-center gap-2">
+                              {actionType === "SUBMIT_PORTAL" && <Globe className="h-4 w-4 text-cyan-400" />}
+                              {actionType === "RESEARCH_AGENCY" && <Search className="h-4 w-4 text-violet-400" />}
+                              {actionType === "CLOSE_CASE" && <CheckCircle className="h-4 w-4 text-gray-400" />}
+                              {actionType === "WITHDRAW" && <XCircle className="h-4 w-4 text-red-400" />}
+                              {actionType === "ESCALATE" && <AlertTriangle className="h-4 w-4 text-yellow-400" />}
+                              {actionType === "REFORMULATE_REQUEST" && <RotateCcw className="h-4 w-4 text-fuchsia-400" />}
+                              {!["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(actionType) && <Bot className="h-4 w-4 text-muted-foreground" />}
+                              <span className="text-xs font-medium">
+                                {ACTION_TYPE_LABELS[actionType]?.label || actionType.replace(/_/g, " ")}
+                              </span>
+                            </div>
+                            {proposal.draft_body_text && (
+                              <LinkifiedText text={proposal.draft_body_text || ""} className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed" />
                             )}
-                            {pendingManualPdfEscalation.failureReason && (
-                              <p className="text-amber-100/80">
-                                Failure: {pendingManualPdfEscalation.failureReason}
-                              </p>
+                            {!proposal.draft_body_text && manualPdfEscalation && (
+                              <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-2 text-xs text-amber-200 space-y-1">
+                                <p>{manualPdfEscalation.instruction}</p>
+                                {delivery?.target && (
+                                  <p>
+                                    <span className="text-amber-100/80">Send to:</span>{" "}
+                                    <span className="font-medium">{delivery.target}</span>
+                                  </p>
+                                )}
+                                {manualPdfEscalation.failureReason && (
+                                  <p className="text-amber-100/80">
+                                    Failure: {manualPdfEscalation.failureReason}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                            {!proposal.draft_body_text && !manualPdfEscalation && (
+                              <p className="text-[10px] text-muted-foreground italic">Approve to proceed with this action.</p>
                             )}
                           </div>
                         )}
-                        {!pending_proposal.draft_body_text && !pendingManualPdfEscalation && (
-                          <p className="text-[10px] text-muted-foreground italic">Approve to proceed with this action.</p>
+
+                        {/* Reasoning (collapsible) */}
+                        {Array.isArray(proposal.reasoning) && proposal.reasoning.length > 0 && (
+                          <details className="text-xs">
+                            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">Reasoning</summary>
+                            <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                              {formatReasoning(proposal.reasoning, 5).map((r, i) => (
+                                <li key={i} className="flex gap-1"><span className="text-blue-400 shrink-0">-</span><span>{r}</span></li>
+                              ))}
+                            </ul>
+                          </details>
                         )}
-                      </div>
-                    )}
 
-                    {/* Reasoning (collapsible) */}
-                    {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
-                      <details className="text-xs">
-                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">Reasoning</summary>
-                        <ul className="mt-1 space-y-0.5 text-muted-foreground">
-                          {formatReasoning(pending_proposal.reasoning, 5).map((r, i) => (
-                            <li key={i} className="flex gap-1"><span className="text-blue-400 shrink-0">-</span><span>{r}</span></li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
+                        {/* Inline portal workflow for portal submissions and manual portal fallback */}
+                        {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(proposal.action_type) && (
+                          <details className="text-xs" open>
+                            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
+                              <Globe className="h-2.5 w-2.5" /> Portal Submission
+                            </summary>
+                            <div className="mt-1 space-y-2">
+                              <p className="text-[10px] text-muted-foreground">
+                                Handle the portal work on this case page. Use the controls below, then mark the case submitted here.
+                              </p>
+                              {portal_helper.portal_url && (
+                                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => window.open(portal_helper.portal_url!, "_blank")}>
+                                  <ExternalLink className="h-2.5 w-2.5 mr-1" /> Open Portal
+                                </Button>
+                              )}
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => {
+                                const lines = [
+                                  `Name: ${portal_helper.requester.name}`,
+                                  `Email: ${portal_helper.requester.email}`,
+                                  `Phone: ${portal_helper.requester.phone}`,
+                                  `Address: ${portal_helper.address.line1}, ${portal_helper.address.city}, ${portal_helper.address.state} ${portal_helper.address.zip}`,
+                                  portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
+                                  portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
+                                  portal_helper.case_info.requested_records.length > 0 && `Records: ${portal_helper.case_info.requested_records.join(", ")}`,
+                                ].filter(Boolean).join("\n");
+                                navigator.clipboard.writeText(lines);
+                                toast.success("Fields copied");
+                              }}>
+                                <Copy className="h-2.5 w-2.5 mr-1" /> Copy All Fields
+                              </Button>
+                              <Button
+                                size="sm" variant="outline"
+                                className="h-6 text-[10px] border-green-700/50 text-green-400"
+                                onClick={() => handleManualSubmit(proposal.id)}
+                                disabled={isManualSubmitting}
+                              >
+                                {isManualSubmitting ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <CheckCircle className="h-2.5 w-2.5 mr-1" />}
+                                Mark Submitted
+                              </Button>
+                            </div>
+                          </details>
+                        )}
 
-                    {/* Inline portal workflow for portal submissions and manual portal fallback */}
-                    {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(pending_proposal.action_type) && (
-                      <details className="text-xs" open>
-                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
-                          <Globe className="h-2.5 w-2.5" /> Portal Submission
-                        </summary>
-                        <div className="mt-1 space-y-2">
-                          <p className="text-[10px] text-muted-foreground">
-                            Handle the portal work on this case page. Use the controls below, then mark the case submitted here.
-                          </p>
-                          {portal_helper.portal_url && (
-                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => window.open(portal_helper.portal_url!, "_blank")}>
-                              <ExternalLink className="h-2.5 w-2.5 mr-1" /> Open Portal
-                            </Button>
-                          )}
-                          <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => {
-                            const lines = [
-                              `Name: ${portal_helper.requester.name}`,
-                              `Email: ${portal_helper.requester.email}`,
-                              `Phone: ${portal_helper.requester.phone}`,
-                              `Address: ${portal_helper.address.line1}, ${portal_helper.address.city}, ${portal_helper.address.state} ${portal_helper.address.zip}`,
-                              portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
-                              portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
-                              portal_helper.case_info.requested_records.length > 0 && `Records: ${portal_helper.case_info.requested_records.join(", ")}`,
-                            ].filter(Boolean).join("\n");
-                            navigator.clipboard.writeText(lines);
-                            toast.success("Fields copied");
-                          }}>
-                            <Copy className="h-2.5 w-2.5 mr-1" /> Copy All Fields
-                          </Button>
-                          <Button
-                            size="sm" variant="outline"
-                            className="h-6 text-[10px] border-green-700/50 text-green-400"
-                            onClick={handleManualSubmit}
-                            disabled={isManualSubmitting}
-                          >
-                            {isManualSubmitting ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <CheckCircle className="h-2.5 w-2.5 mr-1" />}
-                            Mark Submitted
-                          </Button>
-                        </div>
-                      </details>
-                    )}
-
-                    {/* Action buttons */}
-                    <div className="flex items-center gap-2 pt-1">
-                      {isPendingApplying ? (
-                        <div className="flex items-center gap-2 text-xs text-blue-300 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Applying decision...
-                        </div>
-                      ) : (() => {
-                        const gateOptions = pending_proposal.gate_options as string[] | null;
-                        const showApprove = (!gateOptions || gateOptions.includes("APPROVE")) && !pendingManualPdfEscalation;
-                        const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
-                        const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
-                        const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
-                        return (
-                          <>
-                            {showRetryResearch && (
-                              <Button size="sm" className="h-7 text-xs bg-amber-700 hover:bg-amber-600" onClick={handleRetryResearch} disabled={isApproving || isAdjustingPending}>
-                                {isApproving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
-                                Retry Research
-                              </Button>
-                            )}
-                            {showApprove && (
-                              <Button size="sm" className="h-7 text-xs bg-green-700 hover:bg-green-600" onClick={handleApprovePending} disabled={isApproving || isAdjustingPending}>
-                                {isApproving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : isEmailLikePendingAction ? <Send className="h-3 w-3 mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />}
-                                {pendingApproveLabel}
-                              </Button>
-                            )}
-                            {showAdjust && (
-                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPendingAdjustModalOpen(true)} disabled={isApproving || isAdjustingPending}>
-                                <Edit className="h-3 w-3 mr-1" /> Adjust
-                              </Button>
-                            )}
-                            {showDismiss && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isApproving || isAdjustingPending}>
-                                    <Trash2 className="h-3 w-3 mr-1" /> Dismiss <ChevronDown className="h-2.5 w-2.5 ml-1" />
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          {isThisProposalApplying ? (
+                            <div className="flex items-center gap-2 text-xs text-blue-300 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Applying decision...
+                            </div>
+                          ) : (() => {
+                            const gateOptions = proposal.gate_options as string[] | null;
+                            const showApprove = (!gateOptions || gateOptions.includes("APPROVE")) && !manualPdfEscalation;
+                            const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
+                            const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
+                            const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+                            return (
+                              <>
+                                {showRetryResearch && (
+                                  <Button size="sm" className="h-7 text-xs bg-amber-700 hover:bg-amber-600" onClick={() => handleRetryResearch(proposal.id)} disabled={isApproving || isAdjustingPending}>
+                                    {isApproving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                                    Retry Research
                                   </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start">
-                                  {DISMISS_REASONS.map((reason) => (
-                                    <DropdownMenuItem key={reason} onClick={() => handleDismissPending(reason)} className="text-xs">{reason}</DropdownMenuItem>
-                                  ))}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                ) : isPaused ? (
+                                )}
+                                {showApprove && (
+                                  <Button size="sm" className="h-7 text-xs bg-green-700 hover:bg-green-600" onClick={() => handleApprovePending(proposal.id)} disabled={isApproving || isAdjustingPending}>
+                                    {isApproving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : isEmailLike ? <Send className="h-3 w-3 mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />}
+                                    {approveLabel}
+                                  </Button>
+                                )}
+                                {showAdjust && (
+                                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setPendingAdjustProposalId(proposal.id); setPendingAdjustModalOpen(true); }} disabled={isApproving || isAdjustingPending}>
+                                    <Edit className="h-3 w-3 mr-1" /> Adjust
+                                  </Button>
+                                )}
+                                {showDismiss && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button size="sm" variant="outline" className="h-7 text-xs" disabled={isApproving || isAdjustingPending}>
+                                        <Trash2 className="h-3 w-3 mr-1" /> Dismiss <ChevronDown className="h-2.5 w-2.5 ml-1" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start">
+                                      {DISMISS_REASONS.map((reason) => (
+                                        <DropdownMenuItem key={reason} onClick={() => handleDismissPending(proposal.id, reason)} className="text-xs">{reason}</DropdownMenuItem>
+                                      ))}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+                {_pendingProposals.length > 0 ? null : isPaused ? (
                   <div className="px-3 py-3">
                     <DecisionPanel
                       request={request}

@@ -547,6 +547,8 @@ export interface PendingProposal {
   gate_options?: string[] | null;
   action_chain?: ChainActionItem[] | null;
   chain_id?: string | null;
+  case_agency_id?: number | null;
+  agency_name?: string | null;
 }
 
 export interface AgentDecision {
@@ -571,6 +573,7 @@ export interface RequestWorkspaceResponse {
   deadline_milestones?: DeadlineMilestone[];
   state_deadline?: StateDeadline;
   pending_proposal?: PendingProposal | null;
+  pending_proposals?: PendingProposal[];
   portal_helper?: PortalHelper | null;
   review_state?: ReviewState;
   control_state?: ControlState;
