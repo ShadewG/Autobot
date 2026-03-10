@@ -342,7 +342,7 @@ export default function SimulatePage() {
     <AdminGuard>
     <div className="flex gap-4 h-[calc(100vh-9rem)] min-h-0">
       {/* ── Left Panel: Input ─────────────────────────────────────────────── */}
-      <div className="w-[420px] shrink-0 flex flex-col gap-3">
+      <div className="w-[420px] lg:w-[520px] shrink-0 flex flex-col gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <FlaskConical className="h-5 w-5" />
