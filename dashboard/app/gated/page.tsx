@@ -2598,48 +2598,6 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Review notes — only actionable items shown, informational collapsed */}
-          {warnings.length > 0 && (() => {
-            const { actionable, informational } = condenseReviewNotes(warnings);
-            return (
-              <Collapsible open={reviewNotesExpanded} onOpenChange={setReviewNotesExpanded}>
-                <div className="border border-border bg-muted/50 p-3">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                    Watch For
-                  </p>
-                  {actionable.map((w, i) => (
-                    <p key={i} className="text-xs text-muted-foreground mb-1">
-                      • {w}
-                    </p>
-                  ))}
-                  {informational.length > 0 && (
-                    <>
-                      <CollapsibleContent>
-                        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-2 mb-1">
-                          Background context
-                        </p>
-                        {informational.map((w, i) => (
-                          <p key={i} className="text-xs text-muted-foreground/70 mb-1">
-                            • {w}
-                          </p>
-                        ))}
-                      </CollapsibleContent>
-                      <CollapsibleTrigger asChild>
-                        <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
-                          {reviewNotesExpanded ? (
-                            <><ChevronUp className="h-3 w-3" /> Hide context</>
-                          ) : (
-                            <><ChevronDown className="h-3 w-3" /> +{informational.length} background notes</>
-                          )}
-                        </button>
-                      </CollapsibleTrigger>
-                    </>
-                  )}
-                </div>
-              </Collapsible>
-            );
-          })()}
-
           {/* Reasoning — show key takeaway, collapse details */}
           {reasoning.length > 0 && (
             <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
