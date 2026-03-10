@@ -10,6 +10,7 @@ import { useAuth } from "./auth-provider";
 
 export function NavLinks() {
   const pathname = usePathname();
+  const portalUrl = process.env.NEXT_PUBLIC_PORTAL_URL || "https://portal-production-fa69.up.railway.app";
   const { appendUser, isAdmin, viewAll, setViewAll } = useUserFilter();
   const { user, logout } = useAuth();
 
@@ -75,6 +76,12 @@ export function NavLinks() {
         })}
       </nav>
       <div className="flex flex-wrap items-center gap-3 text-xs md:justify-end">
+        <a
+          href={portalUrl}
+          className="uppercase tracking-wider text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          PORTAL
+        </a>
         {process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL && (
           <a
             href={process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL}
