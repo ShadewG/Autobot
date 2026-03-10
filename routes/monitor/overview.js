@@ -3,9 +3,9 @@ const router = express.Router();
 const {
     db,
     normalizeProposalReasoning,
-    extractAttachmentInsights,
-    hasMissingImportDeliveryPath
+    extractAttachmentInsights
 } = require('./_helpers');
+const { hasMissingImportDeliveryPath } = require('../requests/_helpers');
 const {
     HUMAN_REVIEW_PROPOSAL_STATUSES_SQL,
     buildCaseTruth,
