@@ -141,7 +141,7 @@ Please draft a professional email to send to the agency. Only output the email b
     }
 
     const inferredActionType = latestInbound ? 'SEND_CLARIFICATION' : 'SEND_INITIAL_REQUEST';
-    return db.createProposal({
+    return db.upsertProposal({
         proposalKey: `${caseData.id}:legacy-custom:${latestInbound?.id || 'none'}:${Date.now()}`,
         caseId: caseData.id,
         triggerMessageId: latestInbound?.id || null,
