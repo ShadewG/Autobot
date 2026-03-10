@@ -31,6 +31,175 @@ const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'resp
 const CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS = ['sent', 'awaiting_response', 'responded'];
 const FOLLOWUP_ELIGIBLE_CASE_STATUSES = ['sent', 'awaiting_response'];
 const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_call'];
+const GENERIC_CASE_AGENCY_NAMES = new Set(['', 'unknown agency', 'police department', '—']);
+const PLACEHOLDER_CASE_AGENCY_EMAILS = new Set([
+    'pending-research@intake.autobot',
+    'test@agency.gov',
+]);
+
+function normalizeCaseAgencyName(value) {
+    return String(value || '')
+        .replace(/[.]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeCaseAgencyComparable(value) {
+    return normalizeCaseAgencyName(value)
+        .toLowerCase()
+        .replace(/[’'`´]/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeCaseAgencyEmail(value) {
+    const normalized = canonicalAgency.normalizeAgencyEmailHint(value);
+    if (!normalized) return null;
+    if (canonicalAgency.isTestAgencyEmail(normalized)) return null;
+    if (PLACEHOLDER_CASE_AGENCY_EMAILS.has(normalized)) return null;
+    if (normalized.endsWith('@placeholder.invalid')) return null;
+    return normalized;
+}
+
+function normalizeCaseAgencyPortalKey(value) {
+    const normalized = normalizePortalUrl(value);
+    if (!normalized) return null;
+    try {
+        const url = new URL(normalized);
+        const pathname = (url.pathname || '/').replace(/\/+$/, '') || '/';
+        return `${url.hostname.toLowerCase()}${pathname}${url.search || ''}`.toLowerCase();
+    } catch (error) {
+        return normalized.toLowerCase();
+    }
+}
+
+function buildCaseAgencyIdentity(row) {
+    const agencyName = normalizeCaseAgencyName(row?.agency_name || '');
+    const comparableName = normalizeCaseAgencyComparable(agencyName);
+    return {
+        agencyId: row?.agency_id ? Number(row.agency_id) : null,
+        agencyName,
+        comparableName,
+        hasComparableName: Boolean(comparableName) && !GENERIC_CASE_AGENCY_NAMES.has(comparableName),
+        agencyEmail: normalizeCaseAgencyEmail(row?.agency_email || null),
+        portalKey: normalizeCaseAgencyPortalKey(row?.portal_url || null),
+    };
+}
+
+function areCaseAgencyRowsEquivalent(left, right) {
+    const a = buildCaseAgencyIdentity(left);
+    const b = buildCaseAgencyIdentity(right);
+
+    if (a.agencyId && b.agencyId && a.agencyId === b.agencyId) return true;
+    if (a.agencyEmail && b.agencyEmail && a.agencyEmail === b.agencyEmail) return true;
+    if (a.portalKey && b.portalKey && a.portalKey === b.portalKey) return true;
+    if (a.hasComparableName && b.hasComparableName && a.comparableName === b.comparableName) return true;
+
+    return false;
+}
+
+function chooseCanonicalCaseAgencyRow(rows) {
+    return [...rows].sort((left, right) => {
+        const leftId = buildCaseAgencyIdentity(left);
+        const rightId = buildCaseAgencyIdentity(right);
+        const leftScore =
+            (left.is_primary ? 50 : 0) +
+            (leftId.agencyId ? 20 : 0) +
+            (leftId.portalKey ? 8 : 0) +
+            (leftId.agencyEmail ? 8 : 0) +
+            (leftId.hasComparableName ? 4 : 0);
+        const rightScore =
+            (right.is_primary ? 50 : 0) +
+            (rightId.agencyId ? 20 : 0) +
+            (rightId.portalKey ? 8 : 0) +
+            (rightId.agencyEmail ? 8 : 0) +
+            (rightId.hasComparableName ? 4 : 0);
+
+        if (leftScore !== rightScore) return rightScore - leftScore;
+        const leftUpdated = new Date(left.updated_at || left.created_at || 0).getTime();
+        const rightUpdated = new Date(right.updated_at || right.created_at || 0).getTime();
+        if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
+        return Number(left.id || 0) - Number(right.id || 0);
+    })[0] || null;
+}
+
+function choosePreferredAgencyName(values) {
+    return values
+        .map((value) => normalizeCaseAgencyName(value))
+        .filter(Boolean)
+        .sort((left, right) => {
+            const leftComparable = normalizeCaseAgencyComparable(left);
+            const rightComparable = normalizeCaseAgencyComparable(right);
+            const leftScore = (GENERIC_CASE_AGENCY_NAMES.has(leftComparable) ? 0 : 10) + left.length;
+            const rightScore = (GENERIC_CASE_AGENCY_NAMES.has(rightComparable) ? 0 : 10) + right.length;
+            return rightScore - leftScore;
+        })[0] || null;
+}
+
+function scoreAgencyEmail(value) {
+    const normalized = normalizeCaseAgencyEmail(value);
+    if (!normalized) return -100;
+    const local = normalized.split('@')[0];
+    let score = 0;
+    if (/(orr|records?|public|foia)/i.test(local)) score += 8;
+    if (/(clerical|admin|administration|openrecords?)/i.test(local)) score += 3;
+    if (/(media|press|pio|communications?)/i.test(local)) score -= 3;
+    score += normalized.startsWith('records@') ? 2 : 0;
+    return score;
+}
+
+function choosePreferredAgencyEmail(values) {
+    return values
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .sort((left, right) => scoreAgencyEmail(right) - scoreAgencyEmail(left))[0] || null;
+}
+
+function scorePortalUrl(value) {
+    const normalized = normalizePortalUrl(value);
+    if (!normalized) return -100;
+    let score = 0;
+    if (/^https:\/\//i.test(normalized)) score += 3;
+    if (/govqa|nextrequest|justfoia|civicplus/i.test(normalized)) score += 2;
+    return score;
+}
+
+function choosePreferredPortalUrl(values) {
+    return values
+        .map((value) => normalizePortalUrl(value))
+        .filter(Boolean)
+        .sort((left, right) => scorePortalUrl(right) - scorePortalUrl(left))[0] || null;
+}
+
+function mergeCaseAgencyNotes(existingNotes, duplicateRows, mergedEmail, mergedPortal) {
+    const notes = [];
+    for (const note of existingNotes.map((value) => String(value || '').trim()).filter(Boolean)) {
+        if (!notes.includes(note)) notes.push(note);
+    }
+
+    const alternateEmails = [...new Set(
+        duplicateRows
+            .map((row) => normalizeCaseAgencyEmail(row.agency_email))
+            .filter(Boolean)
+            .filter((email) => email !== normalizeCaseAgencyEmail(mergedEmail))
+    )];
+    const alternatePortals = [...new Set(
+        duplicateRows
+            .map((row) => normalizePortalUrl(row.portal_url))
+            .filter(Boolean)
+            .filter((url) => url !== normalizePortalUrl(mergedPortal))
+    )];
+
+    if (alternateEmails.length > 0) {
+        notes.push(`Merged duplicate agency rows. Alternate emails seen: ${alternateEmails.join(', ')}`);
+    }
+    if (alternatePortals.length > 0) {
+        notes.push(`Merged duplicate agency rows. Alternate portals seen: ${alternatePortals.join(', ')}`);
+    }
+
+    return notes.length > 0 ? notes.join('\n') : null;
+}
 
 class DatabaseService {
     constructor() {
@@ -3635,63 +3804,173 @@ class DatabaseService {
     // Case Agencies (Multi-agency support)
     // =========================================================================
 
-    async addCaseAgency(caseId, agencyData) {
-        // Dedup check: look for existing active row with same agency name (case-insensitive)
-        const dupCheck = await this.query(
-            `SELECT * FROM case_agencies
-             WHERE case_id = $1 AND is_active = true
-               AND (LOWER(agency_name) = LOWER($2) ${agencyData.agency_id ? 'OR agency_id = $3' : ''})
-             ORDER BY created_at ASC LIMIT 1`,
-            agencyData.agency_id
-                ? [caseId, agencyData.agency_name, agencyData.agency_id]
-                : [caseId, agencyData.agency_name]
+    async mergeCaseAgencyCluster(caseId, rows, incomingAgencyData = null) {
+        if (!Array.isArray(rows) || rows.length === 0) return null;
+
+        const canonicalRow = chooseCanonicalCaseAgencyRow(rows);
+        if (!canonicalRow) return null;
+
+        const mergedAgencyId =
+            incomingAgencyData?.agency_id ||
+            rows.find((row) => row.agency_id)?.agency_id ||
+            canonicalRow.agency_id ||
+            null;
+        const mergedAgencyName = choosePreferredAgencyName([
+            incomingAgencyData?.agency_name,
+            ...rows.map((row) => row.agency_name),
+        ]) || canonicalRow.agency_name;
+        const mergedAgencyEmail = choosePreferredAgencyEmail([
+            incomingAgencyData?.agency_email,
+            ...rows.map((row) => row.agency_email),
+        ]) || canonicalRow.agency_email || null;
+        const mergedPortalUrl = choosePreferredPortalUrl([
+            incomingAgencyData?.portal_url,
+            ...rows.map((row) => row.portal_url),
+        ]) || canonicalRow.portal_url || null;
+        const mergedPortalProvider =
+            incomingAgencyData?.portal_provider ||
+            detectPortalProviderByUrl(mergedPortalUrl)?.name ||
+            rows.find((row) => row.portal_provider)?.portal_provider ||
+            canonicalRow.portal_provider ||
+            null;
+        const mergedThreadId =
+            canonicalRow.email_thread_id ||
+            rows.find((row) => row.email_thread_id)?.email_thread_id ||
+            null;
+        const mergedStatus =
+            incomingAgencyData?.status ||
+            rows.find((row) => row.status === 'active')?.status ||
+            canonicalRow.status ||
+            'pending';
+        const mergedSubstatus =
+            canonicalRow.substatus ||
+            rows.find((row) => row.substatus)?.substatus ||
+            null;
+        const mergedNotes = mergeCaseAgencyNotes(
+            [
+                canonicalRow.notes,
+                incomingAgencyData?.notes || null,
+                ...rows.map((row) => row.notes),
+            ],
+            rows,
+            mergedAgencyEmail,
+            mergedPortalUrl
         );
 
-        if (dupCheck.rows.length > 0) {
-            // Merge new info into existing row
-            const existingRow = dupCheck.rows[0];
-            const mergeUpdates = {};
-            if (agencyData.agency_email && !existingRow.agency_email) mergeUpdates.agency_email = agencyData.agency_email;
-            if (agencyData.portal_url && !existingRow.portal_url) mergeUpdates.portal_url = agencyData.portal_url;
-            if (agencyData.portal_provider && !existingRow.portal_provider) mergeUpdates.portal_provider = agencyData.portal_provider;
-            if (agencyData.agency_id && !existingRow.agency_id) mergeUpdates.agency_id = agencyData.agency_id;
-            if (agencyData.notes && !existingRow.notes) mergeUpdates.notes = agencyData.notes;
+        const updatePayload = {};
+        if ((canonicalRow.agency_id || null) !== (mergedAgencyId || null)) updatePayload.agency_id = mergedAgencyId;
+        if ((canonicalRow.agency_name || null) !== (mergedAgencyName || null)) updatePayload.agency_name = mergedAgencyName;
+        if ((canonicalRow.agency_email || null) !== (mergedAgencyEmail || null)) updatePayload.agency_email = mergedAgencyEmail;
+        if ((normalizePortalUrl(canonicalRow.portal_url) || null) !== (normalizePortalUrl(mergedPortalUrl) || null)) {
+            updatePayload.portal_url = mergedPortalUrl;
+        }
+        if ((canonicalRow.portal_provider || null) !== (mergedPortalProvider || null)) updatePayload.portal_provider = mergedPortalProvider;
+        if ((canonicalRow.email_thread_id || null) !== (mergedThreadId || null)) updatePayload.email_thread_id = mergedThreadId;
+        if ((canonicalRow.status || null) !== (mergedStatus || null)) updatePayload.status = mergedStatus;
+        if ((canonicalRow.substatus || null) !== (mergedSubstatus || null)) updatePayload.substatus = mergedSubstatus;
+        if ((canonicalRow.notes || null) !== (mergedNotes || null)) updatePayload.notes = mergedNotes;
 
-            if (Object.keys(mergeUpdates).length > 0) {
-                const setClauses = Object.keys(mergeUpdates).map((k, i) => `${k} = $${i + 2}`);
-                setClauses.push('updated_at = NOW()');
-                const vals = Object.values(mergeUpdates);
-                await this.query(
-                    `UPDATE case_agencies SET ${setClauses.join(', ')} WHERE id = $1`,
-                    [existingRow.id, ...vals]
-                );
+        let effectiveRow = canonicalRow;
+        if (Object.keys(updatePayload).length > 0) {
+            effectiveRow = await this.updateCaseAgency(canonicalRow.id, updatePayload);
+        }
+
+        const duplicateIds = rows.map((row) => row.id).filter((id) => id !== canonicalRow.id);
+        if (duplicateIds.length > 0) {
+            await this.query(
+                'UPDATE proposals SET case_agency_id = $1, updated_at = NOW() WHERE case_agency_id = ANY($2::int[])',
+                [canonicalRow.id, duplicateIds]
+            );
+            await this.query(
+                'UPDATE email_threads SET case_agency_id = $1, updated_at = NOW() WHERE case_agency_id = ANY($2::int[])',
+                [canonicalRow.id, duplicateIds]
+            );
+            await this.query(
+                `UPDATE case_agencies
+                    SET is_active = false,
+                        is_primary = false,
+                        updated_at = NOW(),
+                        notes = CASE
+                            WHEN notes IS NULL OR BTRIM(notes) = '' THEN 'Merged into case_agency_id ${canonicalRow.id}'
+                            WHEN notes LIKE '%' || $2 || '%' THEN notes
+                            ELSE notes || E'\n' || $2
+                        END
+                  WHERE id = ANY($1::int[])`,
+                [duplicateIds, `Merged into case_agency_id ${canonicalRow.id}`]
+            );
+        }
+
+        const shouldBePrimary =
+            incomingAgencyData?.is_primary === true ||
+            rows.some((row) => row.is_primary === true);
+
+        if (shouldBePrimary && !effectiveRow.is_primary) {
+            const switched = await this.switchPrimaryAgency(caseId, effectiveRow.id);
+            return switched || effectiveRow;
+        }
+
+        if (effectiveRow.is_primary && (Object.keys(updatePayload).length > 0 || duplicateIds.length > 0)) {
+            await this.syncPrimaryAgencyToCase(caseId, effectiveRow);
+        }
+
+        return effectiveRow;
+    }
+
+    async consolidateCaseAgencyDuplicates(caseId) {
+        const activeRowsResult = await this.query(
+            `SELECT *
+               FROM case_agencies
+              WHERE case_id = $1 AND is_active = true
+              ORDER BY is_primary DESC, created_at ASC, id ASC`,
+            [caseId]
+        );
+        const activeRows = activeRowsResult.rows || [];
+        const visited = new Set();
+        const merged = [];
+
+        for (const row of activeRows) {
+            if (visited.has(row.id)) continue;
+            const cluster = activeRows.filter((candidate) => {
+                if (visited.has(candidate.id)) return false;
+                return areCaseAgencyRowsEquivalent(row, candidate);
+            });
+            cluster.forEach((candidate) => visited.add(candidate.id));
+            if (cluster.length <= 1) continue;
+            const mergedRow = await this.mergeCaseAgencyCluster(caseId, cluster);
+            if (mergedRow) {
+                merged.push({
+                    canonical_case_agency_id: mergedRow.id,
+                    merged_case_agency_ids: cluster.map((candidate) => candidate.id),
+                    agency_name: mergedRow.agency_name,
+                });
             }
+        }
 
-            let effectiveRow = existingRow;
-            const refreshed = await this.query('SELECT * FROM case_agencies WHERE id = $1', [existingRow.id]);
-            effectiveRow = refreshed.rows[0] || existingRow;
+        return {
+            case_id: caseId,
+            merged_count: merged.length,
+            merges: merged,
+        };
+    }
 
-            const wantsPrimary = agencyData.is_primary === true;
-            if (wantsPrimary && !effectiveRow.is_primary) {
-                const switched = await this.switchPrimaryAgency(caseId, effectiveRow.id);
-                return switched || effectiveRow;
-            }
+    async addCaseAgency(caseId, agencyData) {
+        const activeRowsResult = await this.query(
+            `SELECT *
+               FROM case_agencies
+              WHERE case_id = $1 AND is_active = true
+              ORDER BY is_primary DESC, created_at ASC, id ASC`,
+            [caseId]
+        );
+        const activeRows = activeRowsResult.rows || [];
+        const matchingRows = activeRows.filter((row) => areCaseAgencyRowsEquivalent(row, agencyData));
 
-            if (effectiveRow.is_primary && Object.keys(mergeUpdates).length > 0) {
-                await this.syncPrimaryAgencyToCase(caseId, effectiveRow);
-            }
-
-            // Nothing new to merge — return existing row as-is
-            return effectiveRow;
+        if (matchingRows.length > 0) {
+            return this.mergeCaseAgencyCluster(caseId, matchingRows, agencyData);
         }
 
         // Check if this is the first agency for this case
-        const existing = await this.query(
-            'SELECT COUNT(*) as cnt FROM case_agencies WHERE case_id = $1 AND is_active = true',
-            [caseId]
-        );
         let hasSeededPrimaryFromCaseRow = false;
-        if (parseInt(existing.rows[0].cnt) === 0) {
+        if (activeRows.length === 0) {
             const currentCase = await this.getCaseById(caseId);
             const normalizedCaseName = String(currentCase?.agency_name || '').trim().toLowerCase();
             const normalizedCaseEmail = String(currentCase?.agency_email || '').trim().toLowerCase();
@@ -3725,7 +4004,7 @@ class DatabaseService {
                 hasSeededPrimaryFromCaseRow = true;
             }
         }
-        const isFirst = parseInt(existing.rows[0].cnt) === 0 && !hasSeededPrimaryFromCaseRow;
+        const isFirst = activeRows.length === 0 && !hasSeededPrimaryFromCaseRow;
         const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : isFirst;
 
         const result = await this.query(`

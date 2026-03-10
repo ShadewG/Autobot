@@ -58,13 +58,17 @@ describe('Case agency and run guards', function () {
 
       const fakeDb = {
         query: sinon.stub(),
+        updateCaseAgency: sinon.stub().callsFake(async (id, updates) => ({
+          ...refreshedRow,
+          id,
+          ...updates,
+        })),
         switchPrimaryAgency: sinon.stub().resolves(switchedRow),
         syncPrimaryAgencyToCase: sinon.stub().resolves(),
+        mergeCaseAgencyCluster: db.mergeCaseAgencyCluster,
       };
 
       fakeDb.query.onCall(0).resolves({ rows: [existingRow] });
-      fakeDb.query.onCall(1).resolves({ rows: [] });
-      fakeDb.query.onCall(2).resolves({ rows: [refreshedRow] });
 
       const result = await db.addCaseAgency.call(fakeDb, 55, {
         agency_id: 9,
@@ -76,6 +80,7 @@ describe('Case agency and run guards', function () {
       sinon.assert.calledOnce(fakeDb.switchPrimaryAgency);
       sinon.assert.calledWithExactly(fakeDb.switchPrimaryAgency, 55, 88);
       sinon.assert.notCalled(fakeDb.syncPrimaryAgencyToCase);
+      sinon.assert.calledOnce(fakeDb.updateCaseAgency);
       assert.deepStrictEqual(result, switchedRow);
     });
   });
