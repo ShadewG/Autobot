@@ -400,37 +400,70 @@ Hard requirements:
  * 3. Last resort: generate a standalone FOIA request letter PDF
  */
 async function fillPdfForm(pdfBuffer, caseData) {
+    const MAX_VERIFY_ATTEMPTS = 6;
     const requester = await _getRequesterInfo(caseData);
 
     let pdfDoc;
     try {
         pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
     } catch (loadErr) {
-        console.log(`📝 Cannot load PDF (${loadErr.message}), generating FOIA letter`);
+        console.log(`[pdf] Cannot load PDF (${loadErr.message}), generating FOIA letter`);
         return await _generateFoiaLetterPdf(caseData, requester);
     }
 
-    // Strategy 1: fillable form fields
-    try {
-        const form = pdfDoc.getForm();
-        const fields = form.getFields();
-        if (fields.length > 0) {
-            return await _fillFormFields(pdfDoc, form, fields, caseData, requester);
-        }
-    } catch (formErr) {
-        // No form or can't parse — continue to flat overlay
-    }
+    for (let attempt = 1; attempt <= MAX_VERIFY_ATTEMPTS; attempt++) {
+        let filledBuffer = null;
+        let strategy = null;
 
-    // Strategy 2: AI-driven text overlay on flat form pages
-    if (pdfDoc.getPageCount() > 0) {
+        // Reload PDF doc on retries (filling mutates it)
+        if (attempt > 1) {
+            try {
+                pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+            } catch (_) { break; }
+        }
+
+        // Strategy 1: fillable form fields
         try {
-            return await _fillFlatForm(pdfDoc, caseData, requester);
-        } catch (flatErr) {
-            console.warn(`📝 Flat form overlay failed (${flatErr.message}), generating FOIA letter`);
+            const form = pdfDoc.getForm();
+            const fields = form.getFields();
+            if (fields.length > 0) {
+                filledBuffer = await _fillFormFields(pdfDoc, form, fields, caseData, requester);
+                strategy = 'fillable';
+            }
+        } catch (formErr) {
+            // No form or can't parse — continue to flat overlay
+        }
+
+        // Strategy 2: AI-driven text overlay on flat form pages
+        if (!filledBuffer && pdfDoc.getPageCount() > 0) {
+            try {
+                filledBuffer = await _fillFlatForm(pdfDoc, caseData, requester);
+                strategy = 'flat';
+            } catch (flatErr) {
+                console.warn(`[pdf] Flat form overlay failed (${flatErr.message})`);
+            }
+        }
+
+        // Strategy 3: generate standalone letter (no verification needed)
+        if (!filledBuffer) {
+            return await _generateFoiaLetterPdf(caseData, requester);
+        }
+
+        // AI verification
+        const verification = await _verifyFilledPdf(filledBuffer, caseData);
+        if (verification.passed) {
+            if (attempt > 1) console.log(`[pdf] Verified on attempt ${attempt} (${strategy})`);
+            return filledBuffer;
+        }
+
+        console.warn(`[pdf] Verification failed (attempt ${attempt}/${MAX_VERIFY_ATTEMPTS}): ${verification.issues.join('; ')}`);
+        if (attempt === MAX_VERIFY_ATTEMPTS) {
+            console.warn(`[pdf] Max attempts reached, using last fill result`);
+            return filledBuffer;
         }
     }
 
-    // Strategy 3: generate standalone letter
+    // Fallback — shouldn't reach here
     return await _generateFoiaLetterPdf(caseData, requester);
 }
 
@@ -495,6 +528,98 @@ async function getLatestPreparedPdfAttachment(caseId) {
     ) || null;
 }
 
+/**
+ * Remove old filled PDFs for a case before creating a new one.
+ * Keeps only the source/inbound form attachments.
+ */
+async function _removeOldFilledPdfs(caseId) {
+    const attachments = await database.getAttachmentsByCaseId(caseId);
+    const filledPdfs = attachments.filter(a =>
+        a.filename?.startsWith('filled_') && a.content_type === 'application/pdf'
+    );
+    for (const att of filledPdfs) {
+        await database.query('DELETE FROM attachments WHERE id = $1', [att.id]);
+    }
+    if (filledPdfs.length > 0) {
+        console.log(`[pdf] Removed ${filledPdfs.length} old filled PDF(s) for case ${caseId}`);
+    }
+}
+
+/**
+ * AI verification of a filled PDF — renders pages to images and checks
+ * if the form fields appear correctly filled. Returns { passed, issues }.
+ */
+async function _verifyFilledPdf(filledBuffer, caseData) {
+    const { renderPdfPagesToImages } = require('./attachment-processor');
+    const pages = await renderPdfPagesToImages(filledBuffer, 10);
+    if (pages.length === 0) {
+        console.warn('[pdf-verify] Could not render PDF pages to images, skipping verification');
+        return { passed: true, issues: [] };
+    }
+
+    const openai = getOpenAI();
+    const requester = await _getRequesterInfo(caseData);
+
+    const imageContent = pages.map((page, i) => ({
+        type: 'image_url',
+        image_url: {
+            url: `data:image/png;base64,${page.imageBuffer.toString('base64')}`,
+            detail: 'low',
+        },
+    }));
+
+    const expectedFields = [
+        requester.name && `Requester name: ${requester.name}`,
+        requester.email && `Email: ${requester.email}`,
+        requester.phone && `Phone: ${requester.phone}`,
+        requester.address && `Address: ${requester.address}`,
+        caseData.subject_name && `Subject: ${caseData.subject_name}`,
+        caseData.incident_date && `Date: ${caseData.incident_date}`,
+        caseData.requested_records && `Records: ${caseData.requested_records}`,
+    ].filter(Boolean).join('\n');
+
+    try {
+        const response = await openai.responses.create({
+            model: process.env.PDF_VERIFY_MODEL || 'gpt-4.1-mini',
+            input: [
+                {
+                    role: 'system',
+                    content: `You verify filled PDF forms. Check if the form fields are properly filled with the expected data. Look for:
+- Empty fields that should be filled
+- Garbled, overlapping, or misplaced text
+- Wrong data in fields (wrong name, email, etc.)
+- Missing signatures or dates where required
+
+Respond with JSON: { "passed": true/false, "issues": ["issue 1", "issue 2"] }
+If the form looks correctly filled, return { "passed": true, "issues": [] }.
+Be lenient — minor formatting differences are OK. Focus on missing or clearly wrong data.`,
+                },
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: `Verify this filled PDF form. Expected field values:\n${expectedFields}\n\nAre all applicable fields filled correctly?`,
+                        },
+                        ...imageContent,
+                    ],
+                },
+            ],
+        });
+
+        const text = response.output_text || '';
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            const result = JSON.parse(jsonMatch[0]);
+            return { passed: !!result.passed, issues: result.issues || [] };
+        }
+        return { passed: true, issues: [] };
+    } catch (err) {
+        console.warn(`[pdf-verify] AI verification failed: ${err.message}`);
+        return { passed: true, issues: [] };
+    }
+}
+
 async function findLatestRequestFormAttachment(caseId) {
     const attachments = await database.getAttachmentsByCaseId(caseId);
     return attachments.find((attachment) =>
@@ -553,6 +678,8 @@ async function prepareInboundPdfFormReply(caseData, options = {}) {
     }
 
     try {
+        // Remove old filled PDFs before creating a new one
+        await _removeOldFilledPdfs(caseId);
         const filledBuffer = await fillPdfFormStrict(pdfBuffer, caseData);
         const caseDir = resolveCaseAttachmentDir(caseId);
         const timestamp = Date.now();
@@ -1092,7 +1219,8 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
         filledBuffer = await _generateFoiaLetterPdf(caseData, requester);
     }
 
-    // 4. Save filled PDF to disk
+    // 4. Remove old filled PDFs, then save new one
+    await _removeOldFilledPdfs(caseData.id);
     const caseDir = resolveCaseAttachmentDir(caseData.id);
 
     const timestamp = Date.now();
@@ -1100,7 +1228,7 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
     const filledPath = path.join(caseDir, filledFilename);
     fs.writeFileSync(filledPath, filledBuffer);
 
-    console.log(`💾 Saved filled PDF: ${filledPath} (${filledBuffer.length} bytes)`);
+    console.log(`[pdf] Saved filled PDF: ${filledPath} (${filledBuffer.length} bytes)`);
 
     // 5. Save to attachments table (include binary so it survives ephemeral deploys)
     const attachment = await database.createAttachment({
