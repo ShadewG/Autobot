@@ -142,8 +142,8 @@ router.get('/users', async (req, res) => {
             SELECT
                 u.id, u.name, u.email_handle, u.email, u.active, u.is_admin,
                 u.created_at, u.updated_at,
-                COUNT(c.id)::int AS total_cases,
-                COUNT(c.id) FILTER (WHERE c.status NOT IN ('completed', 'cancelled'))::int AS active_cases,
+                COUNT(DISTINCT c.id)::int AS total_cases,
+                COUNT(DISTINCT c.id) FILTER (WHERE c.status NOT IN ('completed', 'cancelled'))::int AS active_cases,
                 (
                     SELECT COUNT(*)::int FROM proposals p2
                     JOIN cases c2 ON c2.id = p2.case_id
@@ -161,13 +161,20 @@ router.get('/users', async (req, res) => {
                                               AND ar.status IN ('created','queued','processing','running','waiting'))))
                       )
                 ) AS needs_review,
-                MAX(al.created_at) AS last_activity_at,
-                MAX(al.description) FILTER (WHERE al.created_at = (
-                    SELECT MAX(a2.created_at) FROM activity_log a2 WHERE a2.user_id = u.id::text
-                )) AS last_activity_description
+                (
+                    SELECT MAX(a2.created_at) FROM activity_log a2
+                    WHERE a2.user_id = u.id::text
+                       OR a2.case_id IN (SELECT c4.id FROM cases c4 WHERE c4.user_id = u.id)
+                ) AS last_activity_at,
+                (
+                    SELECT a3.description FROM activity_log a3
+                    WHERE a3.user_id = u.id::text
+                       OR a3.case_id IN (SELECT c5.id FROM cases c5 WHERE c5.user_id = u.id)
+                    ORDER BY a3.created_at DESC
+                    LIMIT 1
+                ) AS last_activity_description
             FROM users u
             LEFT JOIN cases c ON c.user_id = u.id
-            LEFT JOIN activity_log al ON al.user_id = u.id::text
             GROUP BY u.id
             ORDER BY u.active DESC, u.name
         `);

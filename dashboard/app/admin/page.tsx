@@ -126,7 +126,7 @@ function OverviewTab() {
         <StatCard label="Active Users" value={users.active_users} />
         <StatCard label="Active Cases" value={cases.active_cases} />
         <StatCard label="Needs Review" value={cases.needs_review} variant="warning" />
-        <StatCard label="ID State" value={cases.id_state_cases} variant="muted" />
+        <StatCard label="Awaiting ID" value={cases.id_state_cases} variant="muted" />
       </div>
 
       {/* Status Breakdown */}
@@ -313,29 +313,32 @@ function UsersTab() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 w-7 p-0"
+                      className="h-7 px-2 text-[11px]"
                       title={u.is_admin ? "Remove admin" : "Make admin"}
                       onClick={() => toggleAdmin(u)}
                     >
-                      {u.is_admin ? <ShieldCheck className="h-3.5 w-3.5 text-amber-400" /> : <Shield className="h-3.5 w-3.5" />}
+                      {u.is_admin ? <ShieldCheck className="h-3.5 w-3.5 text-amber-400 mr-1" /> : <Shield className="h-3.5 w-3.5 mr-1" />}
+                      {u.is_admin ? "Unadmin" : "Admin"}
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 w-7 p-0"
+                      className="h-7 px-2 text-[11px]"
                       title="Reset password"
                       onClick={() => { setResetTarget(u); setNewPassword(""); }}
                     >
-                      <KeyRound className="h-3.5 w-3.5" />
+                      <KeyRound className="h-3.5 w-3.5 mr-1" />
+                      Reset pw
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-7 w-7 p-0"
+                      className="h-7 px-2 text-[11px]"
                       title={u.active ? "Deactivate" : "Reactivate"}
                       onClick={() => toggleActive(u)}
                     >
-                      {u.active ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+                      {u.active ? <UserX className="h-3.5 w-3.5 mr-1" /> : <UserCheck className="h-3.5 w-3.5 mr-1" />}
+                      {u.active ? "Deactivate" : "Activate"}
                     </Button>
                   </div>
                 </div>
@@ -565,14 +568,39 @@ function StatCard({ label, value, variant }: { label: string; value: number; var
   );
 }
 
+interface DedupedEntry extends ActivityEntry {
+  count: number;
+}
+
+function deduplicateEntries(entries: ActivityEntry[]): DedupedEntry[] {
+  if (entries.length === 0) return [];
+  const result: DedupedEntry[] = [];
+  for (const entry of entries) {
+    const prev = result[result.length - 1];
+    if (
+      prev &&
+      prev.event_type === entry.event_type &&
+      prev.description === entry.description &&
+      prev.user_name === entry.user_name
+    ) {
+      prev.count += 1;
+    } else {
+      result.push({ ...entry, count: 1 });
+    }
+  }
+  return result;
+}
+
 function ActivityList({ entries }: { entries: ActivityEntry[] }) {
   if (entries.length === 0) {
     return <p className="text-xs text-muted-foreground text-center py-4">No activity</p>;
   }
 
+  const deduped = deduplicateEntries(entries);
+
   return (
     <div className="space-y-0.5 max-h-[500px] overflow-y-auto">
-      {entries.map((e) => (
+      {deduped.map((e) => (
         <div key={e.id} className="flex items-start gap-3 p-2 hover:bg-muted/30 rounded text-xs">
           <span className="text-muted-foreground shrink-0 w-24 font-mono">
             {new Date(e.created_at).toLocaleString("en-US", {
@@ -588,6 +616,11 @@ function ActivityList({ entries }: { entries: ActivityEntry[] }) {
           <span className="shrink-0 w-28 text-muted-foreground">{e.event_type.replace(/_/g, " ")}</span>
           <span className="truncate text-muted-foreground">
             {e.description}
+            {e.count > 1 && (
+              <Badge variant="secondary" className="ml-1.5 text-[10px] h-4 px-1.5">
+                x{e.count}
+              </Badge>
+            )}
             {e.agency_name && <span className="ml-1 text-foreground/60">— {e.agency_name}</span>}
           </span>
         </div>
