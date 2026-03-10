@@ -3,6 +3,7 @@ const sinon = require('sinon');
 
 const db = require('../services/database');
 const aiService = require('../services/ai-service');
+const denialResponsePrompts = require('../prompts/denial-response-prompts');
 
 describe('AI service request strategy path', function () {
   afterEach(function () {
@@ -14,6 +15,67 @@ describe('AI service request strategy path', function () {
     assert.match(prompt, /STRATEGIC APPROACH FOR THIS REQUEST:/);
     assert.match(prompt, /Use a collaborative, cooperative tone/);
     assert.match(prompt, /Emphasize documentary production and educational purposes/);
+  });
+
+  it('anchors the initial request prompt to the target agency and strips Notion metadata dumps', function () {
+    const prompt = aiService.buildFOIAUserPrompt({
+      state: 'TN',
+      agency_name: 'Chattanooga Police Department, Tennessee',
+      subject_name: 'Jasmine Pace',
+      incident_date: '2025-01-20',
+      incident_location: 'Nolensville, Tennessee',
+      requested_records: ['Body camera footage', '911 audio'],
+      additional_details: [
+        'Jason Chen was convicted of murdering Jasmine Pace in Chattanooga.',
+        '',
+        '--- Notion Fields ---',
+        'City : Nolensville',
+        'Police Departments Involved: Chattanooga Police Department',
+      ].join('\n'),
+    });
+
+    assert.match(prompt, /authoritative target agency for this request is: Chattanooga Police Department, Tennessee/i);
+    assert.doesNotMatch(prompt, /--- Notion Fields ---/);
+    assert.doesNotMatch(prompt, /at Nolensville, Tennessee/);
+    assert.match(prompt, /Jason Chen was convicted of murdering Jasmine Pace in Chattanooga\./);
+  });
+
+  it('does not globally encourage narrowing for privacy-exemption rebuttals', function () {
+    const systemPrompt = denialResponsePrompts.denialRebuttalSystemPrompt;
+    assert.match(systemPrompt, /Only offer narrowing or phased production when the denial is actually about overbreadth or burden/i);
+    assert.match(systemPrompt, /For privacy \/ surveillance \/ personnel \/ victim-protection denials: do NOT offer to narrow the request/i);
+    assert.doesNotMatch(systemPrompt, /- "Happy to narrow\.\.\." not "The law requires\.\.\."/i);
+  });
+
+  it('replaces weak privacy-exemption rebuttals with a deterministic segregability template', async function () {
+    sinon.stub(aiService, 'researchStateLaws').resolves('');
+    sinon.stub(aiService, 'callAI').resolves({
+      text: 'Records Custodian,\n\nI understand the concern about surveillance techniques.\n\nSamuel Hylton\n209-800-7702',
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'Florida' });
+
+    const draft = await aiService.generateDenialRebuttal(
+      {
+        subject: '[Records Center] Public Records Request :: R039189-030926',
+        normalized_body_text: 'Reference #: R039189-030926\nAny information revealing surveillance techniques or procedures or personnel is exempt from s. 119.07(1) and s. 24(a).',
+      },
+      { denial_subtype: 'privacy_exemption' },
+      {
+        state: 'FL',
+        agency_name: "St. Johns County Sheriff's Office, Florida",
+        requested_records: ['Surveillance video'],
+      }
+    );
+
+    assert.match(draft.body_text, /segregable non-exempt portions/i);
+    assert.match(draft.body_text, /comprehensive redactions/i);
+    assert.doesNotMatch(draft.body_text, /happy to narrow|proceed in phases/i);
   });
 
   it('does not write adaptive learning outcomes anymore', async function () {

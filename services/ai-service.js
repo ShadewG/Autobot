@@ -294,6 +294,60 @@ class AIService {
         return 'overly_broad';
     }
 
+    extractMessageReference(messageData) {
+        const combined = [
+            messageData?.subject || '',
+            messageData?.normalized_body_text || '',
+            messageData?.body_text || '',
+            messageData?.body_html || '',
+        ].join('\n');
+
+        const refMatch = combined.match(/reference\s*#:\s*([A-Z0-9-]+)/i)
+            || combined.match(/\bref\.?\s*([A-Z0-9-]{6,})/i)
+            || combined.match(/\brequest\s*#\s*([A-Z0-9-]+)/i);
+
+        return refMatch?.[1] || null;
+    }
+
+    shouldUsePrivacyExemptionTemplateFallback(text) {
+        const normalized = String(text || '').toLowerCase();
+        if (!normalized) return true;
+
+        const hasSegregabilityAsk = /segregable|redacted copy|release the remainder|release .*portion|partial release|redaction/i.test(normalized);
+        const acceptsRedactions = /redaction|redacted|blurring|muting|bleeping/i.test(normalized);
+        const badNarrowing = /happy to narrow|proceed in phases|phase 1|phase 2|narrow the request/i.test(normalized);
+
+        return badNarrowing || !hasSegregabilityAsk || !acceptsRedactions || normalized.length < 420;
+    }
+
+    buildPrivacyExemptionTemplate(messageData, caseData, userSignature) {
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+        const reference = this.extractMessageReference(messageData);
+        const recordsSummary = Array.isArray(caseData?.requested_records)
+            ? caseData.requested_records.filter(Boolean).join(', ')
+            : (caseData?.requested_records || 'the requested records');
+
+        const lines = [
+            'Dear Records Custodian,',
+            '',
+            `Thank you for your response regarding my public records request${reference ? ` (Ref. ${reference})` : ''}. I understand your concern that portions of the responsive material may reveal surveillance techniques, procedures, personnel, or other exempt information, and I am fully agreeable to comprehensive redactions of any legitimately exempt content.`,
+            '',
+            `That said, your response indicates that responsive records exist. Please release all reasonably segregable non-exempt portions of ${recordsSummary}, including any redacted copy, excerpt, or limited segment that can be produced without revealing exempt surveillance details.`,
+            '',
+            'If you contend that no segregable portion can be released, please identify the specific records or portions being withheld, the exact exemption(s) relied upon, and explain why redaction, blurring, muting, or partial release would be insufficient.',
+            '',
+            'I remain willing to accept comprehensive redactions of surveillance techniques, personnel identities, private personal information, and any other legitimately exempt details so that the non-exempt remainder can be released.',
+            '',
+            requesterName,
+            ...(requesterTitle ? [requesterTitle] : []),
+            ...(phone ? [phone] : []),
+        ];
+
+        return lines.join('\n');
+    }
+
     /**
      * Replace common AI placeholder patterns with actual requester info.
      * Some models output [Your Name], [Your Phone], etc. despite being told
@@ -538,6 +592,31 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
         return basePrompt + jurisdictionGuidance + strategyInstructions;
     }
 
+    extractPromptCaseSummary(additionalDetails) {
+        const raw = String(additionalDetails || '').replace(/\r/g, '').trim();
+        if (!raw) return '';
+
+        const strippedMetadata = raw.split('--- Notion Fields ---')[0].trim();
+        const normalized = strippedMetadata
+            .replace(/\n{2,}/g, '\n')
+            .replace(/[ \t]+/g, ' ')
+            .trim();
+
+        if (!normalized) return '';
+        return normalized.length > 700 ? `${normalized.slice(0, 697).trim()}...` : normalized;
+    }
+
+    shouldIncludeIncidentLocationInInitialPrompt(caseData = {}) {
+        const location = String(caseData.incident_location || '').trim();
+        const agencyName = String(caseData.agency_name || '').trim().toLowerCase();
+        if (!location) return false;
+        if (!agencyName) return true;
+
+        const locationHead = location.split(',')[0].trim().toLowerCase();
+        if (!locationHead || locationHead.length < 4) return false;
+        return agencyName.includes(locationHead);
+    }
+
     /**
      * Build the user prompt for FOIA request generation (documentary-focused)
      */
@@ -577,12 +656,14 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
             incidentDescription += ` on ${caseData.incident_date}`;
         }
 
-        if (caseData.incident_location) {
+        const shouldIncludeIncidentLocation = this.shouldIncludeIncidentLocationInInitialPrompt(caseData);
+        if (caseData.incident_location && shouldIncludeIncidentLocation) {
             incidentDescription += ` at ${caseData.incident_location}`;
         }
 
-        if (caseData.additional_details) {
-            incidentDescription += `. ${caseData.additional_details}`;
+        const promptCaseSummary = this.extractPromptCaseSummary(caseData.additional_details);
+        if (promptCaseSummary) {
+            incidentDescription += `. ${promptCaseSummary}`;
         }
 
         // Get requester info from user signature, env, or defaults
@@ -609,6 +690,12 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 2. INCIDENT DETAILS:
    ${incidentDescription}${emphasisNote}
 
+2b. TARGETING RULES:
+   - The authoritative target agency for this request is: ${caseData.agency_name}
+   - Do NOT switch to a different agency name just because the narrative mentions another city, department, arrest location, or assisting agency.
+   - Only request records likely held, received, retained, or generated by ${caseData.agency_name}.
+   - If other agencies are mentioned in the background facts, treat them as context only unless ${caseData.agency_name} itself would have those records or communications.
+
 3. RECORDS TO REQUEST (ALWAYS request ALL of these — this is the default for every case):
    Priority 1 — Video/audio evidence (native digital format with original audio and metadata/timestamps):
    a) Body-worn camera from ALL responding/assisting officers (30-min buffer before and after)
@@ -618,7 +705,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    e) Interview/interrogation room video and audio
    ${caseData.officer_details ? `- Officers involved: ${caseData.officer_details}` : ''}
    ${caseData.incident_time ? `- Time range: ${caseData.incident_time}` : ''}
-   ${caseData.incident_location ? `- Location: ${caseData.incident_location}` : ''}
+   ${caseData.incident_location && shouldIncludeIncidentLocation ? `- Location: ${caseData.incident_location}` : ''}
 
    Priority 2 — Supporting documents:
    f) Primary incident/offense report and arrest report
@@ -1127,6 +1214,11 @@ Return concise legal citations and key statutory language with sources.`;
 
             // Use pre-researched legal data if available, otherwise do fresh research
             const legalResearch = legalResearchOverride || await this.researchStateLaws(stateName, denialSubtype);
+            const subtypeSpecificInstruction = denialSubtype === 'privacy_exemption'
+                ? `**Privacy-Exemption Hard Requirements:**\n- Do NOT offer to narrow or phase the request unless the agency explicitly asked for narrowing.\n- Do NOT use phrases like "happy to narrow" or "proceed in phases."\n- You MUST ask for segregable non-exempt portions or a redacted copy.\n- You MUST say that comprehensive redactions are acceptable.\n- You MUST challenge any blanket withholding by requesting the specific exempt portions and an explanation of why segregation/redaction would be insufficient.`
+                : denialSubtype === 'overly_broad'
+                    ? `**Overbreadth Hard Requirements:**\n- You SHOULD offer a concrete narrowing or phased-production proposal.\n- Keep the narrowing specific enough that the agency can act on it immediately.\n- Do not fight about exemptions unless the agency refuses a reasonable narrowed request.`
+                    : '';
 
             const prompt = `Generate a strategic FOIA denial rebuttal for this response:
 
@@ -1146,7 +1238,9 @@ ${strategy.strategy}
 **Example Approach:**
 ${strategy.exampleRebuttal}
 
-${legalResearch ? `**Legal Research for ${stateName}:**
+${subtypeSpecificInstruction ? `${subtypeSpecificInstruction}
+
+` : ''}${legalResearch ? `**Legal Research for ${stateName}:**
 ${legalResearch}
 
 USE THIS RESEARCH to cite EXACT statutes and case law. Quote specific statutory language where powerful.` : ''}
@@ -1181,7 +1275,11 @@ Return ONLY the email body text, no subject line.`;
                 { effort: 'medium', includeMetadata: true }
             );
             const rebuttalText = rebuttalResult.text;
-            const normalizedRebuttalText = this.normalizeGeneratedDraftSignature(rebuttalText, userSignature, { includeEmail: false, includeAddress: false });
+            let normalizedRebuttalText = this.normalizeGeneratedDraftSignature(rebuttalText, userSignature, { includeEmail: false, includeAddress: false });
+
+            if (denialSubtype === 'privacy_exemption' && this.shouldUsePrivacyExemptionTemplateFallback(normalizedRebuttalText)) {
+                normalizedRebuttalText = this.buildPrivacyExemptionTemplate(messageData, caseData, userSignature);
+            }
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${normalizedRebuttalText.length} chars) with GPT-5`);
 

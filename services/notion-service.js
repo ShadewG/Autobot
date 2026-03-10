@@ -5,7 +5,7 @@ const pdContactService = require('./pd-contact-service');
 const errorTrackingService = require('./error-tracking-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
-const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety } = require('../utils/request-normalization');
+const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, isGenericAgencyLabel } = require('../utils/request-normalization');
 const dns = require('dns').promises;
 
 /**
@@ -382,6 +382,15 @@ class NotionService {
             });
         }
 
+        if (importSafety.agencyCityMismatch && !warnings.some((warning) => warning.type === 'AGENCY_CITY_MISMATCH')) {
+            warnings.push({
+                type: 'AGENCY_CITY_MISMATCH',
+                message: `Agency name "${importSafety.agencyCityMismatch.currentAgencyName}" may not match case details which reference city "${importSafety.agencyCityMismatch.expectedCity}"`,
+                field: 'agency_name',
+                expectedCity: importSafety.agencyCityMismatch.expectedCity,
+            });
+        }
+
         if (importSafety.shouldBlockAutoDispatch) {
             caseData.status = 'needs_human_review';
         }
@@ -401,6 +410,72 @@ class NotionService {
 
         caseData.agency_email = IMPORT_PLACEHOLDER_EMAIL;
         return caseData;
+    }
+
+    async persistImportedPrimaryAgency(caseRecord, importedCaseData = {}) {
+        const caseId = Number(caseRecord?.id);
+        if (!caseId) return caseRecord || null;
+
+        const agencyName = normalizeNotionText(importedCaseData.agency_name || caseRecord?.agency_name || '');
+        const agencyEmail = normalizeNotionText(importedCaseData.agency_email || caseRecord?.agency_email || '');
+        const portalUrl = normalizePortalUrl(importedCaseData.portal_url || caseRecord?.portal_url || null);
+        const agencyId = importedCaseData.agency_id || caseRecord?.agency_id || null;
+        const portalProvider =
+            importedCaseData.portal_provider ||
+            caseRecord?.portal_provider ||
+            detectPortalProviderByUrl(portalUrl)?.name ||
+            null;
+
+        const hasIdentity = Boolean(agencyId || agencyName || agencyEmail || portalUrl);
+        const genericNameOnly = isGenericAgencyLabel(agencyName) && !agencyId && !agencyEmail && !portalUrl;
+        if (!hasIdentity || genericNameOnly) {
+            return caseRecord || null;
+        }
+
+        let latestCaseRecord = caseRecord;
+        const strongImportedIdentity = Boolean(importedCaseData.police_dept_id || agencyId || agencyEmail || portalUrl);
+        const caseRowPatch = {};
+
+        if (agencyName) {
+            const currentAgencyName = normalizeNotionText(caseRecord?.agency_name || '');
+            if (!currentAgencyName || isGenericAgencyLabel(currentAgencyName) || (strongImportedIdentity && currentAgencyName !== agencyName)) {
+                caseRowPatch.agency_name = agencyName;
+            }
+        }
+
+        if (agencyId && !caseRecord?.agency_id) {
+            caseRowPatch.agency_id = agencyId;
+        }
+
+        if (agencyEmail && (!caseRecord?.agency_email || isPlaceholderAgencyEmail(caseRecord?.agency_email))) {
+            caseRowPatch.agency_email = agencyEmail;
+        }
+
+        if (portalUrl && !caseRecord?.portal_url) {
+            caseRowPatch.portal_url = portalUrl;
+        }
+
+        if (portalProvider && !caseRecord?.portal_provider) {
+            caseRowPatch.portal_provider = portalProvider;
+        }
+
+        if (Object.keys(caseRowPatch).length > 0) {
+            latestCaseRecord = await db.updateCase(caseId, caseRowPatch);
+        }
+
+        await db.addCaseAgency(caseId, {
+            agency_id: agencyId || null,
+            agency_name: agencyName || latestCaseRecord?.agency_name || caseRecord?.agency_name || 'Unknown agency',
+            agency_email: agencyEmail || null,
+            portal_url: portalUrl || null,
+            portal_provider: portalProvider,
+            is_primary: true,
+            added_source: importedCaseData.police_dept_id ? 'notion_relation' : 'notion_import',
+            status: 'active',
+            notes: 'Primary agency imported from Notion',
+        });
+
+        return latestCaseRecord || caseRecord || null;
     }
 
     /**
@@ -869,7 +944,7 @@ class NotionService {
             caseData.incident_location = locationFromText;
         }
 
-        const agencyFromText = pickLineValue([
+        const agencyFromText = extractAgencyNameFromAdditionalDetails(text) || pickLineValue([
             /(?:^|\n)\s*pd:\s*([^\n\r]+)/i,
             /(?:^|\n)\s*police department:\s*([^\n\r]+)/i,
             /(?:^|\n)\s*agency:\s*([^\n\r]+)/i
@@ -921,7 +996,9 @@ class NotionService {
         if (!caseData.police_dept_id) {
             console.warn('No police department relation found');
             caseData.agency_email = null;
-            caseData.agency_name = 'Police Department';
+            if (!caseData.agency_name) {
+                caseData.agency_name = 'Police Department';
+            }
             if (notionPage) {
                 this.applyFallbackContactsFromPage(caseData, notionPage);
             }
@@ -1002,7 +1079,9 @@ class NotionService {
             console.error('Error fetching police department details:', error.message);
             // NO FALLBACK - return null so it flags for human review
             caseData.agency_email = null;
-            caseData.agency_name = 'Police Department';
+            if (!caseData.agency_name) {
+                caseData.agency_name = 'Police Department';
+            }
             if (notionPage) {
                 this.applyFallbackContactsFromPage(caseData, notionPage);
             }
@@ -2078,12 +2157,15 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
                         console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
 
-                        const updatedCase = await db.updateCase(existing.id, {
+                        let updatedCase = await db.updateCase(existing.id, {
                             agency_name: notionCase.agency_name,
                             agency_email: notionCase.agency_email,
+                            portal_url: notionCase.portal_url || existing.portal_url,
+                            portal_provider: notionCase.portal_provider || existing.portal_provider,
                             status: 'ready_to_send',
                             last_notion_synced_at: new Date(),
                         });
+                        updatedCase = await this.persistImportedPrimaryAgency(updatedCase, notionCase);
 
                         // Dispatch via Run Engine so the case is picked up immediately
                         const dispatch = getDispatchFn();
@@ -2125,7 +2207,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     notionCase.deadline_date = deadline;
 
                     // Create new case
-                    const newCase = await db.createCase(notionCase);
+                    let newCase = await db.createCase(notionCase);
+                    newCase = await this.persistImportedPrimaryAgency(newCase, notionCase);
                     console.log(`Created new case: ${newCase.case_name}`);
                     syncedCases.push(newCase);
 
@@ -3008,7 +3091,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             notionCase.deadline_date = deadline;
             notionCase.incident_date = this.normalizeImportedDateValue(notionCase.incident_date);
 
-            const newCase = await db.createCase(notionCase);
+            let newCase = await db.createCase(notionCase);
+            newCase = await this.persistImportedPrimaryAgency(newCase, notionCase);
             console.log(`[import] Created case: ${newCase.case_name} (${newCase.id})`);
 
             // Import Notion file attachments (PDFs, documents, etc.)
@@ -3216,7 +3300,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         };
 
         assignIfEmpty('case_name', normalized.case_name);
-        assignIfEmpty('agency_name', normalized.agency_name);
+        if (normalized.agency_name) {
+            const currentAgencyName = normalizeNotionText(updated.agency_name || '');
+            if (!currentAgencyName || isGenericAgencyLabel(currentAgencyName)) {
+                updated.agency_name = normalized.agency_name;
+            }
+        }
         const normalizedState = this.normalizeStateCode(normalized.state);
         assignIfEmpty('state', normalizedState);
         assignIfEmpty('incident_date', this.normalizeImportedDateValue(normalized.incident_date));

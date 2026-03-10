@@ -348,6 +348,88 @@ describe('Notion sync guards', function () {
     assert.strictEqual(caseData.agency_email, 'pending-research@intake.autobot');
   });
 
+  it('persists a primary case_agencies row from imported Notion identity data', async function () {
+    const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 91, is_primary: true });
+    const updateCaseStub = sinon.stub(db, 'updateCase').resolves({
+      id: 123,
+      agency_id: 1733,
+      agency_name: "Tompkins County Sheriff's Office, New York",
+      agency_email: 'sheriff@tompkins-co.org',
+      portal_url: 'https://lfweb.tompkins-co.org/forms/foil',
+      portal_provider: null,
+    });
+
+    const result = await notionService.persistImportedPrimaryAgency(
+      {
+        id: 123,
+        agency_id: null,
+        agency_name: 'Police Department',
+        agency_email: null,
+        portal_url: null,
+        portal_provider: null,
+      },
+      {
+        agency_id: 1733,
+        agency_name: "Tompkins County Sheriff's Office, New York",
+        agency_email: 'sheriff@tompkins-co.org',
+        portal_url: 'https://lfweb.tompkins-co.org/forms/foil',
+        police_dept_id: 'abcdefabcdefabcdefabcdefabcdefab',
+      }
+    );
+
+    assert.strictEqual(updateCaseStub.calledOnce, true);
+    assert.deepStrictEqual(updateCaseStub.firstCall.args, [123, {
+      agency_name: "Tompkins County Sheriff's Office, New York",
+      agency_id: 1733,
+      agency_email: 'sheriff@tompkins-co.org',
+      portal_url: 'https://lfweb.tompkins-co.org/forms/foil',
+    }]);
+    assert.strictEqual(addCaseAgencyStub.calledOnce, true);
+    assert.deepStrictEqual(addCaseAgencyStub.firstCall.args, [123, {
+      agency_id: 1733,
+      agency_name: "Tompkins County Sheriff's Office, New York",
+      agency_email: 'sheriff@tompkins-co.org',
+      portal_url: 'https://lfweb.tompkins-co.org/forms/foil',
+      portal_provider: null,
+      is_primary: true,
+      added_source: 'notion_relation',
+      status: 'active',
+      notes: 'Primary agency imported from Notion',
+    }]);
+    assert.deepStrictEqual(result, {
+      id: 123,
+      agency_id: 1733,
+      agency_name: "Tompkins County Sheriff's Office, New York",
+      agency_email: 'sheriff@tompkins-co.org',
+      portal_url: 'https://lfweb.tompkins-co.org/forms/foil',
+      portal_provider: null,
+    });
+  });
+
+  it('skips imported agency persistence for generic names without a real channel', async function () {
+    const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 92 });
+
+    const result = await notionService.persistImportedPrimaryAgency(
+      {
+        id: 124,
+        agency_name: 'Police Department',
+        agency_email: null,
+        portal_url: null,
+        agency_id: null,
+      },
+      {}
+    );
+
+    assert.deepStrictEqual(result, {
+      id: 124,
+      agency_name: 'Police Department',
+      agency_email: null,
+      portal_url: null,
+      agency_id: null,
+    });
+    assert.strictEqual(addCaseAgencyStub.called, false);
+  });
+
   it('applies AI-resolved agency metadata during single-page import', function () {
     const caseData = {
       case_name: 'Original title',
@@ -373,6 +455,37 @@ describe('Notion sync guards', function () {
     assert.strictEqual(caseData.state, 'Florida');
     assert.strictEqual(caseData.incident_date, '2022-02-01');
     assert.deepStrictEqual(caseData.requested_records, ['911 Call Recordings']);
+  });
+
+  it('upgrades generic agency labels with AI-normalized agency names', function () {
+    const result = notionService.applyNormalizedCaseData(
+      {
+        case_name: 'Jason Chen, 24.',
+        agency_name: 'Police Department',
+        state: 'TN',
+        requested_records: ['Body camera footage'],
+      },
+      {
+        agency_name: 'Chattanooga Police Department',
+        state: 'Tennessee',
+      }
+    );
+
+    assert.strictEqual(result.agency_name, 'Chattanooga Police Department');
+    assert.strictEqual(result.state, 'TN');
+  });
+
+  it('preserves a concrete narrative-derived agency when no police department relation exists', async function () {
+    const result = await notionService.enrichWithPoliceDepartment(
+      {
+        agency_name: 'Chattanooga Police Department',
+        agency_email: null,
+        police_dept_id: null,
+      },
+      { properties: {} }
+    );
+
+    assert.strictEqual(result.agency_name, 'Chattanooga Police Department');
   });
 
   it('normalizes loose imported incident dates to a DB-safe date', function () {

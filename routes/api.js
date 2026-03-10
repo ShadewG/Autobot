@@ -31,6 +31,34 @@ async function syncNotionCasesByStatus(status = 'Ready to Send') {
     return formatSyncedCasesResponse(cases);
 }
 
+async function getSingleSyncOutcome(caseId) {
+    const [proposalResult, runResult] = await Promise.all([
+        db.query(
+            `SELECT id, action_type, status
+             FROM proposals
+             WHERE case_id = $1
+               AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [caseId]
+        ),
+        db.query(
+            `SELECT id, trigger_type, status
+             FROM agent_runs
+             WHERE case_id = $1
+               AND status IN ('created', 'queued', 'processing', 'running', 'waiting', 'paused')
+             ORDER BY started_at DESC NULLS LAST, id DESC
+             LIMIT 1`,
+            [caseId]
+        ),
+    ]);
+
+    return {
+        proposal: proposalResult.rows[0] || null,
+        run: runResult.rows[0] || null,
+    };
+}
+
 async function syncSingleNotionPage(pageId) {
     if (!pageId) {
         const error = new Error('pageId is required');
@@ -43,6 +71,7 @@ async function syncSingleNotionPage(pageId) {
         ? caseData.status.toLowerCase()
         : '';
     const shouldQueueProcessing = normalizedStatus === 'ready_to_send';
+    const preQueueOutcome = await getSingleSyncOutcome(caseData.id);
 
     if (shouldQueueProcessing) {
         await generateQueue.add('generate-and-send', {
@@ -50,11 +79,22 @@ async function syncSingleNotionPage(pageId) {
         });
     }
 
+    const postQueueOutcome = shouldQueueProcessing
+        ? await getSingleSyncOutcome(caseData.id)
+        : preQueueOutcome;
+    const activeProposal = postQueueOutcome.proposal;
+    const activeRun = postQueueOutcome.run;
+
+    let message = 'Case imported without auto-queue because it requires review';
+    if (shouldQueueProcessing) {
+        message = 'Case imported and queued for processing';
+    } else if (activeProposal || activeRun) {
+        message = 'Case imported and placed into supervised review';
+    }
+
     return {
         success: true,
-        message: shouldQueueProcessing
-            ? 'Case imported and queued for processing'
-            : 'Case imported without auto-queue because it requires review',
+        message,
         case: {
             id: caseData.id,
             case_name: caseData.case_name,
@@ -62,7 +102,21 @@ async function syncSingleNotionPage(pageId) {
             status: caseData.status
         },
         queued: shouldQueueProcessing,
-        delay_minutes: shouldQueueProcessing ? Math.round(Math.random() * 8) + 2 : null
+        delay_minutes: shouldQueueProcessing ? Math.round(Math.random() * 8) + 2 : null,
+        active_proposal: activeProposal
+            ? {
+                id: activeProposal.id,
+                action_type: activeProposal.action_type,
+                status: activeProposal.status,
+            }
+            : null,
+        active_run: activeRun
+            ? {
+                id: activeRun.id,
+                trigger_type: activeRun.trigger_type,
+                status: activeRun.status,
+            }
+            : null,
     };
 }
 
