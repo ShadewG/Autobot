@@ -6,6 +6,7 @@ const sinon = require('sinon');
 
 describe('Live overview cache fallback', function () {
   const actualNormalization = require('../utils/request-normalization.js');
+  const actualCaseTruth = require('../lib/case-truth.js');
 
   function loadOverviewRouter(dbStub, normalizationOverrides = {}) {
     const routePath = path.resolve(__dirname, '../routes/monitor/overview.js');
@@ -36,7 +37,7 @@ describe('Live overview cache fallback', function () {
       loaded: true,
       exports: {
         HUMAN_REVIEW_PROPOSAL_STATUSES_SQL: "'PENDING_APPROVAL','BLOCKED','DECISION_RECEIVED','PENDING_PORTAL'",
-        buildCaseTruth: () => ({ review_state: 'needs_review' }),
+        buildCaseTruth: actualCaseTruth.buildCaseTruth,
       },
     };
     require.cache[normalizationPath] = {
@@ -417,6 +418,105 @@ describe('Live overview cache fallback', function () {
       assert.strictEqual(response.body.pending_approvals.length, 1);
       assert.strictEqual(response.body.pending_approvals[0].import_warnings, null);
       assert.strictEqual(response.body.pending_approvals[0].agency_name, 'Santa Rosa County Sheriff’s Office, Florida');
+    } finally {
+      restore();
+    }
+  });
+
+  it('normalizes import-review human review cases to blocked state in the live overview payload', async function () {
+    const dbStub = {
+      query: async (sql) => {
+        if (sql.includes('COUNT(*) FILTER') && sql.includes('FROM messages m')) {
+          return { rows: [{ inbound_24h: '0', unmatched_inbound_total: '0', unprocessed_inbound_total: '0' }] };
+        }
+        if (sql.includes('portal_hard_timeout_total_1h')) {
+          return { rows: [{ portal_hard_timeout_total_1h: 0, portal_soft_timeout_total_1h: 0 }] };
+        }
+        if (sql.includes('process_inbound_superseded_total_1h')) {
+          return { rows: [{ process_inbound_superseded_total_1h: 0 }] };
+        }
+        if (sql.includes('FROM proposals p') && sql.includes('LEFT JOIN cases c ON c.id = p.case_id')) {
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT DISTINCT ON (p.case_id)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM agent_runs r')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM messages m') && sql.includes('m.processed_at IS NULL')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM messages m') && sql.includes('(m.thread_id IS NULL OR m.case_id IS NULL)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM cases c') && sql.includes("needs_human_review")) {
+          return {
+            rows: [{
+              id: 26679,
+              case_name: 'Princeton case',
+              subject_name: 'Kevin Dixon',
+              agency_name: 'Westbrook Police Department',
+              state: 'TX',
+              status: 'needs_human_review',
+              substatus: null,
+              updated_at: '2026-03-10T00:00:00.000Z',
+              portal_url: 'https://www.princetontx.gov/296/Submit-an-Open-Records-Request',
+              last_portal_task_url: null,
+              last_portal_run_id: null,
+              last_portal_status: null,
+              pause_reason: null,
+              additional_details: 'City : Princeton',
+              import_warnings: null,
+              contact_research_notes: null,
+              last_fee_quote_amount: null,
+              agency_email: 'princetonpolicedepartment@gmail.com',
+              user_id: null,
+              inbound_count: 0,
+              last_inbound_preview: null,
+            }],
+          };
+        }
+        if (sql.includes('SELECT DISTINCT ON (ca.case_id)')) {
+          return {
+            rows: [{
+              case_id: 26679,
+              agency_name: 'Westbrook Police Department',
+              agency_email: 'princetonpolicedepartment@gmail.com',
+              portal_url: 'https://www.princetontx.gov/296/Submit-an-Open-Records-Request',
+              added_source: 'case_row_backfill',
+            }],
+          };
+        }
+        if (sql.includes('FROM agencies')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM agencies a') && sql.includes('score DESC')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM attachments a')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL in live overview human review normalization test: ${sql}`);
+      },
+      getUserById: async () => null,
+    };
+
+    const { router, restore } = loadOverviewRouter(dbStub, {
+      evaluateImportAutoDispatchSafety: actualNormalization.evaluateImportAutoDispatchSafety,
+    });
+    try {
+      const app = express();
+      app.use('/api/monitor', router);
+
+      const response = await supertest(app).get('/api/monitor/live-overview');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.human_review_cases.length, 1);
+      assert.strictEqual(response.body.human_review_cases[0].pause_reason, 'IMPORT_REVIEW');
+      assert.strictEqual(response.body.human_review_cases[0].review_state, 'IDLE');
+      assert.match(response.body.human_review_cases[0].substatus, /does not match routed agency/i);
+      assert.strictEqual(response.body.human_review_cases[0].agency_name, 'Unknown agency');
     } finally {
       restore();
     }

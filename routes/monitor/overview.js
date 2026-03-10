@@ -964,7 +964,9 @@ router.get('/live-overview', async (req, res) => {
             SELECT
                 c.id,
                 c.case_name,
+                c.subject_name,
                 c.agency_name,
+                c.state,
                 c.status,
                 c.substatus,
                 c.updated_at,
@@ -973,6 +975,8 @@ router.get('/live-overview', async (req, res) => {
                 c.last_portal_run_id,
                 c.last_portal_status,
                 c.pause_reason,
+                c.additional_details,
+                c.import_warnings,
                 c.contact_research_notes,
                 (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 c.agency_email,
@@ -1085,7 +1089,9 @@ router.get('/live-overview', async (req, res) => {
                     stateHint: row.state,
                 });
             const resolvedAgencyId = primaryCaseAgency?.agency_id || canonicalQueueAgency?.id || row.agency_id || null;
-            const resolvedAgencyName = suppressPlaceholderDisplay
+            const resolvedAgencyName = (importSafetyBlocked || missingImportDeliveryPath)
+                ? 'Unknown agency'
+                : suppressPlaceholderDisplay
                 ? 'Unknown agency'
                 : (researchSuggestedAgency?.name || canonicalQueueAgency?.name || primaryCaseAgency?.agency_name || row.agency_name);
             const truth = buildCaseTruth({
@@ -1099,8 +1105,14 @@ router.get('/live-overview', async (req, res) => {
                 activeProposal: null,
                 activeRun: null,
             });
+            const normalizedSubstatus = importSafetyBlocked
+                ? (importSafety.reasonDetail || row.substatus || 'Imported case detail does not match routed agency data. Review the correct department before sending.')
+                : missingImportDeliveryPath
+                    ? 'Imported case is missing a real delivery path. Add the correct agency email or portal before sending.'
+                    : normalizePortalTimeoutSubstatus(row.substatus);
             return {
                 ...row,
+                status: (importSafetyBlocked || missingImportDeliveryPath) ? 'needs_human_review' : row.status,
                 import_warnings: filterStaleImportWarnings(row.import_warnings, {
                     originalAgencyName: row.agency_name,
                     resolvedAgencyName,
@@ -1111,7 +1123,8 @@ router.get('/live-overview', async (req, res) => {
                     useResearchSuggestedDisplay: Boolean(researchSuggestedAgency?.name),
                 }),
                 agency_name: resolvedAgencyName,
-                substatus: normalizePortalTimeoutSubstatus(row.substatus),
+                pause_reason: (importSafetyBlocked || missingImportDeliveryPath) ? 'IMPORT_REVIEW' : row.pause_reason,
+                substatus: normalizedSubstatus,
                 review_state: truth.review_state,
                 research_summary,
                 phone_call_plan,
