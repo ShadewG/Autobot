@@ -215,6 +215,55 @@ export function extractPhoneCandidatesFromText(
   return candidates;
 }
 
+export function selectResearchFollowupChannels(params: {
+  candidateEmail?: string | null;
+  candidatePortalUrl?: string | null;
+  candidatePhone?: string | null;
+  candidateFax?: string | null;
+  knownCaseEmailSignal?: string | null;
+  knownCasePortalSignal?: string | null;
+  newEmail?: string | null;
+  newPortalUrl?: string | null;
+  newPhone?: string | null;
+  newFax?: string | null;
+}): {
+  followupEmail: string | null;
+  followupPortalUrl: string | null;
+  followupPhone: string | null;
+  followupFax: string | null;
+  usesExistingSendChannel: boolean;
+  actionType: ActionType | null;
+} {
+  const followupPortalUrl =
+    params.newPortalUrl || params.candidatePortalUrl || params.knownCasePortalSignal || null;
+  const followupEmail =
+    params.newEmail || params.candidateEmail || params.knownCaseEmailSignal || null;
+  const followupPhone = params.newPhone || params.candidatePhone || null;
+  const followupFax = params.newFax || params.candidateFax || null;
+
+  const usesExistingSendChannel =
+    !params.newPortalUrl &&
+    !params.newEmail &&
+    !!(followupPortalUrl || followupEmail);
+
+  const actionType = followupPortalUrl
+    ? "SUBMIT_PORTAL"
+    : followupEmail
+      ? "SEND_INITIAL_REQUEST"
+      : (followupPhone || followupFax)
+        ? "ESCALATE"
+        : null;
+
+  return {
+    followupEmail,
+    followupPortalUrl,
+    followupPhone,
+    followupFax,
+    usesExistingSendChannel,
+    actionType,
+  };
+}
+
 export async function executeAction(
   caseId: number,
   proposalId: number,
@@ -1395,6 +1444,26 @@ export async function executeAction(
         ? candidateFax
         : null;
 
+      const {
+        followupEmail,
+        followupPortalUrl,
+        followupPhone,
+        followupFax,
+        usesExistingSendChannel,
+        actionType: derivedFollowupActionType,
+      } = selectResearchFollowupChannels({
+        candidateEmail,
+        candidatePortalUrl,
+        candidatePhone,
+        candidateFax,
+        knownCaseEmailSignal,
+        knownCasePortalSignal,
+        newEmail,
+        newPortalUrl,
+        newPhone,
+        newFax,
+      });
+
       await persistResearchExecutionMeta({
         outcome: "research_channel_evaluated",
         suggested_agency: suggestedAgency?.name || null,
@@ -1410,13 +1479,34 @@ export async function executeAction(
           phone: newPhone || null,
           fax: newFax || null,
         },
+        followup_channels: {
+          email: followupEmail || null,
+          portal: followupPortalUrl || null,
+          phone: followupPhone || null,
+          fax: followupFax || null,
+        },
       });
 
       if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
-        // Defense in depth: if case already has usable channels (email/portal),
-        // don't loop back into research — transition to human review instead.
-        if (hasKnownCaseSignals) {
-          logger.info("Research found no NEW channels but case has existing contact channels — stopping research loop", {
+        // Research sometimes confirms a usable portal/email that already exists on the case.
+        // Use that verified channel immediately instead of forcing a later manual reprocess.
+        if (derivedFollowupActionType === "SUBMIT_PORTAL" || derivedFollowupActionType === "SEND_INITIAL_REQUEST") {
+          logger.info("Research found no NEW channels but verified an existing send channel — creating follow-up proposal", {
+            caseId,
+            followupActionType: derivedFollowupActionType,
+            followupEmail: followupEmail || null,
+            followupPortalUrl: followupPortalUrl || null,
+          });
+          await persistResearchExecutionMeta({
+            outcome: "research_followup_existing_channel",
+            followup_action_type: derivedFollowupActionType,
+            existing_channels: {
+              email: followupEmail || null,
+              portal: followupPortalUrl || null,
+            },
+          });
+        } else if (hasKnownCaseSignals) {
+          logger.info("Research found no NEW channels and no verified send channel — stopping research loop", {
             caseId,
             knownEmail: knownCaseEmailSignal,
             knownPortal: knownCasePortalSignal,
@@ -1435,7 +1525,7 @@ export async function executeAction(
           await ensureResearchHandoffProposal(
             "existing-channels-only",
             "Research found no new channels but existing contact info is available.",
-            `Research completed but no new channels were found. Existing channels: ${channelHint || "unknown"}. Review and decide whether to retry via existing channels or try a different approach.`,
+            `Research completed but no verified next-step proposal could be derived. Existing channels: ${channelHint || "unknown"}. Review and decide whether to retry via existing channels or try a different approach.`,
             { gateOptions: ["ADJUST", "DISMISS"] }
           );
           await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
@@ -1497,8 +1587,8 @@ export async function executeAction(
         caseAgency = await db.addCaseAgency(caseId, {
           agency_id: agencyId,
           agency_name: suggestedAgency.name,
-          agency_email: newEmail,
-          portal_url: newPortalUrl,
+          agency_email: followupEmail,
+          portal_url: followupPortalUrl,
           is_primary: false,
           added_source: "research",
           notes: suggestedAgency.reason || brief?.summary || null,
@@ -1509,8 +1599,8 @@ export async function executeAction(
         const currentEmail = caseData?.agency_email || "";
         if (/placeholder\.invalid/i.test(currentEmail) || !currentEmail.trim()) {
           const primaryUpdates: Record<string, any> = {};
-          if (newEmail) primaryUpdates.agency_email = newEmail;
-          if (newPortalUrl) primaryUpdates.portal_url = newPortalUrl;
+          if (followupEmail) primaryUpdates.agency_email = followupEmail;
+          if (followupPortalUrl) primaryUpdates.portal_url = followupPortalUrl;
           if (suggestedAgency?.name) primaryUpdates.agency_name = suggestedAgency.name;
           if (Object.keys(primaryUpdates).length > 0) {
             await db.updateCase(caseId, primaryUpdates);
@@ -1534,14 +1624,11 @@ export async function executeAction(
         break;
       }
 
-      const followupActionType = newPortalUrl
-        ? "SUBMIT_PORTAL"
-        : newEmail
-          ? "SEND_INITIAL_REQUEST"
-          : "ESCALATE";
+      const followupActionType = derivedFollowupActionType || "ESCALATE";
       await persistResearchExecutionMeta({
         outcome: "research_followup_proposed",
         followup_action_type: followupActionType,
+        followup_uses_existing_channel: usesExistingSendChannel,
       });
 
       let foiaRequestText: string | null = null;
@@ -1564,8 +1651,8 @@ export async function executeAction(
         }
       }
 
-      const escalationForPhone = !!newPhone && !newPortalUrl && !newEmail;
-      const escalationForFax = !!newFax && !newPortalUrl && !newEmail && !newPhone;
+      const escalationForPhone = !!followupPhone && !followupPortalUrl && !followupEmail;
+      const escalationForFax = !!followupFax && !followupPortalUrl && !followupEmail && !followupPhone;
       const escalationReasonMarker = escalationForPhone
         ? "FOLLOWUP_CHANNEL:PHONE"
         : escalationForFax
@@ -1575,8 +1662,8 @@ export async function executeAction(
         ? `Call follow-up recommendation - ${suggestedAgency.name}`
         : `Fax follow-up recommendation - ${suggestedAgency.name}`;
       const escalationDraftBody = escalationForPhone
-        ? `Research found a new phone number for follow-up: ${newPhone}\n\nRecommended next step: place a phone call to ${suggestedAgency.name} and reference case #${caseId}.`
-        : `Research found a new fax number for follow-up: ${newFax}\n\nRecommended next step: send a fax follow-up to ${suggestedAgency.name}. Fax is lowest-priority and is suggested only because no new portal/email/phone channel was found.`;
+        ? `Research found a verified phone number for follow-up: ${followupPhone}\n\nRecommended next step: place a phone call to ${suggestedAgency.name} and reference case #${caseId}.`
+        : `Research found a verified fax number for follow-up: ${followupFax}\n\nRecommended next step: send a fax follow-up to ${suggestedAgency.name}. Fax is lowest-priority and is suggested only because no verified portal/email/phone channel was found.`;
 
       const followupKey = `${caseId}:research:ca${caseAgency.id}:${followupActionType}:0`;
       try {
@@ -1593,10 +1680,10 @@ export async function executeAction(
             : foiaRequestText,
           reasoning: [
             `Research identified ${suggestedAgency.name} as likely records holder`,
-            ...(newPortalUrl ? [`Proposed channel: new portal (${newPortalUrl})`] : []),
-            ...(newEmail ? [`Proposed channel: new email (${newEmail})`] : []),
-            ...(newPhone ? [`Discovered phone: ${newPhone}`] : []),
-            ...(newFax ? [`Discovered fax: ${newFax}`] : []),
+            ...(followupPortalUrl ? [`Proposed channel: ${newPortalUrl ? "new" : "verified existing"} portal (${followupPortalUrl})`] : []),
+            ...(followupEmail ? [`Proposed channel: ${newEmail ? "new" : "verified existing"} email (${followupEmail})`] : []),
+            ...(followupPhone ? [`Discovered phone: ${followupPhone}`] : []),
+            ...(followupFax ? [`Discovered fax: ${followupFax}`] : []),
             ...(escalationReasonMarker ? [escalationReasonMarker] : []),
           ],
           confidence: suggestedAgency.confidence || 0.7,
