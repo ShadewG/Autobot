@@ -340,6 +340,16 @@ export const requestsAPI = {
     });
   },
 
+  // Delete an outbound attachment
+  deleteAttachment: (
+    requestId: string,
+    attachmentId: number
+  ): Promise<{ success: boolean; deleted: { id: number; filename: string } }> => {
+    return fetchAPI(`/requests/${requestId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    });
+  },
+
   // Update a scope item status
   updateScopeItem: (
     id: string,

@@ -4435,6 +4435,11 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async deleteAttachment(id) {
+        const result = await this.query('DELETE FROM attachments WHERE id = $1 RETURNING id, case_id, filename', [id]);
+        return result.rows[0];
+    }
+
     async getReceivedRecordByAttachmentId(attachmentId) {
         if (!attachmentId) return null;
         const result = await this.query(

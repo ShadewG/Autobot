@@ -2805,27 +2805,49 @@ function MonitorPageContent() {
                 </p>
                 {/* Prepared attachments from DB (filled PDFs, etc.) */}
                 {(() => {
-                  const prepared = (selectedItem.data.attachments || []).filter((a) => a.direction === 'outbound');
+                  const prepared = (selectedItem.data.attachments || []).filter((a: any) => a.direction === 'outbound');
                   if (prepared.length === 0) return null;
                   return (
                     <div className="space-y-1.5">
-                      {prepared.map((att) => (
-                        <a
+                      {prepared.map((att: any) => (
+                        <div
                           key={att.id}
-                          href={att.download_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-between border bg-background px-2 py-1.5 text-xs hover:bg-muted/40"
+                          className="flex items-center justify-between border bg-background px-2 py-1.5 text-xs"
                         >
-                          <span className="flex items-center gap-1.5 min-w-0">
+                          <a
+                            href={att.download_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 min-w-0 hover:underline"
+                          >
                             <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
                             <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
                             <Badge variant="outline" className="text-[9px] px-1 py-0 text-green-400 border-green-700/50">prepared</Badge>
+                          </a>
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-muted-foreground">
+                              {att.size_bytes ? `${Math.max(1, Math.round(att.size_bytes / 1024))} KB` : "file"}
+                            </span>
+                            <button
+                              type="button"
+                              className="text-red-400 hover:text-red-300 p-0.5"
+                              title="Delete attachment"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!confirm(`Delete "${att.filename}"?`)) return;
+                                try {
+                                  const res = await fetch(`/api/requests/${selectedItem.data.id}/attachments/${att.id}`, { method: 'DELETE' });
+                                  if (!res.ok) throw new Error('Delete failed');
+                                  mutate();
+                                } catch (err) {
+                                  alert('Failed to delete attachment');
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
                           </span>
-                          <span className="text-muted-foreground ml-2 flex-shrink-0">
-                            {att.size_bytes ? `${Math.max(1, Math.round(att.size_bytes / 1024))} KB` : "file"}
-                          </span>
-                        </a>
+                        </div>
                       ))}
                     </div>
                   );

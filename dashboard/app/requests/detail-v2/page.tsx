@@ -2785,16 +2785,34 @@ function DetailV2Content() {
                                   Prepared Attachments
                                 </p>
                                 {prepared.map((att: any) => (
-                                  <a
-                                    key={att.id}
-                                    href={att.download_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:underline"
-                                  >
-                                    <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
-                                    <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
-                                  </a>
+                                  <div key={att.id} className="flex items-center gap-1.5 text-xs">
+                                    <a
+                                      href={att.download_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1.5 text-blue-400 hover:underline min-w-0"
+                                    >
+                                      <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
+                                      <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
+                                    </a>
+                                    <button
+                                      type="button"
+                                      className="text-red-400 hover:text-red-300 p-0.5 flex-shrink-0"
+                                      title="Delete attachment"
+                                      onClick={async () => {
+                                        if (!confirm(`Delete "${att.filename}"?`)) return;
+                                        try {
+                                          const res = await fetch(`/api/requests/${request.id}/attachments/${att.id}`, { method: 'DELETE' });
+                                          if (!res.ok) throw new Error('Delete failed');
+                                          mutate();
+                                        } catch (err) {
+                                          alert('Failed to delete attachment');
+                                        }
+                                      }}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
                                 ))}
                               </div>
                             );

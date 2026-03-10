@@ -1753,4 +1753,47 @@ router.get('/:id/audit-stream', async (req, res) => {
     }
 });
 
+/**
+ * DELETE /api/requests/:id/attachments/:attachmentId
+ * Remove an outbound attachment from a case
+ */
+router.delete('/:id/attachments/:attachmentId', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const attachmentId = parseInt(req.params.attachmentId);
+    const log = logger.forCase(requestId);
+
+    try {
+        const attachment = await db.getAttachmentById(attachmentId);
+        if (!attachment) {
+            return res.status(404).json({ success: false, error: 'Attachment not found' });
+        }
+        if (attachment.case_id !== requestId) {
+            return res.status(403).json({ success: false, error: 'Attachment does not belong to this case' });
+        }
+        // Only allow deleting outbound (no message_id) attachments
+        if (attachment.message_id) {
+            return res.status(400).json({ success: false, error: 'Cannot delete inbound message attachments' });
+        }
+
+        await db.deleteAttachment(attachmentId);
+        log.info(`Deleted attachment ${attachmentId} (${attachment.filename})`);
+
+        // Clean up S3/R2 if stored there
+        if (attachment.storage_url && attachment.storage_url.startsWith('s3://')) {
+            try {
+                const storageService = require('../../services/storage-service');
+                const key = attachment.storage_url.replace(/^s3:\/\/[^/]+\//, '');
+                await storageService.remove(key);
+            } catch (cleanupErr) {
+                log.warn(`Failed to clean up S3 object for attachment ${attachmentId}: ${cleanupErr.message}`);
+            }
+        }
+
+        res.json({ success: true, deleted: { id: attachmentId, filename: attachment.filename } });
+    } catch (error) {
+        log.error(`Error deleting attachment: ${error.message}`);
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'DELETE_ATTACHMENT_FAILED'));
+    }
+});
+
 module.exports = router;
