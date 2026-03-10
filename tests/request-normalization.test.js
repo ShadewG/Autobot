@@ -7,6 +7,7 @@ const {
   detectCaseMetadataAgencyMismatch,
   detectAgencyCityMismatch,
   evaluateImportAutoDispatchSafety,
+  hasCompoundAgencyIdentity,
   isGenericAgencyLabel,
   isPlaceholderCaseTitle,
   pickSafeSubjectDescriptor,
@@ -106,6 +107,14 @@ City : Princeton
     assert.strictEqual(isGenericAgencyLabel('Gwinnett County Police Department, Georgia'), false);
   });
 
+  it('recognizes an unscoped multi-agency import blob', function () {
+    assert.strictEqual(
+      hasCompoundAgencyIdentity("Vanderburgh County Prosecutor’s Office, Evansville Police Department, Vanderburgh County Sheriff’s Office"),
+      true
+    );
+    assert.strictEqual(hasCompoundAgencyIdentity('Grand Rapids Police Department'), false);
+  });
+
   it('treats nbsp and untitled values as placeholder case titles', function () {
     assert.strictEqual(isPlaceholderCaseTitle('&nbsp;'), true);
     assert.strictEqual(isPlaceholderCaseTitle('Untitled Case'), true);
@@ -172,6 +181,42 @@ City : Princeton
     });
   });
 
+  it('blocks auto-dispatch when import warnings flag a generic agency identity', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Kyneddi Miller records request',
+      subjectName: 'Kyneddi Miller',
+      agencyName: 'Police Department',
+      state: 'WV',
+      agencyEmail: 'orr@mylubbock.us',
+      portalUrl: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      additionalDetails: '',
+      importWarnings: [{ type: 'GENERIC_AGENCY_IDENTITY' }],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, true);
+    assert.strictEqual(result.reasonCode, 'GENERIC_AGENCY_IDENTITY');
+  });
+
+  it('does not block auto-dispatch when only a secondary-agency state mismatch warning is present', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Pennsylvania homicide records request',
+      subjectName: 'Jennifer Brown',
+      agencyName: 'Pennsylvania State Police',
+      state: 'PA',
+      agencyEmail: 'ra-crrtip@pa.gov',
+      portalUrl: 'https://rtklsp.nextrequest.com/requests/new',
+      additionalDetails: [
+        '### Police Departments Involved',
+        '- **Pennsylvania State Police:** Primary investigating agency.',
+        '- **Ohio State Highway Patrol:** Assisted at the scene.',
+      ].join('\n'),
+      importWarnings: [{ type: 'ADDITIONAL_AGENCY_STATE_MISMATCH' }],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, false);
+    assert.strictEqual(result.reasonCode, null);
+  });
+
   it('blocks auto-dispatch when metadata city conflicts with a routed police department', function () {
     const result = evaluateImportAutoDispatchSafety({
       caseName: 'Princeton Dad Sentenced To Life',
@@ -193,6 +238,27 @@ City : Princeton
     });
   });
 
+  it('does not block on city metadata when the narrative explicitly names the routed agency', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Jason Chen',
+      subjectName: 'Jasmine Pace',
+      agencyName: 'Chattanooga Police Department, Tennessee',
+      state: 'TN',
+      agencyEmail: null,
+      portalUrl: 'https://chattanoogatn.mycusthelp.com/public-records',
+      additionalDetails: [
+        'City : Nolensville',
+        '',
+        '### Police Departments Involved',
+        '- **Chattanooga Police Department:** Handled the initial investigation and arrest.',
+      ].join('\n'),
+      importWarnings: [],
+    });
+
+    assert.strictEqual(result.agencyCityMismatch, null);
+    assert.strictEqual(result.shouldBlockAutoDispatch, false);
+  });
+
   it('ignores raw Notion relation ids in metadata agency hints', function () {
     const hint = extractMetadataAgencyHint(`
 **Case Summary:** Example
@@ -210,5 +276,48 @@ City : Princeton
 `);
 
     assert.strictEqual(agency, 'Chattanooga Police Department');
+  });
+
+  it('prefers the primary investigating agency from multi-agency law-enforcement bullets', function () {
+    const agency = extractAgencyNameFromAdditionalDetails(`
+### LAW ENFORCEMENT INVOLVEMENT
+- **Pennsylvania State Police:** Served as the primary investigating agency for the homicide, conducted the initial welfare check, and filed charges against the suspect.
+- **Ohio State Highway Patrol:** Apprehended the suspect during a traffic stop in Ohio.
+- **Adams County Coroner’s Office:** Performed the autopsy on the victim.
+`);
+
+    assert.strictEqual(agency, 'Pennsylvania State Police');
+  });
+
+  it('blocks auto-dispatch when import warnings flag a duplicate case', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Charles Miles Sentenced to Prison in 2024 Beating Death Case',
+      subjectName: 'Charles Ethan Miles',
+      agencyName: 'Evansville Police Department',
+      state: 'IN',
+      agencyEmail: 'records@example.gov',
+      portalUrl: null,
+      additionalDetails: '',
+      importWarnings: [{ type: 'POSSIBLE_DUPLICATE_CASE' }],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, true);
+    assert.strictEqual(result.reasonCode, 'POSSIBLE_DUPLICATE_CASE');
+  });
+
+  it('blocks auto-dispatch when agency field contains multiple agencies without scoping', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Charles Miles Sentenced to Prison in 2024 Beating Death Case',
+      subjectName: 'Charles Ethan Miles',
+      agencyName: "Vanderburgh County Prosecutor’s Office, Evansville Police Department, Vanderburgh County Sheriff’s Office",
+      state: 'IN',
+      agencyEmail: 'prosecutorinfo@vanderburghgov.org',
+      portalUrl: 'https://vanderburghsheriff.org/public-records/',
+      additionalDetails: '',
+      importWarnings: [{ type: 'MULTI_AGENCY_UNSCOPED' }],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, true);
+    assert.strictEqual(result.reasonCode, 'MULTI_AGENCY_UNSCOPED');
   });
 });

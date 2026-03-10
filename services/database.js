@@ -91,10 +91,17 @@ function areCaseAgencyRowsEquivalent(left, right) {
     const a = buildCaseAgencyIdentity(left);
     const b = buildCaseAgencyIdentity(right);
 
-    if (a.agencyId && b.agencyId && a.agencyId === b.agencyId) return true;
+    if (a.agencyId && b.agencyId) {
+        return a.agencyId === b.agencyId;
+    }
+
+    if (a.hasComparableName && b.hasComparableName) {
+        if (a.comparableName === b.comparableName) return true;
+        return false;
+    }
+
     if (a.agencyEmail && b.agencyEmail && a.agencyEmail === b.agencyEmail) return true;
     if (a.portalKey && b.portalKey && a.portalKey === b.portalKey) return true;
-    if (a.hasComparableName && b.hasComparableName && a.comparableName === b.comparableName) return true;
 
     return false;
 }
@@ -3970,7 +3977,7 @@ class DatabaseService {
 
         // Check if this is the first agency for this case
         let hasSeededPrimaryFromCaseRow = false;
-        if (activeRows.length === 0) {
+        if (activeRows.length === 0 && agencyData.skip_case_row_backfill !== true) {
             const currentCase = await this.getCaseById(caseId);
             const normalizedCaseName = String(currentCase?.agency_name || '').trim().toLowerCase();
             const normalizedCaseEmail = String(currentCase?.agency_email || '').trim().toLowerCase();
@@ -4005,7 +4012,9 @@ class DatabaseService {
             }
         }
         const isFirst = activeRows.length === 0 && !hasSeededPrimaryFromCaseRow;
-        const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : isFirst;
+        const wantsPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : isFirst;
+        const hasExistingPrimary = activeRows.some((row) => row.is_primary === true);
+        const insertIsPrimary = wantsPrimary && !hasExistingPrimary;
 
         const result = await this.query(`
             INSERT INTO case_agencies (
@@ -4020,7 +4029,7 @@ class DatabaseService {
             agencyData.agency_email || null,
             agencyData.portal_url || null,
             agencyData.portal_provider || null,
-            isPrimary,
+            insertIsPrimary,
             agencyData.added_source || 'manual',
             agencyData.status || 'pending',
             agencyData.notes || null
@@ -4028,13 +4037,13 @@ class DatabaseService {
 
         const caseAgency = result.rows[0];
 
-        if (agencyData.is_primary === true) {
+        if (wantsPrimary) {
             const switched = await this.switchPrimaryAgency(caseId, caseAgency.id);
             return switched || caseAgency;
         }
 
         // Sync to cases table if this is the primary
-        if (isPrimary) {
+        if (insertIsPrimary) {
             await this.syncPrimaryAgencyToCase(caseId, caseAgency);
         }
 
@@ -4152,6 +4161,13 @@ class DatabaseService {
             normalizePortalUrl(primaryCaseAgency.portal_url) ||
             normalizePortalUrl(currentCase?.portal_url) ||
             null;
+        const currentAgencyEmail = String(currentCase?.agency_email || '').trim().toLowerCase();
+        const fallbackAgencyEmail =
+            !primaryCaseAgency.agency_email && !normalizedPortalUrl
+                ? (PLACEHOLDER_CASE_AGENCY_EMAILS.has(currentAgencyEmail)
+                    ? currentCase?.agency_email
+                    : 'pending-research@intake.autobot')
+                : null;
         const normalizedPortalProvider =
             primaryCaseAgency.portal_provider ||
             detectPortalProviderByUrl(normalizedPortalUrl)?.name ||
@@ -4171,7 +4187,7 @@ class DatabaseService {
             caseId,
             primaryCaseAgency.agency_id || currentCase?.agency_id || null,
             primaryCaseAgency.agency_name,
-            primaryCaseAgency.agency_email,
+            primaryCaseAgency.agency_email || fallbackAgencyEmail,
             normalizedPortalUrl,
             normalizedPortalProvider
         ]);

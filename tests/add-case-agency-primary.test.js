@@ -130,4 +130,62 @@ describe('addCaseAgency primary handling', function () {
     sinon.assert.calledOnce(db.updateCaseAgency);
     sinon.assert.calledOnce(db.syncPrimaryAgencyToCase);
   });
+
+  it('does not merge distinct agencies just because they share a portal URL', async function () {
+    const queryStub = sinon.stub(db, 'query');
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 92,
+      agency_id: 1599,
+      agency_name: 'Pennsylvania State Police',
+      agency_email: 'RA-psprighttoknow@pa.gov',
+      portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+      portal_provider: null,
+    });
+    sinon.stub(db, 'switchPrimaryAgency').resolves({
+      id: 402,
+      case_id: 92,
+      agency_name: 'Adams County Coroner’s Office',
+      is_primary: false,
+    });
+    sinon.stub(db, 'syncPrimaryAgencyToCase').resolves();
+
+    queryStub.onCall(0).resolves({
+      rows: [{
+        id: 401,
+        case_id: 92,
+        agency_id: 1599,
+        agency_name: 'Pennsylvania State Police',
+        agency_email: 'RA-psprighttoknow@pa.gov',
+        portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+        portal_provider: null,
+        is_primary: true,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      }],
+    });
+    queryStub.onCall(1).resolves({
+      rows: [{
+        id: 402,
+        case_id: 92,
+        agency_id: null,
+        agency_name: 'Adams County Coroner’s Office',
+        agency_email: null,
+        portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+        portal_provider: null,
+        is_primary: false,
+      }],
+    });
+
+    const added = await db.addCaseAgency(92, {
+      agency_name: 'Adams County Coroner’s Office',
+      agency_email: null,
+      portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+      is_primary: false,
+      skip_case_row_backfill: true,
+    });
+
+    assert.strictEqual(added.id, 402);
+    assert.strictEqual(db.switchPrimaryAgency.called, false);
+    assert.match(queryStub.getCall(1).args[0], /INSERT INTO case_agencies/);
+  });
 });

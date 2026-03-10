@@ -360,9 +360,30 @@ function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
   }
 
   const lines = String(additionalDetails || '').split(/\r?\n/);
+  const primaryInvestigativeBulletMatch = lines
+    .map((rawLine) => String(rawLine || '').trim())
+    .map((line) => {
+      const match = line.match(/^[-*]\s*\*{0,2}([^:\n\r*]+?(?:Police Department|Sheriff(?:'s)? Office|Police Services|State Police|Highway Patrol|Bureau of Investigation|Department of Public Safety)[^:\n\r*]*)\*{0,2}\s*:\s*(.+)$/i);
+      if (!match?.[1] || !match?.[2]) return null;
+      const candidate = cleanMetadataLine(match[1]);
+      const description = cleanMetadataLine(match[2]).toLowerCase();
+      if (!candidate || normalizeNotionReferenceId(candidate) || isNotionReferenceList(candidate) || isGenericAgencyLabel(candidate)) {
+        return null;
+      }
+      if (!/(primary investigating agency|served as the primary investigating agency|lead investigating agency|lead agency|handled the initial investigation|investigation was led by|conducted the initial welfare check|filed charges against the suspect)/i.test(description)) {
+        return null;
+      }
+      return candidate;
+    })
+    .find(Boolean);
+
+  if (primaryInvestigativeBulletMatch) {
+    return primaryInvestigativeBulletMatch;
+  }
+
   for (const rawLine of lines) {
     const line = String(rawLine || '').trim();
-    const bulletAgencyMatch = line.match(/^[-*]\s*\*{0,2}([^:\n\r*]+?(?:Police Department|Sheriff(?:'s)? Office|Police Services)[^:\n\r*]*)\*{0,2}\s*:/i);
+    const bulletAgencyMatch = line.match(/^[-*]\s*\*{0,2}([^:\n\r*]+?(?:Police Department|Sheriff(?:'s)? Office|Police Services|State Police|Highway Patrol|Bureau of Investigation|Department of Public Safety)[^:\n\r*]*)\*{0,2}\s*:/i);
     if (bulletAgencyMatch?.[1]) {
       const candidate = cleanMetadataLine(bulletAgencyMatch[1]);
       if (candidate && !normalizeNotionReferenceId(candidate) && !isNotionReferenceList(candidate) && !isGenericAgencyLabel(candidate)) {
@@ -412,6 +433,26 @@ function isGenericAgencyLabel(value) {
     'unknown agency',
     'unknown department',
   ]).has(normalized);
+}
+
+function hasCompoundAgencyIdentity(value = '') {
+  const normalized = String(value || '')
+    .replace(/[’']/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+  const segments = normalized
+    .split(/[;|]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  const candidateText = segments.length > 1 ? segments : normalized.split(/\s*,\s*/).filter(Boolean);
+  const agencyLikeParts = candidateText.filter((segment) =>
+    /(police department|sheriff(?:'s)? office|district attorney|prosecutor|coroner|state police|highway patrol|clerk of courts|fire and ems)/i.test(segment)
+  );
+
+  return agencyLikeParts.length >= 2;
 }
 
 const AGENCY_COMPARISON_STOPWORDS = new Set([
@@ -568,7 +609,16 @@ function evaluateImportAutoDispatchSafety({
   const hasDeliveryPath = Boolean(normalizeImportText(agencyEmail) || normalizePortalUrl(portalUrl));
 
   const shouldBlockAutoDispatch = Boolean(
-    ((!notionReferenceAgency) && (metadataMismatch || agencyStateMismatch || agencyCityMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
+    ((!notionReferenceAgency) && (
+      metadataMismatch ||
+      agencyStateMismatch ||
+      agencyCityMismatch ||
+      warningTypes.includes('AGENCY_METADATA_MISMATCH') ||
+      warningTypes.includes('STATE_MISMATCH')
+    )) ||
+    warningTypes.includes('POSSIBLE_DUPLICATE_CASE') ||
+    warningTypes.includes('MULTI_AGENCY_UNSCOPED') ||
+    warningTypes.includes('GENERIC_AGENCY_IDENTITY') ||
     (placeholderCaseTitle && placeholderSubject) ||
     (genericAgency && metadataHint && hasDeliveryPath)
   );
@@ -576,10 +626,16 @@ function evaluateImportAutoDispatchSafety({
   let reasonCode = null;
   if (metadataMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH')) {
     reasonCode = 'AGENCY_METADATA_MISMATCH';
-  } else if (agencyStateMismatch) {
+  } else if (agencyStateMismatch || warningTypes.includes('STATE_MISMATCH')) {
     reasonCode = 'AGENCY_STATE_MISMATCH';
   } else if (agencyCityMismatch) {
     reasonCode = 'AGENCY_CITY_MISMATCH';
+  } else if (warningTypes.includes('POSSIBLE_DUPLICATE_CASE')) {
+    reasonCode = 'POSSIBLE_DUPLICATE_CASE';
+  } else if (warningTypes.includes('MULTI_AGENCY_UNSCOPED')) {
+    reasonCode = 'MULTI_AGENCY_UNSCOPED';
+  } else if (warningTypes.includes('GENERIC_AGENCY_IDENTITY')) {
+    reasonCode = 'GENERIC_AGENCY_IDENTITY';
   } else if (placeholderCaseTitle && placeholderSubject) {
     reasonCode = 'PLACEHOLDER_TITLE';
   } else if (genericAgency && metadataHint && hasDeliveryPath) {
@@ -613,6 +669,7 @@ module.exports = {
   extractMetadataAgencyHint,
   extractAgencyNameFromAdditionalDetails,
   isGenericAgencyLabel,
+  hasCompoundAgencyIdentity,
   detectCaseMetadataAgencyMismatch,
   detectAgencyStateMismatch,
   extractMetadataCityHint,

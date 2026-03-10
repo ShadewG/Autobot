@@ -6,7 +6,8 @@ const errorTrackingService = require('./error-tracking-service');
 const { normalizeAgencyEmailHint } = require('./canonical-agency');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
-const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, isGenericAgencyLabel, isPlaceholderAgencyEmail } = require('../utils/request-normalization');
+const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, hasCompoundAgencyIdentity, isGenericAgencyLabel, isPlaceholderAgencyEmail } = require('../utils/request-normalization');
+const { normalizeStateCode, parseStateFromAgencyName } = require('../utils/state-utils');
 const dns = require('dns').promises;
 
 /**
@@ -15,6 +16,12 @@ const dns = require('dns').promises;
  */
 async function validateImportedCase(caseData) {
     const warnings = [];
+    const normalizedAgencyName = normalizeNotionText(caseData?.agency_name || '');
+    const genericImportedAgency =
+        normalizedAgencyName &&
+        isGenericAgencyLabel(normalizedAgencyName) &&
+        !caseData?.agency_id &&
+        !caseData?.police_dept_id;
 
     // 1. Email format validation
     if (caseData.agency_email && caseData.agency_email !== IMPORT_PLACEHOLDER_EMAIL) {
@@ -47,6 +54,20 @@ async function validateImportedCase(caseData) {
 
     // 3. Agency directory lookup
     if (caseData.agency_name) {
+        if (genericImportedAgency) {
+            warnings.push({
+                type: 'GENERIC_AGENCY_IDENTITY',
+                message: `Agency \"${caseData.agency_name}\" is too generic to trust for automated dispatch`,
+                field: 'agency_name',
+            });
+        }
+        if (hasCompoundAgencyIdentity(caseData.agency_name)) {
+            warnings.push({
+                type: 'MULTI_AGENCY_UNSCOPED',
+                message: `Agency field appears to contain multiple agencies without explicit scoped relations: \"${caseData.agency_name}\"`,
+                field: 'agency_name',
+            });
+        }
         const agency = caseData.agency_id
             ? { id: caseData.agency_id, state: caseData.state }
             : await resolveImportedAgencyDirectoryEntry(caseData);
@@ -66,6 +87,16 @@ async function validateImportedCase(caseData) {
         }
     }
 
+    const duplicateCases = await findRecentDuplicateCases(caseData);
+    if (duplicateCases.length > 0) {
+        warnings.push({
+            type: 'POSSIBLE_DUPLICATE_CASE',
+            message: `A recent case with the same title already exists (${duplicateCases.map((row) => `#${row.id}`).join(', ')})`,
+            field: 'case_name',
+            duplicateCaseIds: duplicateCases.map((row) => row.id),
+        });
+    }
+
     // 5. Metadata agency mismatch detection
     const mismatch = detectCaseMetadataAgencyMismatch({
         currentAgencyName: caseData.agency_name,
@@ -82,6 +113,114 @@ async function validateImportedCase(caseData) {
     }
 
     return warnings.length > 0 ? warnings : null;
+}
+
+function mergeImportWarnings(...warningLists) {
+    const merged = [];
+    const seen = new Set();
+    for (const warnings of warningLists) {
+        if (!Array.isArray(warnings)) continue;
+        for (const warning of warnings) {
+            if (!warning || typeof warning !== 'object') continue;
+            const key = `${warning.type || ''}:${warning.field || ''}:${warning.message || ''}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            merged.push(warning);
+        }
+    }
+    return merged;
+}
+
+async function findRecentDuplicateCases(caseData) {
+    const normalizedCaseName = normalizeNotionText(caseData?.case_name || '');
+    const normalizedNotionId = db.normalizeNotionPageId(caseData?.notion_page_id);
+    if (!normalizedCaseName || normalizedCaseName === 'Untitled Case') {
+        return [];
+    }
+
+    const rows = (await db.query(
+        `SELECT id, case_name, state, agency_name, notion_page_id, created_at
+         FROM cases
+         WHERE LOWER(REGEXP_REPLACE(case_name, '\s+', ' ', 'g')) = LOWER(REGEXP_REPLACE($1, '\s+', ' ', 'g'))
+           AND ($2::text IS NULL OR notion_page_id <> $2)
+           AND created_at > NOW() - INTERVAL '14 days'
+         ORDER BY created_at DESC
+         LIMIT 5`,
+        [normalizedCaseName, normalizedNotionId]
+    )).rows;
+
+    return rows;
+}
+
+function shouldSkipImportedAdditionalAgency({ caseState, agencyName }) {
+    const normalizedAgencyName = normalizeNotionText(agencyName || '');
+    if (!normalizedAgencyName || isGenericAgencyLabel(normalizedAgencyName)) {
+        return { skip: true, reason: 'generic_agency' };
+    }
+
+    const normalizedCaseState = normalizeStateCode(caseState);
+    const agencyState = parseStateFromAgencyName(normalizedAgencyName);
+    if (normalizedCaseState && agencyState && normalizedCaseState !== agencyState) {
+        return { skip: true, reason: 'state_mismatch', agencyState, caseState: normalizedCaseState };
+    }
+
+    return { skip: false, reason: null, agencyState };
+}
+
+function shouldClearImportedPrimaryIdentity(caseData = {}) {
+    const warningTypes = new Set(
+        Array.isArray(caseData.import_warnings)
+            ? caseData.import_warnings.map((warning) => String(warning?.type || '').trim().toUpperCase()).filter(Boolean)
+            : []
+    );
+    const normalizedAgencyName = normalizeNotionText(caseData.agency_name || '');
+    const genericImportedAgency =
+        normalizedAgencyName &&
+        isGenericAgencyLabel(normalizedAgencyName) &&
+        !caseData.agency_id &&
+        !caseData.police_dept_id;
+
+    if (caseData.skip_primary_agency_persist || genericImportedAgency) {
+        return true;
+    }
+
+    return [
+        'AGENCY_METADATA_MISMATCH',
+        'STATE_MISMATCH',
+        'AGENCY_CITY_MISMATCH',
+        'POSSIBLE_DUPLICATE_CASE',
+        'MULTI_AGENCY_UNSCOPED',
+        'GENERIC_AGENCY_IDENTITY',
+    ].some((type) => warningTypes.has(type));
+}
+
+function normalizeComparableAgencyName(value = '') {
+    return normalizeNotionText(value)
+        .toLowerCase()
+        .replace(/[’']/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function areImportedAgencyNamesCompatible(requestedName = '', candidateName = '') {
+    const requested = normalizeComparableAgencyName(requestedName);
+    const candidate = normalizeComparableAgencyName(candidateName);
+    if (!requested || !candidate) return false;
+    if (requested === candidate) return true;
+    if (requested.includes(candidate) || candidate.includes(requested)) return true;
+
+    const stopwords = new Set([
+        'agency', 'attorney', 'bureau', 'county', 'department', 'district',
+        'division', 'enforcement', 'highway', 'law', 'office', 'patrol',
+        'police', 'prosecutor', 'public', 'records', 'sheriff', 'state', 'services',
+        'the', 'of',
+    ]);
+    const requestedTokens = requested.split(' ').filter((token) => token && !stopwords.has(token));
+    const candidateTokens = candidate.split(' ').filter((token) => token && !stopwords.has(token));
+    if (requestedTokens.length === 0 || candidateTokens.length === 0) return false;
+
+    const overlap = requestedTokens.filter((token) => candidateTokens.includes(token));
+    return overlap.length >= Math.min(2, requestedTokens.length, candidateTokens.length);
 }
 
 async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing = false } = {}) {
@@ -105,6 +244,16 @@ async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing =
     )).rows[0] || null;
     if (agency) return agency;
 
+    agency = (await db.query(
+        `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+         FROM agencies
+         WHERE LOWER(name) = LOWER($1)
+         ORDER BY (state = $2)::int DESC, (state IS NULL)::int DESC, id DESC
+         LIMIT 1`,
+        [agencyName, state]
+    )).rows[0] || null;
+    if (agency) return agency;
+
     if (agencyEmail) {
         agency = (await db.query(
             `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
@@ -115,7 +264,7 @@ async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing =
              LIMIT 1`,
             [agencyEmail]
         )).rows[0] || null;
-        if (agency) return agency;
+        if (agency && areImportedAgencyNamesCompatible(agencyName, agency.name)) return agency;
     }
 
     if (portalUrl) {
@@ -128,7 +277,7 @@ async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing =
              LIMIT 1`,
             [portalUrl]
         )).rows[0] || null;
-        if (agency) return agency;
+        if (agency && areImportedAgencyNamesCompatible(agencyName, agency.name)) return agency;
     }
 
     if (!createIfMissing || (!agencyEmail && !portalUrl)) {
@@ -314,12 +463,19 @@ const POLICE_DEPARTMENT_FIELD_SPECS = [
 class NotionService {
     hasConcreteImportedAgencyIdentity(caseData = {}) {
         const agencyName = normalizeNotionText(caseData.agency_name || '');
+        const hasTrustedDeliveryPath = Boolean(
+            !caseData.skip_primary_agency_persist &&
+            agencyName &&
+            !isGenericAgencyLabel(agencyName) &&
+            (normalizeNotionText(caseData.agency_email || '') || normalizePortalUrl(caseData.portal_url || null))
+        );
         return Boolean(
-            caseData.police_dept_id ||
-            caseData.agency_id ||
-            (agencyName && !isGenericAgencyLabel(agencyName)) ||
-            normalizeNotionText(caseData.agency_email || '') ||
-            normalizePortalUrl(caseData.portal_url || null)
+            !caseData.skip_primary_agency_persist && (
+                caseData.police_dept_id ||
+                caseData.agency_id ||
+                (agencyName && !isGenericAgencyLabel(agencyName)) ||
+                hasTrustedDeliveryPath
+            )
         );
     }
 
@@ -458,6 +614,14 @@ class NotionService {
             });
         }
 
+        if (importSafety.agencyStateMismatch && !warnings.some((warning) => warning.type === 'STATE_MISMATCH')) {
+            warnings.push({
+                type: 'STATE_MISMATCH',
+                message: `Case state \"${importSafety.agencyStateMismatch.caseState}\" does not match agency state \"${importSafety.agencyStateMismatch.agencyState}\" for \"${importSafety.agencyStateMismatch.currentAgencyName}\"`,
+                field: 'state',
+            });
+        }
+
         if (importSafety.agencyCityMismatch && !warnings.some((warning) => warning.type === 'AGENCY_CITY_MISMATCH')) {
             warnings.push({
                 type: 'AGENCY_CITY_MISMATCH',
@@ -482,10 +646,84 @@ class NotionService {
     applyImportDeliveryFallback(caseData) {
         if (!caseData) return caseData;
         if (caseData.portal_url || caseData.agency_email) return caseData;
-        if (caseData.status !== 'needs_contact_info') return caseData;
+        if (!['needs_contact_info', 'needs_human_review'].includes(caseData.status)) return caseData;
 
         caseData.agency_email = IMPORT_PLACEHOLDER_EMAIL;
         return caseData;
+    }
+
+    quarantineUnsafeImportedIdentity(caseData) {
+        if (!caseData) return caseData;
+        const warningTypes = new Set(
+            Array.isArray(caseData.import_warnings)
+                ? caseData.import_warnings.map((warning) => String(warning?.type || '').trim().toUpperCase()).filter(Boolean)
+                : []
+        );
+        const shouldQuarantine = [
+            'AGENCY_METADATA_MISMATCH',
+            'STATE_MISMATCH',
+            'AGENCY_CITY_MISMATCH',
+            'POSSIBLE_DUPLICATE_CASE',
+            'MULTI_AGENCY_UNSCOPED',
+            'GENERIC_AGENCY_IDENTITY',
+        ].some((type) => warningTypes.has(type));
+
+        if (!shouldQuarantine) return caseData;
+
+        caseData.skip_primary_agency_persist = true;
+        caseData.agency_id = null;
+        caseData.agency_email = null;
+        caseData.portal_url = null;
+        caseData.portal_provider = null;
+        caseData.alternate_agency_email = null;
+        return caseData;
+    }
+
+    async refreshImportedCaseRecord(caseRecord, importedCaseData = {}) {
+        const caseId = Number(caseRecord?.id);
+        if (!caseId) return caseRecord || null;
+
+        const updates = {};
+
+        if (importedCaseData.case_name) updates.case_name = importedCaseData.case_name;
+        if (importedCaseData.subject_name) updates.subject_name = importedCaseData.subject_name;
+        if (importedCaseData.state) updates.state = importedCaseData.state;
+        if (importedCaseData.incident_date) updates.incident_date = importedCaseData.incident_date;
+        if (importedCaseData.incident_location) updates.incident_location = importedCaseData.incident_location;
+        if (Array.isArray(importedCaseData.requested_records) && importedCaseData.requested_records.length > 0) {
+            updates.requested_records = importedCaseData.requested_records;
+        }
+        if (importedCaseData.additional_details) updates.additional_details = importedCaseData.additional_details;
+        if (importedCaseData.status) updates.status = importedCaseData.status;
+        if (importedCaseData.deadline_date) updates.deadline_date = importedCaseData.deadline_date;
+        if (importedCaseData.user_id) updates.user_id = importedCaseData.user_id;
+        if (Array.isArray(importedCaseData.tags)) updates.tags = importedCaseData.tags;
+        if (importedCaseData.priority != null) updates.priority = importedCaseData.priority;
+
+        if (shouldClearImportedPrimaryIdentity(importedCaseData)) {
+            const placeholderEmail = isPlaceholderAgencyEmail(importedCaseData.agency_email)
+                ? normalizeNotionText(importedCaseData.agency_email)
+                : null;
+            updates.agency_id = null;
+            updates.agency_name = null;
+            updates.agency_email = placeholderEmail;
+            updates.portal_url = null;
+            updates.portal_provider = null;
+            updates.alternate_agency_email = null;
+        } else if (this.hasConcreteImportedAgencyIdentity(importedCaseData)) {
+            if (importedCaseData.agency_id) updates.agency_id = importedCaseData.agency_id;
+            if (importedCaseData.agency_name) updates.agency_name = importedCaseData.agency_name;
+            if (importedCaseData.agency_email) updates.agency_email = importedCaseData.agency_email;
+            if (importedCaseData.portal_url) updates.portal_url = importedCaseData.portal_url;
+            if (importedCaseData.portal_provider) updates.portal_provider = importedCaseData.portal_provider;
+            if (importedCaseData.alternate_agency_email) updates.alternate_agency_email = importedCaseData.alternate_agency_email;
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return caseRecord || null;
+        }
+
+        return await db.updateCase(caseId, updates);
     }
 
     async persistImportedPrimaryAgency(caseRecord, importedCaseData = {}) {
@@ -570,6 +808,95 @@ class NotionService {
         });
 
         return latestCaseRecord || caseRecord || null;
+    }
+
+    async reconcileImportedAgencySet(caseRecord, importedCaseData = {}, additionalAgencies = []) {
+        const caseId = Number(caseRecord?.id);
+        if (!caseId) return;
+
+        const caseState = normalizeStateCode(importedCaseData.state || caseRecord?.state || null);
+        const activeAgencies = await db.getCaseAgencies(caseId);
+        const shouldClearPrimaryIdentity = shouldClearImportedPrimaryIdentity(importedCaseData);
+        const expectedPrimaryName = this.hasConcreteImportedAgencyIdentity(importedCaseData)
+            ? normalizeNotionText(importedCaseData.agency_name || '')
+            : '';
+        const expectedAdditionalNames = new Set(
+            (Array.isArray(additionalAgencies) ? additionalAgencies : [])
+                .map((agency) => normalizeNotionText(agency?.agency_name || ''))
+                .filter(Boolean)
+        );
+        const agencyIdsToDeactivate = [];
+
+        for (const agencyRow of activeAgencies) {
+            const addedSource = String(agencyRow?.added_source || '').trim().toLowerCase();
+            if (!['notion_import', 'notion_relation', 'case_row_backfill'].includes(addedSource)) {
+                continue;
+            }
+
+            const normalizedAgencyName = normalizeNotionText(agencyRow?.agency_name || '');
+            if (!normalizedAgencyName) continue;
+
+            if (shouldClearPrimaryIdentity) {
+                agencyIdsToDeactivate.push(agencyRow.id);
+                continue;
+            }
+
+            if (agencyRow.is_primary) {
+                if (expectedPrimaryName && normalizedAgencyName !== expectedPrimaryName) {
+                    agencyIdsToDeactivate.push(agencyRow.id);
+                }
+                continue;
+            }
+
+            if (!expectedAdditionalNames.has(normalizedAgencyName)) {
+                agencyIdsToDeactivate.push(agencyRow.id);
+                continue;
+            }
+
+            const staleSecondary = shouldSkipImportedAdditionalAgency({
+                caseState,
+                agencyName: normalizedAgencyName,
+            });
+            if (staleSecondary.skip) {
+                agencyIdsToDeactivate.push(agencyRow.id);
+            }
+        }
+
+        if (agencyIdsToDeactivate.length > 0) {
+            await db.query(
+                `UPDATE case_agencies
+                    SET is_active = false,
+                        is_primary = false,
+                        updated_at = NOW()
+                  WHERE id = ANY($1::int[])`,
+                [agencyIdsToDeactivate]
+            );
+        }
+
+        if (shouldClearPrimaryIdentity || !expectedPrimaryName) {
+            return;
+        }
+
+        const remainingActiveAgencies = await db.getCaseAgencies(caseId);
+        const expectedPrimary = remainingActiveAgencies.find(
+            (agencyRow) => normalizeNotionText(agencyRow?.agency_name || '') === expectedPrimaryName
+        );
+        if (expectedPrimary && !expectedPrimary.is_primary) {
+            await db.switchPrimaryAgency(caseId, expectedPrimary.id);
+        }
+        if (!expectedPrimary && remainingActiveAgencies.length === 0) {
+            await db.query(
+                `UPDATE cases
+                    SET agency_id = NULL,
+                        agency_name = NULL,
+                        agency_email = $2,
+                        portal_url = NULL,
+                        portal_provider = NULL,
+                        updated_at = NOW()
+                  WHERE id = $1`,
+                [caseId, IMPORT_PLACEHOLDER_EMAIL]
+            );
+        }
     }
 
     /**
@@ -2247,6 +2574,11 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 try {
                     // Check if case already exists in our database
                     existing = await db.getCaseByNotionId(notionCase.notion_page_id);
+                    const preValidationWarnings = await validateImportedCase(notionCase);
+                    notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, preValidationWarnings);
+                    this.applyImportReadinessGuard(notionCase);
+                    this.quarantineUnsafeImportedIdentity(notionCase);
+                    this.applyImportDeliveryFallback(notionCase);
 
                     if (existing) {
                         if (protectedStatuses.has(existing.status)) {
@@ -2255,6 +2587,20 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         }
 
                         if (existing.status === 'ready_to_send') {
+                            if (notionCase.status !== 'ready_to_send') {
+                                await db.updateCase(existing.id, {
+                                    status: notionCase.status,
+                                    last_notion_synced_at: new Date(),
+                                });
+                                if (Array.isArray(notionCase.import_warnings) && notionCase.import_warnings.length > 0) {
+                                    await db.query(
+                                        'UPDATE cases SET import_warnings = $1 WHERE id = $2',
+                                        [JSON.stringify(notionCase.import_warnings), existing.id]
+                                    );
+                                }
+                                syncedCases.push(await db.getCaseById(existing.id));
+                                continue;
+                            }
                             if (!existing.queued_at) {
                                 const dispatch = getDispatchFn();
                                 if (dispatch) {
@@ -2275,16 +2621,24 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                             agency_email: notionCase.agency_email || (preserveExistingChannels ? existing.agency_email : null),
                             portal_url: notionCase.portal_url || (preserveExistingChannels ? existing.portal_url : null),
                             portal_provider: notionCase.portal_provider || (preserveExistingChannels ? existing.portal_provider : null),
-                            status: 'ready_to_send',
+                            status: notionCase.status || 'ready_to_send',
                             last_notion_synced_at: new Date(),
                         });
                         updatedCase = await this.persistImportedPrimaryAgency(updatedCase, notionCase);
+                        if (Array.isArray(notionCase.import_warnings) && notionCase.import_warnings.length > 0) {
+                            await db.query(
+                                'UPDATE cases SET import_warnings = $1 WHERE id = $2',
+                                [JSON.stringify(notionCase.import_warnings), existing.id]
+                            );
+                        }
 
                         // Dispatch via Run Engine so the case is picked up immediately
-                        const dispatch = getDispatchFn();
-                        if (dispatch) {
-                            try { await dispatch(existing.id, { source: 'notion_sync' }); } catch (e) {
-                                console.warn(`Failed to dispatch re-synced case ${existing.id}:`, e.message);
+                        if (notionCase.status === 'ready_to_send') {
+                            const dispatch = getDispatchFn();
+                            if (dispatch) {
+                                try { await dispatch(existing.id, { source: 'notion_sync' }); } catch (e) {
+                                    console.warn(`Failed to dispatch re-synced case ${existing.id}:`, e.message);
+                                }
                             }
                         }
 
@@ -2313,8 +2667,6 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         }
                     }
 
-                    this.applyImportReadinessGuard(notionCase);
-
                     // Calculate deadline based on state
                     const deadline = await this.calculateDeadline(notionCase.state);
                     notionCase.deadline_date = deadline;
@@ -2325,25 +2677,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     console.log(`Created new case: ${newCase.case_name}`);
                     syncedCases.push(newCase);
 
-                    // Validate imported case and store warnings
-                    try {
-                        const importWarnings = [
-                            ...(Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : []),
-                            ...((await validateImportedCase(notionCase)) || []),
-                        ];
-                        if (importWarnings.length > 0) {
-                            await db.query(
-                                'UPDATE cases SET import_warnings = $1, last_notion_synced_at = NOW() WHERE id = $2',
-                                [JSON.stringify(importWarnings), newCase.id]
-                            );
-                            console.warn(`Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
-                        }
-                    } catch (valErr) {
-                        console.warn(`Failed to validate imported case ${newCase.id}:`, valErr.message);
+                    const importWarnings = Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : [];
+                    if (importWarnings.length > 0) {
+                        await db.query(
+                            'UPDATE cases SET import_warnings = $1, status = $2, last_notion_synced_at = NOW() WHERE id = $3',
+                            [JSON.stringify(importWarnings), notionCase.status || newCase.status, newCase.id]
+                        );
+                        console.warn(`Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
+                    } else {
+                        await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1 AND last_notion_synced_at IS NULL', [newCase.id]);
                     }
-
-                    // Set last synced timestamp (even if validation had no warnings)
-                    await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1 AND last_notion_synced_at IS NULL', [newCase.id]);
 
                     // Log activity
                     await db.logActivity('case_imported', `Imported case from Notion: ${newCase.case_name}`, {
@@ -3075,11 +3418,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             const notionCase = this.parseNotionPage(page);
 
-            // Step 2: Dedup check FIRST — before any AI calls
+            // Step 2: Track existing case so page-based re-sync can refresh it instead of short-circuiting.
             const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
             if (existing) {
-                console.log(`[import] Case already exists: ${notionCase.case_name}`);
-                return existing;
+                console.log(`[import] Case already exists and will be refreshed: ${notionCase.case_name} (${existing.id})`);
             }
 
             // Step 3: Fetch PD page + text (if relation exists)
@@ -3197,7 +3539,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 }
             }
 
+            const preValidationWarnings = await validateImportedCase(notionCase);
+            notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, preValidationWarnings);
             this.applyImportReadinessGuard(notionCase, { pageContent });
+            this.quarantineUnsafeImportedIdentity(notionCase);
             this.applyImportDeliveryFallback(notionCase);
 
             // Step 6: Resolve user, calculate deadline, create case
@@ -3222,7 +3567,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             notionCase.deadline_date = deadline;
             notionCase.incident_date = this.normalizeImportedDateValue(notionCase.incident_date);
 
-            let newCase = await db.createCase(notionCase);
+            let newCase = existing
+                ? await this.refreshImportedCaseRecord(existing, notionCase)
+                : await db.createCase(notionCase);
             newCase = await this.persistImportedPrimaryAgency(newCase, notionCase);
             console.log(`[import] Created case: ${newCase.case_name} (${newCase.id})`);
 
@@ -3231,8 +3578,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 await this.importNotionFiles(newCase.id, notionFiles);
             }
 
-            // Import additional Police Departments as case_agencies
-            const additionalPDIds = notionCase.additional_police_dept_ids || [];
+            // Resolve additional Police Departments before reconciling the imported agency set.
+            const allowImportedAdditionalAgencies = !shouldClearImportedPrimaryIdentity(notionCase);
+            const additionalPDIds = allowImportedAdditionalAgencies ? (notionCase.additional_police_dept_ids || []) : [];
+            const resolvedAdditionalAgencies = [];
             if (additionalPDIds.length > 0) {
                 for (const pdId of additionalPDIds) {
                     try {
@@ -3251,6 +3600,42 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         if (!pdPortalUrl) {
                             pdPortalUrl = this.extractFirstUrlFromProperties(deptProps);
                         }
+                        pdPortalUrl = normalizePortalUrl(pdPortalUrl);
+
+                        const primaryPortalUrl = normalizePortalUrl(notionCase.portal_url || null);
+                        if (
+                            pdPortalUrl &&
+                            primaryPortalUrl &&
+                            pdPortalUrl === primaryPortalUrl &&
+                            normalizeNotionText(pdName) !== normalizeNotionText(notionCase.agency_name || '')
+                        ) {
+                            notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, [{
+                                type: 'ADDITIONAL_AGENCY_SHARED_PRIMARY_PORTAL',
+                                message: `Cleared shared portal URL for additional agency \\\"${pdName}\\\" because it duplicates the primary agency portal`,
+                                field: 'additional_police_dept_ids',
+                                sharedPortalUrl: pdPortalUrl,
+                                skippedAgencyName: pdName,
+                            }]);
+                            pdPortalUrl = null;
+                        }
+
+                        const secondaryAgencyDecision = shouldSkipImportedAdditionalAgency({
+                            caseState: notionCase.state || newCase.state || null,
+                            agencyName: pdName,
+                        });
+
+                        if (secondaryAgencyDecision.skip) {
+                            notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, [{
+                                type: 'ADDITIONAL_AGENCY_STATE_MISMATCH',
+                                message: secondaryAgencyDecision.reason === 'state_mismatch'
+                                    ? `Skipped additional agency \"${pdName}\" because its state \"${secondaryAgencyDecision.agencyState}\" conflicts with case state \"${secondaryAgencyDecision.caseState}\"`
+                                    : `Skipped additional agency \"${pdName}\" because it could not be resolved safely`,
+                                field: 'additional_police_dept_ids',
+                                skippedAgencyName: pdName,
+                            }]);
+                            console.warn(`[import] Skipping additional agency \"${pdName}\" for case ${newCase.id}: ${secondaryAgencyDecision.reason}`);
+                            continue;
+                        }
 
                         const resolvedAdditionalAgency = await resolveImportedAgencyDirectoryEntry({
                             agency_name: pdName,
@@ -3259,7 +3644,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                             state: notionCase.state || null,
                         }, { createIfMissing: true });
 
-                        await db.addCaseAgency(newCase.id, {
+                        resolvedAdditionalAgencies.push({
                             agency_id: resolvedAdditionalAgency?.id || null,
                             agency_name: pdName,
                             agency_email: pdEmail,
@@ -3284,6 +3669,15 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 }
             }
 
+            await this.reconcileImportedAgencySet(newCase, notionCase, resolvedAdditionalAgencies);
+
+            for (const additionalAgency of resolvedAdditionalAgencies) {
+                await db.addCaseAgency(newCase.id, {
+                    ...additionalAgency,
+                    skip_case_row_backfill: true,
+                });
+            }
+
             // Update Notion status
             try {
                 await this.updatePage(notionCase.notion_page_id, {
@@ -3304,21 +3698,18 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 console.warn('[import] Failed to update Notion status:', syncErr.message);
             }
 
-            // Run import validation (same as bulk sync)
-            try {
-                const importWarnings = [
-                    ...(Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : []),
-                    ...((await validateImportedCase(newCase)) || []),
-                ];
-                if (importWarnings.length > 0) {
-                    await db.query(
-                        'UPDATE cases SET import_warnings = $1 WHERE id = $2',
-                        [JSON.stringify(importWarnings), newCase.id]
-                    );
-                    console.warn(`[import] Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
-                }
-            } catch (valErr) {
-                console.warn('[import] Validation check failed:', valErr.message);
+            const importWarnings = Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : [];
+            if (importWarnings.length > 0) {
+                await db.query(
+                    'UPDATE cases SET import_warnings = $1, status = $2, last_notion_synced_at = NOW() WHERE id = $3',
+                    [JSON.stringify(importWarnings), notionCase.status || newCase.status, newCase.id]
+                );
+                console.warn(`[import] Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
+            } else {
+                await db.query(
+                    'UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1',
+                    [newCase.id]
+                );
             }
 
             await db.logActivity('case_imported', `Imported case from Notion page: ${newCase.case_name}`, {

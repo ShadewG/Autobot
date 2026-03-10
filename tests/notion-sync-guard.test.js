@@ -2,6 +2,7 @@ const assert = require('assert');
 const sinon = require('sinon');
 
 const db = require('../services/database');
+const aiService = require('../services/ai-service');
 const notionService = require('../services/notion-service');
 const errorTrackingService = require('../services/error-tracking-service');
 
@@ -260,6 +261,46 @@ describe('Notion sync guards', function () {
     assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678123412341234123456789012');
   });
 
+  it('replays an existing notion page through the refresh path instead of returning the stale case immediately', async function () {
+    const fakePage = {
+      id: '12345678123412341234123456789012',
+      properties: {},
+    };
+    sinon.stub(notionService.notion.pages, 'retrieve').resolves(fakePage);
+    sinon.stub(notionService, 'getFullPagePlainText').resolves('');
+    sinon.stub(notionService, 'parseNotionPage').returns({
+      notion_page_id: '12345678123412341234123456789012',
+      case_name: 'Existing case',
+      police_dept_id: null,
+      additional_police_dept_ids: [],
+      status: 'ready_to_send',
+      state: 'PA',
+      agency_name: null,
+      agency_email: null,
+      portal_url: null,
+    });
+    sinon.stub(db, 'getCaseByNotionId').resolves({ id: 9901, case_name: 'Old stale case', notion_page_id: '12345678123412341234123456789012' });
+    sinon.stub(aiService, 'normalizeAndExtractContacts').resolves({});
+    sinon.stub(notionService, 'preparePropertiesForAI').returns({});
+    sinon.stub(notionService, 'applySinglePageAIResult').callsFake(() => {});
+    sinon.stub(notionService, 'applyFallbackContactsFromPage').callsFake(() => {});
+    sinon.stub(notionService, 'enrichCaseFromNarrative').callsFake(() => {});
+    sinon.stub(notionService, 'calculateDeadline').resolves('2026-03-20');
+    sinon.stub(db, 'createCase').resolves({ id: 9901, _inserted: false, case_name: 'Old stale case' });
+    const refreshStub = sinon.stub(notionService, 'refreshImportedCaseRecord').resolves({ id: 9901, case_name: 'Refreshed case', status: 'ready_to_send' });
+    sinon.stub(notionService, 'persistImportedPrimaryAgency').resolves({ id: 9901, case_name: 'Refreshed case', status: 'ready_to_send' });
+    sinon.stub(notionService, 'reconcileImportedAgencySet').resolves();
+    sinon.stub(notionService, 'updatePage').resolves();
+    sinon.stub(notionService, 'getPagePropertyNames').resolves([]);
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'logActivity').resolves({ id: 1 });
+
+    const result = await notionService.processSinglePage('12345678123412341234123456789012');
+
+    assert.strictEqual(refreshStub.calledOnce, true);
+    assert.strictEqual(result.case_name, 'Refreshed case');
+  });
+
   it('parks placeholder imports in human review when the page has no request content', function () {
     const caseData = {
       case_name: 'Untitled Case',
@@ -334,6 +375,108 @@ describe('Notion sync guards', function () {
     assert.strictEqual(warnings.some((warning) => warning.type === 'MISSING_REQUEST_CONTENT'), false);
   });
 
+  it('blocks imports when validation warnings flag a state-mismatched agency', function () {
+    const caseData = {
+      case_name: 'Aurora man sentenced to 105 years',
+      subject_name: 'Travares O. Mitchell',
+      agency_name: 'Aurora Police Department, Colorado',
+      state: 'IL',
+      additional_details: 'Aurora Police Department (APD): Involvement details not available.',
+      agency_email: null,
+      portal_url: 'https://auroracolorado-police.nextrequest.com/',
+      status: 'ready_to_send',
+      import_warnings: [{ type: 'STATE_MISMATCH' }],
+    };
+
+    const warnings = notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please request body camera, CAD, and incident report records for the January 2024 homicide.',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_human_review');
+    assert.strictEqual(warnings.some((warning) => warning.type === 'STATE_MISMATCH'), true);
+  });
+
+  it('quarantines unsafe imported delivery channels when the agency identity is mismatched', function () {
+    const caseData = {
+      case_name: 'Aurora man sentenced to 105 years',
+      subject_name: 'Travares O. Mitchell',
+      agency_name: 'Aurora Police Department, Colorado',
+      state: 'IL',
+      agency_email: 'records@auroracolorado.gov',
+      portal_url: 'https://auroracolorado-police.nextrequest.com/',
+      portal_provider: 'nextrequest',
+      status: 'ready_to_send',
+      import_warnings: [{ type: 'STATE_MISMATCH' }],
+    };
+
+    notionService.quarantineUnsafeImportedIdentity(caseData);
+
+    assert.strictEqual(caseData.skip_primary_agency_persist, true);
+    assert.strictEqual(caseData.agency_email, null);
+    assert.strictEqual(caseData.portal_url, null);
+    assert.strictEqual(caseData.portal_provider, null);
+  });
+
+  it('does not quarantine a valid primary agency just because a secondary agency warning is present', function () {
+    const caseData = {
+      case_name: 'Pennsylvania homicide records request',
+      subject_name: 'Jennifer Brown',
+      agency_name: 'Pennsylvania State Police',
+      state: 'PA',
+      agency_email: 'ra-crrtip@pa.gov',
+      portal_url: 'https://rtklsp.nextrequest.com/requests/new',
+      portal_provider: 'nextrequest',
+      status: 'ready_to_send',
+      import_warnings: [{ type: 'ADDITIONAL_AGENCY_STATE_MISMATCH' }],
+    };
+
+    notionService.quarantineUnsafeImportedIdentity(caseData);
+
+    assert.strictEqual(caseData.skip_primary_agency_persist, undefined);
+    assert.strictEqual(caseData.agency_email, 'ra-crrtip@pa.gov');
+    assert.strictEqual(caseData.portal_url, 'https://rtklsp.nextrequest.com/requests/new');
+    assert.strictEqual(caseData.portal_provider, 'nextrequest');
+  });
+
+  it('blocks imports when validation warnings flag a duplicate story import', function () {
+    const caseData = {
+      case_name: 'Charles Miles Sentenced to Prison in 2024 Beating Death Case',
+      subject_name: 'Charles Ethan Miles',
+      agency_name: 'Evansville Police Department',
+      state: 'IN',
+      additional_details: '',
+      agency_email: 'records@example.gov',
+      portal_url: null,
+      status: 'ready_to_send',
+      import_warnings: [{ type: 'POSSIBLE_DUPLICATE_CASE', duplicateCaseIds: [26694] }],
+    };
+
+    notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please request all body camera, CAD logs, and incident reports for the June 2024 beating death investigation.',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_human_review');
+  });
+
+  it('blocks imports when the agency identity is still generic after import parsing', function () {
+    const caseData = {
+      case_name: 'Kyneddi Miller records request',
+      subject_name: 'Kyneddi Miller',
+      agency_name: 'Police Department',
+      state: 'WV',
+      agency_email: 'orr@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      status: 'ready_to_send',
+      import_warnings: [{ type: 'GENERIC_AGENCY_IDENTITY' }],
+    };
+
+    notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please provide body camera, CAD, incident report, and 911 records for the teen death investigation.',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_human_review');
+  });
+
   it('uses a placeholder email for needs_contact_info imports so the case can persist', function () {
     const caseData = {
       case_name: 'Officer misconduct records request',
@@ -346,6 +489,92 @@ describe('Notion sync guards', function () {
     notionService.applyImportDeliveryFallback(caseData);
 
     assert.strictEqual(caseData.agency_email, 'pending-research@intake.autobot');
+  });
+
+  it('uses a placeholder email for needs_human_review imports when unsafe identity leaves no delivery path', function () {
+    const caseData = {
+      case_name: 'Aurora homicide records request',
+      requested_records: ['Incident report'],
+      agency_email: null,
+      portal_url: null,
+      status: 'needs_human_review',
+      import_warnings: [{ type: 'STATE_MISMATCH' }],
+    };
+
+    notionService.applyImportDeliveryFallback(caseData);
+
+    assert.strictEqual(caseData.agency_email, 'pending-research@intake.autobot');
+  });
+
+  it('refresh clears stale primary delivery channels when the imported agency identity is unsafe', async function () {
+    const updateStub = sinon.stub(db, 'updateCase').resolves({
+      id: 556,
+      agency_name: null,
+      agency_email: null,
+      portal_url: null,
+      portal_provider: null,
+    });
+
+    await notionService.refreshImportedCaseRecord(
+      {
+        id: 556,
+        agency_name: 'Aurora Police Department, Colorado',
+        agency_email: 'records@auroracolorado.gov',
+        portal_url: 'https://auroracolorado-police.nextrequest.com/',
+        portal_provider: 'nextrequest',
+      },
+      {
+        case_name: 'People of the State of Illinois v. Travares O. Mitchell',
+        agency_name: 'Aurora Police Department, Colorado',
+        state: 'IL',
+        status: 'needs_human_review',
+        agency_email: 'pending-research@intake.autobot',
+        skip_primary_agency_persist: true,
+        import_warnings: [{ type: 'STATE_MISMATCH' }],
+      }
+    );
+
+    assert.strictEqual(updateStub.calledOnce, true);
+    assert.strictEqual(updateStub.firstCall.args[1].agency_name, null);
+    assert.strictEqual(updateStub.firstCall.args[1].agency_email, 'pending-research@intake.autobot');
+    assert.strictEqual(updateStub.firstCall.args[1].portal_url, null);
+    assert.strictEqual(updateStub.firstCall.args[1].portal_provider, null);
+  });
+
+  it('refreshes an existing imported case row with re-synced Notion fields', async function () {
+    const updateStub = sinon.stub(db, 'updateCase').resolves({
+      id: 555,
+      case_name: 'Updated case name',
+      agency_name: 'Grand Rapids Police Department',
+      state: 'MI',
+      status: 'ready_to_send',
+    });
+
+    const refreshed = await notionService.refreshImportedCaseRecord(
+      {
+        id: 555,
+        case_name: 'Old case name',
+        agency_name: 'Police Department',
+        state: null,
+        status: 'needs_human_review',
+      },
+      {
+        case_name: 'Updated case name',
+        agency_name: 'Grand Rapids Police Department',
+        agency_email: 'foiagrpd@grcity.us',
+        portal_url: 'https://grandrapidsmi.justfoia.com/publicportal',
+        portal_provider: 'justfoia',
+        state: 'MI',
+        status: 'ready_to_send',
+      }
+    );
+
+    assert.strictEqual(updateStub.calledOnce, true);
+    assert.strictEqual(updateStub.firstCall.args[0], 555);
+    assert.strictEqual(updateStub.firstCall.args[1].case_name, 'Updated case name');
+    assert.strictEqual(updateStub.firstCall.args[1].agency_name, 'Grand Rapids Police Department');
+    assert.strictEqual(updateStub.firstCall.args[1].state, 'MI');
+    assert.strictEqual(refreshed.case_name, 'Updated case name');
   });
 
   it('persists a primary case_agencies row from imported Notion identity data', async function () {
@@ -523,6 +752,79 @@ describe('Notion sync guards', function () {
     });
     assert.strictEqual(updateCaseStub.called, false);
     assert.strictEqual(addCaseAgencyStub.called, false);
+  });
+
+  it('prefers exact agency-name matches over incompatible email or portal matches during agency resolution', async function () {
+    const queryStub = sinon.stub(db, 'query');
+    const updateCaseStub = sinon.stub(db, 'updateCase').resolves({
+      id: 140,
+      agency_id: 1599,
+      agency_name: 'Pennsylvania State Police',
+      agency_email: 'RA-psprighttoknow@pa.gov',
+      portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+      portal_provider: null,
+    });
+    const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 401 });
+
+    queryStub.onCall(0).resolves({ rows: [] });
+    queryStub.onCall(1).resolves({
+      rows: [{
+        id: 1599,
+        name: 'Pennsylvania State Police',
+        state: '{}',
+        portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+        email_main: 'RA-psprighttoknow@pa.gov',
+      }],
+    });
+
+    await notionService.persistImportedPrimaryAgency(
+      {
+        id: 140,
+        agency_id: null,
+        agency_name: null,
+        agency_email: null,
+        portal_url: null,
+        portal_provider: null,
+        state: 'PA',
+      },
+      {
+        agency_name: 'Pennsylvania State Police',
+        agency_email: 'RA-psprighttoknow@pa.gov',
+        portal_url: 'https://www.pa.gov/services/psp/submit-a-pennsylvania-state-police-right-to-know-request',
+        state: 'PA',
+      }
+    );
+
+    assert.strictEqual(updateCaseStub.calledOnce, true);
+    assert.strictEqual(addCaseAgencyStub.calledOnce, true);
+    assert.strictEqual(addCaseAgencyStub.firstCall.args[1].agency_id, 1599);
+    assert.strictEqual(addCaseAgencyStub.firstCall.args[1].agency_name, 'Pennsylvania State Police');
+    assert.strictEqual(queryStub.callCount, 2);
+  });
+
+  it('removes stale imported secondary agencies that are no longer present on re-sync', async function () {
+    const getCaseAgenciesStub = sinon.stub(db, 'getCaseAgencies');
+    getCaseAgenciesStub.onFirstCall().resolves([
+      { id: 271, case_id: 26698, agency_name: 'Pennsylvania State Police', is_primary: true, added_source: 'notion_relation' },
+      { id: 273, case_id: 26698, agency_name: 'Ohio State Highway Patrol', is_primary: false, added_source: 'notion_import' },
+      { id: 274, case_id: 26698, agency_name: 'Adams County Sheriff’s Office, Iowa', is_primary: false, added_source: 'notion_import' },
+      { id: 272, case_id: 26698, agency_name: "Adams County Coroner's Office", is_primary: false, added_source: 'notion_import' },
+    ]);
+    getCaseAgenciesStub.onSecondCall().resolves([
+      { id: 271, case_id: 26698, agency_name: 'Pennsylvania State Police', is_primary: true, added_source: 'notion_relation' },
+      { id: 272, case_id: 26698, agency_name: "Adams County Coroner's Office", is_primary: false, added_source: 'notion_import' },
+    ]);
+    const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
+
+    await notionService.reconcileImportedAgencySet(
+      { id: 26698, state: 'PA' },
+      { agency_name: 'Pennsylvania State Police', state: 'PA' },
+      [{ agency_name: "Adams County Coroner's Office" }]
+    );
+
+    assert.strictEqual(queryStub.calledOnce, true);
+    assert.match(queryStub.firstCall.args[0], /UPDATE case_agencies/i);
+    assert.deepStrictEqual(queryStub.firstCall.args[1][0], [273, 274]);
   });
 
   it('applies AI-resolved agency metadata during single-page import', function () {
