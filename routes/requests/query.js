@@ -2070,7 +2070,9 @@ router.get('/:id/workspace', async (req, res) => {
             isHumanReviewStatus;
         if (missingImportDeliveryPath) {
             requestDetail.status = 'NEEDS_HUMAN_REVIEW';
-            requestDetail.substatus = requestDetail.substatus || 'Imported case is missing a real delivery path. Add the correct agency email or portal before sending.';
+            if (!requestDetail.substatus || /agency_research_complete|research_followup_proposed/i.test(String(requestDetail.substatus))) {
+                requestDetail.substatus = 'Imported case is missing a real delivery path. Add the correct agency email or portal before sending.';
+            }
             requestDetail.pause_reason = 'IMPORT_REVIEW';
             requestDetail.review_state = 'IDLE';
             requestDetail.control_state = 'BLOCKED';

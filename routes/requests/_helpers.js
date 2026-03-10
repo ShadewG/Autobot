@@ -55,11 +55,13 @@ function hasMissingImportDeliveryPath(caseData) {
     );
     const agencyEmail = String(caseData?.agency_email || '').trim().toLowerCase();
     const portalUrl = normalizePortalUrl(caseData?.portal_url);
+    const hasAnyRealDeliveryPath = Boolean(portalUrl || (agencyEmail && !isPlaceholderAgencyEmail(agencyEmail)));
 
     return Boolean(
-        !portalUrl &&
+        !hasAnyRealDeliveryPath &&
         (
             isPlaceholderAgencyEmail(agencyEmail) ||
+            warningTypes.has('AGENCY_NOT_IN_DIRECTORY') ||
             warningTypes.has('MISSING_DELIVERY_PATH') ||
             warningTypes.has('MISSING_EMAIL')
         )

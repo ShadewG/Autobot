@@ -2570,6 +2570,94 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests/:id/workspace keeps import-review cases blocked when the agency is not in directory and no real delivery path exists', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 25250,
+      subject_name: "Highland Park parade mass shooter Robert Crimo sentenced to life without parole",
+      case_name: "Highland Park parade mass shooter Robert Crimo sentenced to life without parole",
+      agency_id: null,
+      agency_name: "Highland Park Police Department",
+      agency_email: null,
+      portal_url: null,
+      portal_provider: null,
+      state: "IL",
+      status: "awaiting_response",
+      requires_human: false,
+      pause_reason: null,
+      substatus: "agency_research_complete",
+      contact_research_notes: null,
+      requested_records: ["Body camera footage"],
+      additional_details: "Imported case for Highland Park parade shooting records",
+      autopilot_mode: "SUPERVISED",
+      created_at: "2026-03-09T00:00:00.000Z",
+      updated_at: "2026-03-10T00:00:00.000Z",
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: [
+        { type: "AGENCY_NOT_IN_DIRECTORY", message: 'Agency "Highland Park Police Department" not found in directory' },
+      ],
+    });
+    db.getCaseAgencies = async () => ([]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) return { rows: [] };
+      if (sql.includes('UPDATE cases')) return { rows: [] };
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      if (sql.includes('FROM case_agencies')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in no-path import block test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/25250/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal, null);
+      assert.strictEqual(response.body.next_action_proposal, null);
+      assert.strictEqual(response.body.request.status, 'NEEDS_HUMAN_REVIEW');
+      assert.strictEqual(response.body.request.review_state, 'IDLE');
+      assert.strictEqual(response.body.request.control_state, 'BLOCKED');
+      assert.strictEqual(response.body.request.pause_reason, 'IMPORT_REVIEW');
+      assert.match(response.body.request.substatus, /missing a real delivery path/i);
+      assert.strictEqual(response.body.request.agency_email, null);
+      assert.strictEqual(response.body.request.portal_url, null);
+      assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
   it('GET /api/cases/:id/agencies masks imported agency/channel mismatches behind the metadata agency hint', async function () {
     const originalGetCaseById = db.getCaseById;
     const originalGetCaseAgencies = db.getCaseAgencies;
