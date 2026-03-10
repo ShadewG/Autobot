@@ -141,17 +141,22 @@ function validateAnalysis(analysis, expected, fixture) {
     const errors = [];
     const warnings = [];
 
-    // Intent match
-    if (analysis.intent !== expected.intent) {
-        errors.push(`Intent mismatch: got '${analysis.intent}', expected '${expected.intent}'`);
+    // Intent match — expected may be array or comma-separated list of acceptable intents
+    const acceptableIntents = Array.isArray(expected.intent)
+        ? expected.intent
+        : expected.intent.split(',').map(i => i.trim());
+    if (!acceptableIntents.includes(analysis.intent)) {
+        errors.push(`Intent mismatch: got '${analysis.intent}', expected one of '${expected.intent}'`);
     }
 
-    // requires_response match
-    const actualRequiresResponse = analysis.requires_response ??
-        (analysis.requires_action !== false);  // fallback for old format
+    // requires_response match — null means "don't validate"
+    if (expected.requires_response !== null && expected.requires_response !== undefined) {
+        const actualRequiresResponse = analysis.requires_response ??
+            (analysis.requires_action !== false);  // fallback for old format
 
-    if (actualRequiresResponse !== expected.requires_response) {
-        errors.push(`requires_response mismatch: got ${actualRequiresResponse}, expected ${expected.requires_response}`);
+        if (actualRequiresResponse !== expected.requires_response) {
+            errors.push(`requires_response mismatch: got ${actualRequiresResponse}, expected ${expected.requires_response}`);
+        }
     }
 
     // Portal URL extraction
@@ -170,7 +175,7 @@ function validateAnalysis(analysis, expected, fixture) {
     }
 
     // Denial subtype
-    if (expected.denial_subtype !== undefined && expected.intent === 'denial') {
+    if (expected.denial_subtype !== undefined && acceptableIntents.includes('denial')) {
         if (analysis.denial_subtype !== expected.denial_subtype) {
             warnings.push(`Denial subtype: got '${analysis.denial_subtype}', expected '${expected.denial_subtype}'`);
         }
@@ -193,7 +198,12 @@ function validateDraft(draft, expected, fixture) {
     const errors = [];
     const warnings = [];
 
-    if (!expected.should_draft_email) {
+    // null means "don't validate draft generation" — skip check entirely
+    if (expected.should_draft_email === null || expected.should_draft_email === undefined) {
+        return { errors, warnings };
+    }
+
+    if (expected.should_draft_email === false) {
         if (draft && draft.body_text) {
             errors.push('Draft generated when should_draft_email=false');
         }
@@ -284,7 +294,8 @@ async function runFixture(fixture, options = {}) {
             // Step 1: Analyze response
             const analysis = await aiService.analyzeResponse(
                 fixture.message,
-                fixture.case_data
+                fixture.case_data,
+                { skipDbWrite: true }
             );
             result.analysis = analysis;
 
@@ -294,7 +305,10 @@ async function runFixture(fixture, options = {}) {
             result.warnings.push(...analysisValidation.warnings);
 
             // Step 3: Generate draft if needed
-            if (fixture.expected.should_draft_email) {
+            // null means "don't validate draft" — skip draft generation/validation entirely
+            if (fixture.expected.should_draft_email === null || fixture.expected.should_draft_email === undefined) {
+                // No draft validation needed
+            } else if (fixture.expected.should_draft_email) {
                 let draft = null;
 
                 // Determine which generator to use

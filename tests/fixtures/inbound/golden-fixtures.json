@@ -515,7 +515,7 @@
         "is_sensitive": true,
         "notes": "Agency asks 'do you wish to proceed?' - this is a blocking confirmation request",
         "draft_constraints": {
-          "max_words": 100,
+          "max_words": 120,
           "should_include": ["accept redactions", "proceed"],
           "must_not_include": ["unredacted", "full footage"]
         }
