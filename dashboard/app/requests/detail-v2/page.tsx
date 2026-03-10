@@ -2088,7 +2088,13 @@ function DetailV2Content() {
           throw new Error(setPrimaryJson.error || "Failed to set primary agency");
         }
       }
-      const runResult = await casesAPI.runInitial(caseId, { autopilotMode: "SUPERVISED" });
+      const routeMode =
+        caseAgency.portal_url ? "portal" : caseAgency.agency_email ? "email" : undefined;
+      const runResult = await casesAPI.runInitial(caseId, {
+        autopilotMode: "SUPERVISED",
+        routeMode,
+        forceRestart: true,
+      });
       if (!runResult.success) {
         throw new Error("Failed to queue request processing");
       }

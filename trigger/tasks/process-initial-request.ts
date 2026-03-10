@@ -65,7 +65,7 @@ export const processInitialRequest = task({
   },
 
   run: async (payload: InitialRequestPayload) => {
-    const { caseId, autopilotMode, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
+    const { caseId, autopilotMode, routeMode, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
 
     // Claim pre-flight agent_run row (preserves triggerRunId in metadata) or create new
     const ACTIVE_STATUSES = "('created', 'queued', 'running', 'processing', 'waiting')";
@@ -150,6 +150,7 @@ export const processInitialRequest = task({
       },
       context: {
         autopilotMode,
+        routeMode: routeMode || null,
         originalActionType: originalActionType || null,
         originalProposalId: originalProposalId || null,
       },
@@ -435,11 +436,12 @@ export const processInitialRequest = task({
 
       // Step 2: Draft initial FOIA request
       await markStep("draft_initial_request", `Run #${runId}: drafting initial request`);
-      const draft = await draftInitialRequest(caseId, runId, autopilotMode);
+      const draft = await draftInitialRequest(caseId, runId, autopilotMode, routeMode);
       trace.setRouterOutput({
         actionType: draft.actionType,
         requiresHuman: draft.requiresHuman,
         proposalId: draft.proposalId,
+        routeMode: routeMode || null,
         reasoning: draft.reasoning,
       });
       trace.setGateDecision({

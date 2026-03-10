@@ -32,15 +32,24 @@ export interface InitialDraftResult {
 export async function draftInitialRequest(
   caseId: number,
   runId: number,
-  autopilotMode: AutopilotMode
+  autopilotMode: AutopilotMode,
+  routeMode?: "email" | "portal"
 ): Promise<InitialDraftResult> {
   const caseData = await db.getCaseById(caseId);
   if (!caseData) throw new Error(`Case ${caseId} not found`);
 
+  const effectiveCaseData = {
+    ...caseData,
+    portal_url: routeMode === "email" ? null : caseData.portal_url,
+    portal_provider: routeMode === "email" ? null : caseData.portal_provider,
+    last_portal_status: routeMode === "email" ? null : caseData.last_portal_status,
+    agency_email: routeMode === "portal" ? null : caseData.agency_email,
+  };
+
   const hasPortal = hasAutomatablePortal(
-    caseData.portal_url,
-    caseData.portal_provider,
-    caseData.last_portal_status
+    effectiveCaseData.portal_url,
+    effectiveCaseData.portal_provider,
+    effectiveCaseData.last_portal_status
   );
   const actionType = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
   const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal);
@@ -72,15 +81,15 @@ export async function draftInitialRequest(
   }
 
   // Generate request using AI service
-  const draftResult = await aiService.generateFOIARequest(caseData);
+  const draftResult = await aiService.generateFOIARequest(effectiveCaseData);
   if (!draftResult || typeof draftResult !== "object") {
     throw new Error(`AI returned null/invalid result for case ${caseId}`);
   }
 
   const subjectDescriptor = pickSafeSubjectDescriptor(
-    caseData.subject_name,
-    caseData.case_name,
-    caseData.requested_records?.[0]
+    effectiveCaseData.subject_name,
+    effectiveCaseData.case_name,
+    effectiveCaseData.requested_records?.[0]
   );
   const subject =
     draftResult.subject ||
@@ -107,12 +116,14 @@ export async function draftInitialRequest(
   const canAutoExecute = autopilotMode === "AUTO";
   const requiresHuman = !canAutoExecute;
 
-  const deliveryMethod = hasPortal ? `Portal: ${caseData.portal_url}` : `Email: ${caseData.agency_email || "N/A"}`;
+  const deliveryMethod = hasPortal
+    ? `Portal: ${effectiveCaseData.portal_url}`
+    : `Email: ${effectiveCaseData.agency_email || "N/A"}`;
   const reasoning = [
-    `Generated initial FOIA request for ${caseData.agency_name}`,
+    `Generated initial FOIA request for ${effectiveCaseData.agency_name}`,
     `Subject: ${subjectDescriptor || "N/A"}`,
     `Delivery: ${deliveryMethod}`,
-    `Records: ${(caseData.requested_records || []).join(", ") || "Various records"}`,
+    `Records: ${(effectiveCaseData.requested_records || []).join(", ") || "Various records"}`,
     `Autopilot: ${autopilotMode}`,
   ];
 

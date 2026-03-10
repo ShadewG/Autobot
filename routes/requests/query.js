@@ -349,6 +349,8 @@ function applyManualPasteMismatchListOverride(listItem, mismatch) {
 function filterStaleImportWarnings(importWarnings, {
     originalAgencyName,
     resolvedAgencyName,
+    resolvedAgencyId,
+    currentAgencyId,
     currentAgencyEmail,
     suppressPlaceholderAgencyDisplay,
     forceCorrectedAgencyDisplay,
@@ -371,6 +373,14 @@ function filterStaleImportWarnings(importWarnings, {
         const message = String(warning?.message || '');
 
         if (/placeholder\\.invalid/i.test(message)) {
+            return false;
+        }
+
+        if (
+            (resolvedAgencyId || currentAgencyId) &&
+            originalName &&
+            message.includes(`Agency "${originalName}" not found in directory`)
+        ) {
             return false;
         }
 
@@ -2035,6 +2045,8 @@ router.get('/:id/workspace', async (req, res) => {
         requestDetail.import_warnings = filterStaleImportWarnings(requestDetail.import_warnings, {
             originalAgencyName: primaryCaseAgency?.agency_name || caseData.agency_name,
             resolvedAgencyName,
+            resolvedAgencyId,
+            currentAgencyId: primaryCaseAgency?.agency_id || caseData.agency_id,
             currentAgencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
             suppressPlaceholderAgencyDisplay,
             forceCorrectedAgencyDisplay,

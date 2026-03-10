@@ -100,7 +100,7 @@ export const casesAPI = {
   // Trigger initial request generation for a case
   runInitial: (
     caseId: number,
-    options?: { autopilotMode?: 'AUTO' | 'SUPERVISED' }
+    options?: { autopilotMode?: 'AUTO' | 'SUPERVISED'; routeMode?: 'email' | 'portal'; forceRestart?: boolean }
   ): Promise<{
     success: boolean;
     run: { id: number; status: string; thread_id: string };
@@ -111,6 +111,8 @@ export const casesAPI = {
       method: 'POST',
       body: JSON.stringify({
         autopilotMode: options?.autopilotMode || 'SUPERVISED',
+        route_mode: options?.routeMode || undefined,
+        force_restart: options?.forceRestart === true,
       }),
     });
   },

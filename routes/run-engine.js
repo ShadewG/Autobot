@@ -92,6 +92,79 @@ function getTriggerRunId(run) {
   return run.trigger_run_id || metadata.triggerRunId || metadata.trigger_run_id || null;
 }
 
+function canSupersedeForExplicitStart(existingRun) {
+  if (!existingRun) return false;
+
+  const status = String(existingRun.status || '').toLowerCase();
+  const triggerType = String(existingRun.trigger_type || '').toLowerCase();
+  const metadata = (() => {
+    if (!existingRun.metadata) return {};
+    if (typeof existingRun.metadata === 'string') {
+      try {
+        return JSON.parse(existingRun.metadata);
+      } catch {
+        return {};
+      }
+    }
+    return existingRun.metadata;
+  })();
+  const currentNode = String(metadata.current_node || '').toLowerCase();
+
+  if (!['waiting', 'paused', 'gated'].includes(status)) {
+    return false;
+  }
+
+  return (
+    triggerType === 'human_review_resolution' ||
+    currentNode === 'wait_human_decision' ||
+    currentNode === 'wait_human_review'
+  );
+}
+
+async function supersedeActiveReviewRun(caseId, reason) {
+  const tokensToComplete = await db.query(
+    `SELECT id, waitpoint_token FROM proposals
+     WHERE case_id = $1
+       AND status IN ('PENDING_APPROVAL', 'BLOCKED')
+       AND waitpoint_token IS NOT NULL`,
+    [caseId]
+  );
+
+  for (const proposal of tokensToComplete.rows) {
+    try {
+      await triggerWait.completeToken(proposal.waitpoint_token, {
+        action: 'DISMISS',
+        reason,
+      });
+    } catch (error) {
+      logger.warn('Failed to complete waitpoint token while superseding active review run', {
+        caseId,
+        proposalId: proposal.id,
+        error: error.message,
+      });
+    }
+  }
+
+  await proposalLifecycle.dismissActiveCaseProposals(caseId, {
+    humanDecision: {
+      type: 'dismiss',
+      decidedBy: 'human',
+      reason,
+      supersededByAction: 'start_request_for_agency',
+    },
+  });
+
+  await db.query(
+    `UPDATE agent_runs
+     SET status = 'failed',
+         ended_at = NOW(),
+         error = COALESCE(error, $2)
+     WHERE case_id = $1
+       AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting', 'gated')`,
+    [caseId, reason]
+  );
+}
+
 function getProposalDecisionErrorCode(error) {
   return classifyOperatorActionError(error, 'PROPOSAL_DECISION_FAILED');
 }
@@ -931,39 +1004,48 @@ async function materializeFollowupLocally({ caseData, run, autopilotMode, llmStu
   };
 }
 
-async function materializeInitialRequestLocally({ caseData, run, autopilotMode, llmStubs }) {
+async function materializeInitialRequestLocally({ caseData, run, autopilotMode, llmStubs, routeMode = null }) {
   if (process.env.NODE_ENV === 'production') {
     return null;
   }
 
+  const effectiveCaseData = {
+    ...caseData,
+    portal_url: routeMode === 'email' ? null : caseData.portal_url,
+    portal_provider: routeMode === 'email' ? null : caseData.portal_provider,
+    last_portal_status: routeMode === 'email' ? null : caseData.last_portal_status,
+    agency_email: routeMode === 'portal' ? null : caseData.agency_email,
+  };
+  const actionType = effectiveCaseData.portal_url ? 'SUBMIT_PORTAL' : 'SEND_INITIAL_REQUEST';
   const stubDraft = extractStubDraft(llmStubs, 'draft');
   let draftSubject = stubDraft?.subject || null;
   let draftBodyText = stubDraft?.bodyText || null;
   let draftBodyHtml = stubDraft?.bodyHtml || null;
 
   if (!draftBodyText) {
-    const generated = await aiService.generateFOIARequest(caseData);
-    draftSubject = draftSubject || generated?.subject || `Public Records Request - ${caseData.subject_name || 'Records Request'}`;
+    const generated = await aiService.generateFOIARequest(effectiveCaseData);
+    draftSubject = draftSubject || generated?.subject || `Public Records Request - ${effectiveCaseData.subject_name || 'Records Request'}`;
     draftBodyText = generated?.body || generated?.requestText || generated?.request_text || null;
     draftBodyHtml = draftBodyHtml || generated?.body_html || null;
   }
 
   if (!draftBodyText || !String(draftBodyText).trim()) {
-    throw new Error(`Local initial request materialization generated an empty draft for case ${caseData.id}`);
+    throw new Error(`Local initial request materialization generated an empty draft for case ${effectiveCaseData.id}`);
   }
 
   const proposal = await db.upsertProposal({
-    proposalKey: `${caseData.id}:initial:SEND_INITIAL_REQUEST:local`,
-    caseId: caseData.id,
+    proposalKey: `${effectiveCaseData.id}:initial:${actionType}:local`,
+    caseId: effectiveCaseData.id,
     runId: run.id,
     triggerMessageId: null,
-    actionType: 'SEND_INITIAL_REQUEST',
-    draftSubject: draftSubject || `Public Records Request - ${caseData.subject_name || 'Records Request'}`,
+    actionType,
+    draftSubject: draftSubject || `Public Records Request - ${effectiveCaseData.subject_name || 'Records Request'}`,
     draftBodyText,
     draftBodyHtml,
     reasoning: [
-      `Locally materialized initial request for ${caseData.agency_name || 'agency'}`,
+      `Locally materialized initial request for ${effectiveCaseData.agency_name || 'agency'}`,
       `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
+      `Route mode: ${routeMode || 'auto'}`,
     ],
     canAutoExecute: false,
     requiresHuman: true,
@@ -972,7 +1054,7 @@ async function materializeInitialRequestLocally({ caseData, run, autopilotMode, 
   });
 
   await db.updateProposal(proposal.id, {
-    waitpoint_token: `local-ready-to-send:${caseData.id}:${proposal.id}`,
+    waitpoint_token: `local-ready-to-send:${effectiveCaseData.id}:${proposal.id}`,
   });
 
   await db.updateAgentRun(run.id, {
@@ -983,11 +1065,12 @@ async function materializeInitialRequestLocally({ caseData, run, autopilotMode, 
       source: 'local_initial_materialization',
       local_llm_stubs: llmStubs || null,
       proposalId: proposal.id,
-      actionType: 'SEND_INITIAL_REQUEST',
+      actionType,
+      route_mode: routeMode || null,
     },
   });
 
-  await db.updateCase(caseData.id, {
+  await db.updateCase(effectiveCaseData.id, {
     status: 'needs_human_review',
     requires_human: true,
     pause_reason: 'PENDING_APPROVAL',
@@ -996,7 +1079,7 @@ async function materializeInitialRequestLocally({ caseData, run, autopilotMode, 
 
   return {
     proposalId: proposal.id,
-    actionType: 'SEND_INITIAL_REQUEST',
+    actionType,
     runStatus: 'waiting',
   };
 }
@@ -1303,7 +1386,7 @@ async function saveTriggerRunId(runId, triggerRunId) {
  */
 router.post('/cases/:id/run-initial', async (req, res) => {
   const caseId = parseInt(req.params.id);
-  const { autopilotMode = 'SUPERVISED', llmStubs, route_mode } = req.body || {};
+  const { autopilotMode = 'SUPERVISED', llmStubs, route_mode, force_restart = false } = req.body || {};
 
   try {
     // Verify case exists
@@ -1326,19 +1409,40 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       });
     }
 
+    if (normalizedRouteMode === 'portal' && !hasPortal) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selected agency/contact does not have a portal URL'
+      });
+    }
+
+    if (normalizedRouteMode === 'email' && !hasEmail) {
+      return res.status(400).json({
+        success: false,
+        error: 'Selected agency/contact does not have an email address'
+      });
+    }
+
     // Check for existing active run
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-      return res.status(409).json({
-        success: false,
-        error: 'Case already has an active agent run',
-        activeRun: {
-          id: existingRun.id,
+      if (force_restart && canSupersedeForExplicitStart(existingRun)) {
+        await supersedeActiveReviewRun(
+          caseId,
+          'Superseded by explicit operator start request for selected agency/contact'
+        );
+      } else {
+        return res.status(409).json({
+          success: false,
+          error: 'Case already has an active agent run',
+          activeRun: {
+            id: existingRun.id,
           status: existingRun.status,
           trigger_type: existingRun.trigger_type,
-          started_at: existingRun.started_at
-        }
-      });
+            started_at: existingRun.started_at
+          }
+        });
+      }
     }
 
     // Create run record
@@ -1358,6 +1462,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       run,
       autopilotMode,
       llmStubs,
+      routeMode: normalizedRouteMode,
     });
     if (localMaterialization) {
       return res.status(202).json({
@@ -1382,6 +1487,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         runId: run.id,
         caseId,
         autopilotMode,
+        routeMode: normalizedRouteMode || undefined,
       }, triggerOpts(caseId, 'initial', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
