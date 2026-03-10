@@ -79,11 +79,8 @@ describe('Request audit/debug routes', function () {
         },
       ];
     };
-    let callCount = 0;
     db.query = async (sql) => {
-      callCount += 1;
-      if (callCount === 1) {
-        assert.match(sql, /FROM messages/);
+      if (/provider_payload IS NOT NULL[\s\S]*FROM messages/i.test(sql) || /FROM messages[\s\S]*provider_payload IS NOT NULL/i.test(sql)) {
         return {
           rows: [
             {
@@ -96,9 +93,9 @@ describe('Request audit/debug routes', function () {
           ],
         };
       }
-      assert.match(sql, /FROM executions/);
-      return {
-        rows: [
+      if (/FROM executions/i.test(sql)) {
+        return {
+          rows: [
             {
               id: 101,
               proposal_id: 900,
@@ -107,6 +104,16 @@ describe('Request audit/debug routes', function () {
             },
           ],
         };
+      }
+      // allCaseMessageIds query
+      if (/SELECT id, sendgrid_message_id FROM messages/i.test(sql)) {
+        return {
+          rows: [
+            { id: 91, sendgrid_message_id: 'sg-msg-1' },
+          ],
+        };
+      }
+      return { rows: [] };
     };
 
     const app = express();
