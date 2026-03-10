@@ -12,6 +12,7 @@ const {
 const {
     evaluateImportAutoDispatchSafety,
     extractResearchSuggestedAgency,
+    filterStaleImportWarnings,
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
     sanitizeStaleResearchHandoffDraft,
@@ -819,6 +820,17 @@ router.get('/live-overview', async (req, res) => {
             const last_inbound_from_email = row.last_inbound_from_email || triggerInbound?.from_email || null;
             return {
                 ...sanitizedRow,
+                import_warnings: filterStaleImportWarnings(sanitizedRow.import_warnings, {
+                    originalAgencyName: row.agency_name,
+                    resolvedAgencyName: suppressPlaceholderDisplay
+                        ? 'Unknown agency'
+                        : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name),
+                    resolvedAgencyId: primaryCaseAgency?.agency_id || null,
+                    currentAgencyId: row.agency_id || null,
+                    suppressPlaceholderAgencyDisplay: suppressPlaceholderDisplay,
+                    forceCorrectedAgencyDisplay: false,
+                    useResearchSuggestedDisplay: Boolean(researchSuggestedAgency?.name),
+                }),
                 agency_name: suppressPlaceholderDisplay
                     ? 'Unknown agency'
                     : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || sanitizedRow.agency_name),
@@ -1047,6 +1059,17 @@ router.get('/live-overview', async (req, res) => {
             });
             return {
                 ...row,
+                import_warnings: filterStaleImportWarnings(row.import_warnings, {
+                    originalAgencyName: row.agency_name,
+                    resolvedAgencyName: suppressPlaceholderDisplay
+                        ? 'Unknown agency'
+                        : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
+                    resolvedAgencyId: primaryCaseAgency?.agency_id || null,
+                    currentAgencyId: row.agency_id || null,
+                    suppressPlaceholderAgencyDisplay: suppressPlaceholderDisplay,
+                    forceCorrectedAgencyDisplay: false,
+                    useResearchSuggestedDisplay: Boolean(researchSuggestedAgency?.name),
+                }),
                 agency_name: suppressPlaceholderDisplay
                     ? 'Unknown agency'
                     : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),

@@ -196,6 +196,59 @@ function sanitizeStaleResearchHandoffReasoning(reasoning) {
   return filtered.length > 0 ? filtered : ['Research completed but existing synthetic channels were ignored.'];
 }
 
+function filterStaleImportWarnings(importWarnings, {
+  originalAgencyName,
+  resolvedAgencyName,
+  resolvedAgencyId,
+  currentAgencyId,
+  suppressPlaceholderAgencyDisplay,
+  forceCorrectedAgencyDisplay,
+  useResearchSuggestedDisplay,
+}) {
+  if (!Array.isArray(importWarnings) || importWarnings.length === 0) {
+    return importWarnings || null;
+  }
+
+  const originalName = String(originalAgencyName || '').trim();
+  const resolvedName = String(resolvedAgencyName || '').trim();
+  const hideSyntheticPlaceholderWarnings = Boolean(
+    suppressPlaceholderAgencyDisplay ||
+    forceCorrectedAgencyDisplay ||
+    useResearchSuggestedDisplay ||
+    /^unknown agency$/i.test(resolvedName)
+  );
+
+  const filtered = importWarnings.filter((warning) => {
+    const message = String(warning?.message || '');
+
+    if (/placeholder\.invalid/i.test(message)) {
+      return false;
+    }
+
+    if (
+      (resolvedAgencyId || currentAgencyId) &&
+      originalName &&
+      message.includes(`Agency "${originalName}" not found in directory`)
+    ) {
+      return false;
+    }
+
+    if (
+      hideSyntheticPlaceholderWarnings &&
+      originalName &&
+      resolvedName &&
+      originalName.toLowerCase() !== resolvedName.toLowerCase() &&
+      message.includes(`Agency "${originalName}" not found in directory`)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return filtered.length > 0 ? filtered : null;
+}
+
 function cleanMetadataLine(value) {
     return String(value || '')
         .replace(/\u200c/g, ' ')
@@ -452,6 +505,16 @@ function detectAgencyCityMismatch({ currentAgencyName, additionalDetails }) {
   if (!cityHint?.name || !currentName) return null;
   if (!/police department/i.test(currentName)) return null;
 
+  const narrativeAgency = extractAgencyNameFromAdditionalDetails(additionalDetails);
+  if (narrativeAgency) {
+    const currentAgencyTokens = agencyComparisonTokens(currentName);
+    const narrativeAgencyTokens = agencyComparisonTokens(narrativeAgency);
+    const narrativeOverlap = narrativeAgencyTokens.filter((token) => currentAgencyTokens.includes(token));
+    if (narrativeOverlap.length > 0) {
+      return null;
+    }
+  }
+
   const currentTokens = agencyComparisonTokens(currentName);
   const cityTokens = agencyComparisonTokens(cityHint.name);
   if (!currentTokens.length || !cityTokens.length) return null;
@@ -559,4 +622,5 @@ module.exports = {
   textContainsSyntheticChannel,
   sanitizeStaleResearchHandoffDraft,
   sanitizeStaleResearchHandoffReasoning,
+  filterStaleImportWarnings,
 };

@@ -406,6 +406,70 @@ describe('Notion sync guards', function () {
     });
   });
 
+  it('creates a canonical agency row for imported cases with a strong delivery path', async function () {
+    const queryStub = sinon.stub(db, 'query');
+    queryStub.onCall(0).resolves({ rows: [] }); // exact name
+    queryStub.onCall(1).resolves({ rows: [] }); // exact email
+    queryStub.onCall(2).resolves({ rows: [] }); // exact portal
+    queryStub.onCall(3).resolves({
+      rows: [{
+        id: 1888,
+        name: 'Kearney Police Department, Nebraska',
+        state: 'NE',
+        portal_url: 'https://www.cityofkearney.org/1706/Request-for-Public-Records',
+        email_main: 'peynetich@kearneygov.org',
+        default_autopilot_mode: null,
+      }],
+    });
+    const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 93, is_primary: true });
+    const updateCaseStub = sinon.stub(db, 'updateCase').resolves({
+      id: 126,
+      agency_id: 1888,
+      agency_name: 'Kearney Police Department, Nebraska',
+      agency_email: 'peynetich@kearneygov.org',
+      portal_url: 'https://www.cityofkearney.org/1706/Request-for-Public-Records',
+      portal_provider: null,
+    });
+
+    const importedCase = {
+      agency_name: 'Kearney Police Department, Nebraska',
+      agency_email: 'peynetich@kearneygov.org',
+      portal_url: 'https://www.cityofkearney.org/1706/Request-for-Public-Records',
+      state: 'NE',
+    };
+
+    const result = await notionService.persistImportedPrimaryAgency(
+      {
+        id: 126,
+        agency_id: null,
+        agency_name: 'Kearney Police Department, Nebraska',
+        agency_email: 'peynetich@kearneygov.org',
+        portal_url: 'https://www.cityofkearney.org/1706/Request-for-Public-Records',
+        portal_provider: null,
+        state: 'NE',
+      },
+      importedCase
+    );
+
+    assert.strictEqual(queryStub.callCount, 4);
+    assert.strictEqual(importedCase.agency_id, 1888);
+    assert.deepStrictEqual(updateCaseStub.firstCall.args, [126, {
+      agency_id: 1888,
+    }]);
+    assert.deepStrictEqual(addCaseAgencyStub.firstCall.args, [126, {
+      agency_id: 1888,
+      agency_name: 'Kearney Police Department, Nebraska',
+      agency_email: 'peynetich@kearneygov.org',
+      portal_url: 'https://www.cityofkearney.org/1706/Request-for-Public-Records',
+      portal_provider: null,
+      is_primary: true,
+      added_source: 'notion_import',
+      status: 'active',
+      notes: 'Primary agency imported from Notion',
+    }]);
+    assert.strictEqual(result.agency_id, 1888);
+  });
+
   it('skips imported agency persistence for generic names without a real channel', async function () {
     const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 92 });
 
@@ -427,6 +491,37 @@ describe('Notion sync guards', function () {
       portal_url: null,
       agency_id: null,
     });
+    assert.strictEqual(addCaseAgencyStub.called, false);
+  });
+
+  it('does not persist stale case-row agency channels when the import has no concrete agency identity', async function () {
+    const addCaseAgencyStub = sinon.stub(db, 'addCaseAgency').resolves({ id: 93 });
+    const updateCaseStub = sinon.stub(db, 'updateCase').resolves();
+
+    const result = await notionService.persistImportedPrimaryAgency(
+      {
+        id: 125,
+        agency_name: 'Lubbock Police Department, Texas',
+        agency_email: 'ORR@mylubbock.us',
+        portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+        agency_id: 1365,
+      },
+      {
+        agency_name: '',
+        agency_email: '',
+        portal_url: null,
+        agency_id: null,
+      }
+    );
+
+    assert.deepStrictEqual(result, {
+      id: 125,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      agency_id: 1365,
+    });
+    assert.strictEqual(updateCaseStub.called, false);
     assert.strictEqual(addCaseAgencyStub.called, false);
   });
 

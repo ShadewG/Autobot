@@ -18,6 +18,7 @@ const {
     shouldSuppressPlaceholderAgencyDisplay,
     sanitizeStaleResearchHandoffDraft,
     sanitizeStaleResearchHandoffReasoning,
+    filterStaleImportWarnings,
 } = require('../../utils/request-normalization');
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 
@@ -247,7 +248,6 @@ function hasImportReviewSignals({ importWarnings, agencies = [], casePauseReason
 
 function hasImportSafetyContext({ notionPageId, importWarnings, agencies = [], casePauseReason, caseSubstatus }) {
     return Boolean(
-        String(notionPageId || '').trim() ||
         hasImportReviewSignals({ importWarnings, agencies, casePauseReason, caseSubstatus })
     );
 }
@@ -344,60 +344,6 @@ function applyManualPasteMismatchListOverride(listItem, mismatch) {
         control_state: 'BLOCKED',
         control_mismatches: [],
     };
-}
-
-function filterStaleImportWarnings(importWarnings, {
-    originalAgencyName,
-    resolvedAgencyName,
-    resolvedAgencyId,
-    currentAgencyId,
-    currentAgencyEmail,
-    suppressPlaceholderAgencyDisplay,
-    forceCorrectedAgencyDisplay,
-    useResearchSuggestedDisplay,
-}) {
-    if (!Array.isArray(importWarnings) || importWarnings.length === 0) {
-        return importWarnings || null;
-    }
-
-    const originalName = String(originalAgencyName || '').trim();
-    const resolvedName = String(resolvedAgencyName || '').trim();
-    const hideSyntheticPlaceholderWarnings = Boolean(
-        suppressPlaceholderAgencyDisplay ||
-        forceCorrectedAgencyDisplay ||
-        useResearchSuggestedDisplay ||
-        /^unknown agency$/i.test(resolvedName)
-    );
-
-    const filtered = importWarnings.filter((warning) => {
-        const message = String(warning?.message || '');
-
-        if (/placeholder\\.invalid/i.test(message)) {
-            return false;
-        }
-
-        if (
-            (resolvedAgencyId || currentAgencyId) &&
-            originalName &&
-            message.includes(`Agency "${originalName}" not found in directory`)
-        ) {
-            return false;
-        }
-
-        if (
-            hideSyntheticPlaceholderWarnings &&
-            originalName &&
-            resolvedName &&
-            originalName.toLowerCase() !== resolvedName.toLowerCase() &&
-            message.includes(`Agency "${originalName}" not found in directory`)
-        ) {
-            return false;
-        }
-
-        return true;
-    });
-
-    return filtered.length > 0 ? filtered : null;
 }
 
 /**
@@ -2096,6 +2042,12 @@ router.get('/:id/workspace', async (req, res) => {
             requestDetail.substatus = requestDetail.substatus || 'No response needed — automated portal/account message';
             requestDetail.pause_reason = null;
             effectiveRequiresHuman = false;
+        }
+        if (
+            pendingProposal
+            && /^resolving:/i.test(String(requestDetail.substatus || ''))
+        ) {
+            requestDetail.substatus = `Proposal #${pendingProposal.id} pending review`;
         }
         if (review_state !== 'DECISION_REQUIRED' && !isHumanReviewStatus) {
             requestDetail.pause_reason = null;

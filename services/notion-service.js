@@ -3,9 +3,10 @@ const db = require('./database');
 const aiService = require('./ai-service');
 const pdContactService = require('./pd-contact-service');
 const errorTrackingService = require('./error-tracking-service');
+const { normalizeAgencyEmailHint } = require('./canonical-agency');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
-const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, isGenericAgencyLabel } = require('../utils/request-normalization');
+const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, isGenericAgencyLabel, isPlaceholderAgencyEmail } = require('../utils/request-normalization');
 const dns = require('dns').promises;
 
 /**
@@ -46,7 +47,9 @@ async function validateImportedCase(caseData) {
 
     // 3. Agency directory lookup
     if (caseData.agency_name) {
-        const agency = await db.findAgencyByName(caseData.agency_name, caseData.state);
+        const agency = caseData.agency_id
+            ? { id: caseData.agency_id, state: caseData.state }
+            : await resolveImportedAgencyDirectoryEntry(caseData);
         if (!agency) {
             warnings.push({
                 type: 'AGENCY_NOT_IN_DIRECTORY',
@@ -79,6 +82,68 @@ async function validateImportedCase(caseData) {
     }
 
     return warnings.length > 0 ? warnings : null;
+}
+
+async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing = false } = {}) {
+    const agencyName = normalizeNotionText(caseData?.agency_name || '').replace(/[.]+$/, '').trim();
+    const state = caseData?.state && caseData.state !== '{}' ? String(caseData.state).trim() : null;
+    const agencyEmail = isPlaceholderAgencyEmail(caseData?.agency_email) ? null : normalizeAgencyEmailHint(caseData?.agency_email || null);
+    const portalUrl = normalizePortalUrl(caseData?.portal_url || null);
+
+    if (!agencyName || isGenericAgencyLabel(agencyName)) {
+        return null;
+    }
+
+    let agency = (await db.query(
+        `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+         FROM agencies
+         WHERE LOWER(name) = LOWER($1)
+           AND ($2::text IS NULL OR state = $2 OR state IS NULL)
+         ORDER BY (state = $2)::int DESC, id DESC
+         LIMIT 1`,
+        [agencyName, state]
+    )).rows[0] || null;
+    if (agency) return agency;
+
+    if (agencyEmail) {
+        agency = (await db.query(
+            `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+             FROM agencies
+             WHERE LOWER(COALESCE(email_main, '')) = LOWER($1)
+                OR LOWER(REPLACE(COALESCE(email_foia, ''), 'mailto:', '')) = LOWER($1)
+             ORDER BY id DESC
+             LIMIT 1`,
+            [agencyEmail]
+        )).rows[0] || null;
+        if (agency) return agency;
+    }
+
+    if (portalUrl) {
+        agency = (await db.query(
+            `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+             FROM agencies
+             WHERE LOWER(COALESCE(portal_url, '')) = LOWER($1)
+                OR LOWER(COALESCE(portal_url_alt, '')) = LOWER($1)
+             ORDER BY id DESC
+             LIMIT 1`,
+            [portalUrl]
+        )).rows[0] || null;
+        if (agency) return agency;
+    }
+
+    if (!createIfMissing || (!agencyEmail && !portalUrl)) {
+        return null;
+    }
+
+    const provider = caseData?.portal_provider || detectPortalProviderByUrl(portalUrl)?.name || null;
+    const insertResult = await db.query(
+        `INSERT INTO agencies (name, state, email_main, email_foia, portal_url, portal_provider, sync_status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+         RETURNING id, name, state, portal_url, email_main, default_autopilot_mode`,
+        [agencyName, state, agencyEmail, agencyEmail ? `mailto:${agencyEmail}` : null, portalUrl, provider]
+    );
+
+    return insertResult.rows[0] || null;
 }
 
 // Lazy-load dispatch helper to avoid circular dependency
@@ -247,6 +312,17 @@ const POLICE_DEPARTMENT_FIELD_SPECS = [
 ];
 
 class NotionService {
+    hasConcreteImportedAgencyIdentity(caseData = {}) {
+        const agencyName = normalizeNotionText(caseData.agency_name || '');
+        return Boolean(
+            caseData.police_dept_id ||
+            caseData.agency_id ||
+            (agencyName && !isGenericAgencyLabel(agencyName)) ||
+            normalizeNotionText(caseData.agency_email || '') ||
+            normalizePortalUrl(caseData.portal_url || null)
+        );
+    }
+
     constructor() {
         this.notion = new Client({ auth: process.env.NOTION_API_KEY });
         this.databaseId = process.env.NOTION_CASES_DATABASE_ID;
@@ -416,13 +492,16 @@ class NotionService {
         const caseId = Number(caseRecord?.id);
         if (!caseId) return caseRecord || null;
 
-        const agencyName = normalizeNotionText(importedCaseData.agency_name || caseRecord?.agency_name || '');
-        const agencyEmail = normalizeNotionText(importedCaseData.agency_email || caseRecord?.agency_email || '');
-        const portalUrl = normalizePortalUrl(importedCaseData.portal_url || caseRecord?.portal_url || null);
-        const agencyId = importedCaseData.agency_id || caseRecord?.agency_id || null;
+        if (!this.hasConcreteImportedAgencyIdentity(importedCaseData)) {
+            return caseRecord || null;
+        }
+
+        const agencyName = normalizeNotionText(importedCaseData.agency_name || '');
+        const agencyEmail = normalizeNotionText(importedCaseData.agency_email || '');
+        const portalUrl = normalizePortalUrl(importedCaseData.portal_url || null);
+        let agencyId = importedCaseData.agency_id || null;
         const portalProvider =
             importedCaseData.portal_provider ||
-            caseRecord?.portal_provider ||
             detectPortalProviderByUrl(portalUrl)?.name ||
             null;
 
@@ -430,6 +509,21 @@ class NotionService {
         const genericNameOnly = isGenericAgencyLabel(agencyName) && !agencyId && !agencyEmail && !portalUrl;
         if (!hasIdentity || genericNameOnly) {
             return caseRecord || null;
+        }
+
+        if (!agencyId) {
+            const resolvedAgency = await resolveImportedAgencyDirectoryEntry({
+                ...importedCaseData,
+                agency_name: agencyName,
+                state: importedCaseData.state || caseRecord?.state || null,
+                agency_email: agencyEmail,
+                portal_url: portalUrl,
+                portal_provider: portalProvider,
+            }, { createIfMissing: true });
+            if (resolvedAgency?.id) {
+                agencyId = resolvedAgency.id;
+                importedCaseData.agency_id = resolvedAgency.id;
+            }
         }
 
         let latestCaseRecord = caseRecord;
@@ -443,7 +537,7 @@ class NotionService {
             }
         }
 
-        if (agencyId && !caseRecord?.agency_id) {
+        if (agencyId && (!caseRecord?.agency_id || Number(caseRecord.agency_id) !== Number(agencyId))) {
             caseRowPatch.agency_id = agencyId;
         }
 
@@ -2157,11 +2251,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
                         console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
 
+                        const preserveExistingChannels = this.hasConcreteImportedAgencyIdentity(notionCase);
                         let updatedCase = await db.updateCase(existing.id, {
-                            agency_name: notionCase.agency_name,
-                            agency_email: notionCase.agency_email,
-                            portal_url: notionCase.portal_url || existing.portal_url,
-                            portal_provider: notionCase.portal_provider || existing.portal_provider,
+                            agency_name: notionCase.agency_name || (preserveExistingChannels ? existing.agency_name : null),
+                            agency_email: notionCase.agency_email || (preserveExistingChannels ? existing.agency_email : null),
+                            portal_url: notionCase.portal_url || (preserveExistingChannels ? existing.portal_url : null),
+                            portal_provider: notionCase.portal_provider || (preserveExistingChannels ? existing.portal_provider : null),
                             status: 'ready_to_send',
                             last_notion_synced_at: new Date(),
                         });

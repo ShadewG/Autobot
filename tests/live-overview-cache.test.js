@@ -46,6 +46,7 @@ describe('Live overview cache fallback', function () {
       exports: {
         evaluateImportAutoDispatchSafety: () => ({ shouldBlockAutoDispatch: false }),
         extractResearchSuggestedAgency: () => null,
+        filterStaleImportWarnings: actualNormalization.filterStaleImportWarnings,
         normalizePortalTimeoutSubstatus: (value) => value,
         shouldSuppressPlaceholderAgencyDisplay: () => false,
         sanitizeStaleResearchHandoffDraft: (value) => value,
@@ -203,6 +204,106 @@ describe('Live overview cache fallback', function () {
       assert.strictEqual(response.status, 200);
       assert.strictEqual(response.body.summary.pending_approvals_total, 0);
       assert.deepStrictEqual(response.body.pending_approvals, []);
+    } finally {
+      restore();
+    }
+  });
+
+  it('suppresses stale AGENCY_NOT_IN_DIRECTORY warnings in pending approvals when a canonical agency is linked', async function () {
+    const dbStub = {
+      query: async (sql) => {
+        if (sql.includes('COUNT(*) FILTER') && sql.includes('FROM messages m')) {
+          return { rows: [{ inbound_24h: '0', unmatched_inbound_total: '0', unprocessed_inbound_total: '0' }] };
+        }
+        if (sql.includes('portal_hard_timeout_total_1h')) {
+          return { rows: [{ portal_hard_timeout_total_1h: 0, portal_soft_timeout_total_1h: 0 }] };
+        }
+        if (sql.includes('process_inbound_superseded_total_1h')) {
+          return { rows: [{ process_inbound_superseded_total_1h: 0 }] };
+        }
+        if (sql.includes('FROM proposals p') && sql.includes('LEFT JOIN cases c ON c.id = p.case_id')) {
+          return {
+            rows: [{
+              id: 1981,
+              case_id: 25150,
+              action_type: 'SEND_STATUS_UPDATE',
+              proposal_status: 'PENDING_APPROVAL',
+              confidence: '0.82',
+              created_at: '2026-03-10T00:00:00.000Z',
+              trigger_message_id: null,
+              reasoning: ['Status update requested'],
+              draft_subject: 'Status update',
+              draft_body_text: 'Hello Records Unit',
+              proposal_pause_reason: null,
+              risk_flags: [],
+              warnings: [],
+              gate_options: null,
+              case_name: 'Christopher Malik Todd',
+              subject_name: 'Christopher Malik Todd',
+              agency_name: 'South St. Paul Police Department, Minnesota',
+              agency_id: 1015,
+              state: 'MN',
+              case_status: 'needs_human_review',
+              case_substatus: 'Proposal #1981 pending review',
+              portal_url: 'https://www.southstpaulmn.gov/FormCenter/Police-8/Request-for-Police-Data-67',
+              agency_email: 'clerical@sspmn.org',
+              additional_details: 'Police Department: South St. Paul Police Department, Minnesota',
+              import_warnings: [{
+                type: 'AGENCY_NOT_IN_DIRECTORY',
+                message: 'Agency "South St. Paul Police Department, Minnesota" not found in directory',
+              }],
+              deadline_date: null,
+              contact_research_notes: null,
+              effective_agency_email: 'clerical@sspmn.org',
+              user_id: 3,
+              case_pause_reason: 'STATUS_UPDATE',
+              last_fee_quote_amount: null,
+              message_count: '0',
+              inbound_count: 0,
+              last_inbound_preview: null,
+              last_inbound_subject: null,
+              last_inbound_from_email: null,
+              last_inbound_date: null,
+            }],
+          };
+        }
+        if (sql.includes('SELECT DISTINCT ON (p.case_id)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT DISTINCT ON (ca.case_id)')) {
+          return {
+            rows: [{
+              case_id: 25150,
+              agency_id: 1015,
+              agency_name: 'South St. Paul Police Department, Minnesota',
+              agency_email: 'clerical@sspmn.org',
+              portal_url: 'https://www.southstpaulmn.gov/FormCenter/Police-8/Request-for-Police-Data-67',
+              added_source: 'notion_import',
+            }],
+          };
+        }
+        if (sql.includes('FROM agent_runs r') || sql.includes('FROM messages m') || sql.includes('FROM cases c') || sql.includes('FROM attachments a')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL in stale warning suppression test: ${sql}`);
+      },
+      getUserById: async () => null,
+    };
+
+    const { router, restore } = loadOverviewRouter(dbStub, {
+      evaluateImportAutoDispatchSafety: actualNormalization.evaluateImportAutoDispatchSafety,
+      filterStaleImportWarnings: actualNormalization.filterStaleImportWarnings,
+    });
+
+    try {
+      const app = express();
+      app.use('/api/monitor', router);
+
+      const response = await supertest(app).get('/api/monitor/live-overview');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_approvals.length, 1);
+      assert.strictEqual(response.body.pending_approvals[0].import_warnings, null);
     } finally {
       restore();
     }
