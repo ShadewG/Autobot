@@ -21,11 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+
 import { fetcher } from "@/lib/api";
 import { formatDate, cn } from "@/lib/utils";
 import {
@@ -96,21 +92,19 @@ function ExampleRow({ example }: { example: SuccessfulExample }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <TableRow className="cursor-pointer hover:bg-muted/50">
+    <>
+      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => setOpen(!open)}>
         <TableCell>
-          <CollapsibleTrigger asChild>
-            <button className="flex items-center gap-1 text-left w-full">
-              {open ? (
-                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-              )}
-              <span className="text-sm truncate max-w-[200px]">
-                {example.agency_name || "Unknown Agency"}
-              </span>
-            </button>
-          </CollapsibleTrigger>
+          <button className="flex items-center gap-1 text-left w-full">
+            {open ? (
+              <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+            )}
+            <span className="text-sm truncate max-w-[200px]">
+              {example.agency_name || "Unknown Agency"}
+            </span>
+          </button>
         </TableCell>
         <TableCell>
           <Badge variant="secondary" className="text-xs font-mono">
@@ -147,9 +141,9 @@ function ExampleRow({ example }: { example: SuccessfulExample }) {
           </span>
         </TableCell>
       </TableRow>
-      <CollapsibleContent asChild>
-        <tr>
-          <td colSpan={7} className="p-0">
+      {open && (
+        <TableRow>
+          <TableCell colSpan={7} className="p-0">
             <div className="border-t border-b bg-muted/30 px-6 py-4 space-y-3">
               {example.draft_subject && (
                 <div>
@@ -181,10 +175,10 @@ function ExampleRow({ example }: { example: SuccessfulExample }) {
                 )}
               </div>
             </div>
-          </td>
-        </tr>
-      </CollapsibleContent>
-    </Collapsible>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
 

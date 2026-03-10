@@ -239,7 +239,7 @@ export default function ErrorsPage() {
             <p className="text-sm text-muted-foreground flex items-center gap-1.5">
               <Zap className="h-3.5 w-3.5" /> Top Operation
             </p>
-            <p className="text-lg font-bold truncate" title={kpis.topOperation}>
+            <p className="text-sm font-bold break-all" title={kpis.topOperation}>
               {kpis.topOperation}
             </p>
             {kpis.topOperationCount > 0 && (

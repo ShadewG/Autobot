@@ -419,8 +419,8 @@ export default function EvalPage() {
                       <TableHead>Case</TableHead>
                       <TableHead>Expected</TableHead>
                       <TableHead>AI Predicted</TableHead>
-                      <TableHead>Result</TableHead>
-                      <TableHead>Score</TableHead>
+                      <TableHead className="min-w-[70px]">Result</TableHead>
+                      <TableHead className="min-w-[60px]">Score</TableHead>
                       <TableHead className="w-[80px]" />
                     </TableRow>
                   </TableHeader>

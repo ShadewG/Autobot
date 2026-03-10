@@ -148,7 +148,7 @@ async function storeApprovedExample(proposal, { decidedBy = null } = {}) {
         proposal.case_id,
         proposal.trigger_message_id || proposal.message_id || null,
         latestProposal?.action_type || proposal.action_type,
-        latestAnalysis?.classification || null,
+        latestAnalysis?.intent || latestAnalysis?.classification || null,
         caseData?.agency_name || null,
         inferAgencyType(caseData?.agency_name),
         caseData?.state || caseData?.agency_state || null,
