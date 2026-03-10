@@ -185,4 +185,44 @@ describe("DENIAL rebuttal gating", function () {
 
     assert.strictEqual(result.valid, true);
   });
+
+  it("treats surveillance-video denials as rebuttable accountability records", async function () {
+    database.getCaseById.resolves({
+      id: 99001,
+      agency_name: "Synthetic QA Records Unit",
+      additional_details: "Requested surveillance video from the incident scene",
+      contact_research_notes: null,
+      constraints_jsonb: [],
+      constraints: [],
+      requested_records: ["Surveillance video"],
+      status: "awaiting_response",
+    });
+
+    const result = await decideNextAction(
+      99001,
+      "DENIAL",
+      [],
+      null,
+      "neutral",
+      "AUTO",
+      "INBOUND_MESSAGE",
+      true,
+      null,
+      "send_rebuttal",
+      null,
+      "privacy_exemption",
+      null,
+      null,
+      null,
+      null,
+      [
+        "The surveillance video you requested is exempt from release under the personal privacy exemption.",
+        "Disclosure would reveal protected law-enforcement techniques.",
+      ],
+    );
+
+    assert.strictEqual(result.actionType, "SEND_REBUTTAL");
+    assert.strictEqual(result.requiresHuman, true);
+    assert.strictEqual(result.pauseReason, "DENIAL");
+  });
 });

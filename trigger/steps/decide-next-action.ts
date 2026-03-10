@@ -1370,7 +1370,7 @@ function shouldRebutPrivacyDenialForAccountabilityRecords(
   const keyPointsText = Array.isArray(inlineKeyPoints) ? inlineKeyPoints.join(" ") : "";
   const corpus = `${requested} ${scopeText} ${detailsText} ${keyPointsText}`.toLowerCase();
 
-  return /body.?cam|body.?worn|bwc|dash.?cam|dispatch audio|911 audio|911 call|radio traffic|cad audio/.test(corpus);
+  return /body.?cam|body.?worn|bwc|dash.?cam|dispatch audio|911 audio|911 call|radio traffic|cad audio|surveillance (?:video|footage)|cctv|security camera|camera footage|video footage|surveillance camera|interrogation footage/.test(corpus);
 }
 
 function buildHumanDirectivesSection(
