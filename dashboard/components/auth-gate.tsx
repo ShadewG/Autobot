@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useAuth } from "./auth-provider";
 import { LoginForm } from "./login-form";
@@ -9,8 +10,16 @@ import { OnboardingModal } from "./onboarding-modal";
 import { ChangelogPopup } from "./changelog-popup";
 import { BugReportButton } from "./bug-report-button";
 
+const PUBLIC_PATHS = ["/portal-link"];
+
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
+  const pathname = usePathname();
+
+  // Portal link page is public — user is not logged in yet
+  if (PUBLIC_PATHS.some((p) => pathname?.startsWith(p))) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (
