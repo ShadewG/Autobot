@@ -59,6 +59,19 @@ async function getSingleSyncOutcome(caseId) {
     };
 }
 
+async function clearSingleSyncActiveWork(caseId) {
+    await db.dismissPendingProposals(caseId, 'Notion sync blocked auto-dispatch: import requires review');
+    await db.query(
+        `UPDATE agent_runs
+         SET status = 'failed',
+             error = 'blocked_by_import_review',
+             ended_at = COALESCE(ended_at, NOW())
+         WHERE case_id = $1
+           AND status IN ('created', 'queued', 'processing', 'running', 'waiting', 'paused')`,
+        [caseId]
+    );
+}
+
 async function syncSingleNotionPage(pageId) {
     if (!pageId) {
         const error = new Error('pageId is required');
@@ -79,9 +92,11 @@ async function syncSingleNotionPage(pageId) {
         });
     }
 
-    const postQueueOutcome = shouldQueueProcessing
-        ? await getSingleSyncOutcome(caseData.id)
-        : preQueueOutcome;
+    if (!shouldQueueProcessing && (preQueueOutcome.proposal || preQueueOutcome.run)) {
+        await clearSingleSyncActiveWork(caseData.id);
+    }
+
+    const postQueueOutcome = await getSingleSyncOutcome(caseData.id);
     const activeProposal = postQueueOutcome.proposal;
     const activeRun = postQueueOutcome.run;
 
