@@ -1751,7 +1751,18 @@ function DetailV2Content() {
   }, [_threadMessages, conversationAgencies, shouldShowConversationTabs, _pendingProposals, proposalsByAgencyBucket, _caseAgencies]);
 
   const agencyMessageStats = useMemo(() => {
-    const stats = new Map<number, { total: number; inbound: number; outbound: number; lastMessageAt: string | null }>();
+    const recordedSubmissionAt =
+      data?.request?.submitted_at ||
+      data?.request?.send_date ||
+      null;
+    const singleAgencyCase = _activeCaseAgencies.length === 1;
+    const stats = new Map<number, {
+      total: number;
+      inbound: number;
+      outbound: number;
+      lastMessageAt: string | null;
+      recordedSubmissionAt: string | null;
+    }>();
     for (const agency of _activeCaseAgencies) {
       let total = 0, inbound = 0, outbound = 0;
       let lastMessageAt: string | null = null;
@@ -1765,10 +1776,20 @@ function DetailV2Content() {
           }
         }
       }
-      stats.set(agency.id, { total, inbound, outbound, lastMessageAt });
+      const shouldAttributeRecordedSubmission =
+        Boolean(recordedSubmissionAt) &&
+        outbound === 0 &&
+        (agency.is_primary || singleAgencyCase);
+      stats.set(agency.id, {
+        total,
+        inbound,
+        outbound,
+        lastMessageAt,
+        recordedSubmissionAt: shouldAttributeRecordedSubmission ? recordedSubmissionAt : null,
+      });
     }
     return stats;
-  }, [_threadMessages, _activeCaseAgencies]);
+  }, [_threadMessages, _activeCaseAgencies, data?.request?.submitted_at, data?.request?.send_date]);
 
   useEffect(() => {
     if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
@@ -3442,9 +3463,19 @@ function DetailV2Content() {
                               <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
                             </div>
                           )}
-                          {stats && stats.total > 0 && (
+                          {stats && (stats.total > 0 || stats.recordedSubmissionAt) && (
                             <div className="text-[10px] text-muted-foreground">
-                              {stats.total} messages ({stats.outbound} sent, {stats.inbound} received)
+                              {stats.total > 0
+                                ? `${stats.total} messages (${stats.outbound} sent, ${stats.inbound} received)`
+                                : "No email thread recorded"}
+                              {stats.recordedSubmissionAt && (
+                                <span>
+                                  {stats.total > 0 ? " · " : " · "}
+                                  {stats.outbound > 0 ? "request submitted" : "1 portal/manual submission"}
+                                  {" "}
+                                  {formatRelativeTime(stats.recordedSubmissionAt)}
+                                </span>
+                              )}
                               {stats.lastMessageAt && <span> · Last: {formatRelativeTime(stats.lastMessageAt)}</span>}
                             </div>
                           )}
