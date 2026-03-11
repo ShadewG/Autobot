@@ -42,50 +42,7 @@ app.use('/api/screenshots', express.static('/data/screenshots'));
 
 // Serve Next.js dashboard static files
 const dashboardPath = path.join(__dirname, 'dashboard', 'out');
-{
-    const _fs = require('fs');
-    if (_fs.existsSync(dashboardPath)) {
-        const queueDir = path.join(dashboardPath, 'queue');
-        console.log(`Dashboard: serving from ${dashboardPath} (queue/ exists: ${_fs.existsSync(queueDir)})`);
-    } else {
-        console.warn(`Dashboard: ${dashboardPath} does not exist — no static files will be served`);
-    }
-}
 app.use(express.static(dashboardPath));
-
-// Debug: check dashboard build output
-app.get('/api/debug/dashboard-status', (req, res) => {
-    const _fs = require('fs');
-    const exists = _fs.existsSync(dashboardPath);
-    let files = [];
-    if (exists) {
-        files = _fs.readdirSync(dashboardPath);
-    }
-    const queueExists = exists && _fs.existsSync(path.join(dashboardPath, 'queue'));
-    let queueFiles = [];
-    if (queueExists) {
-        queueFiles = _fs.readdirSync(path.join(dashboardPath, 'queue'));
-    }
-    let chunkFiles = [];
-    const chunkDir = path.join(dashboardPath, '_next', 'static', 'chunks', 'app', 'queue');
-    if (_fs.existsSync(chunkDir)) {
-        chunkFiles = _fs.readdirSync(chunkDir);
-    }
-    // Check if Bug icon exists in the queue page chunk
-    let hasBugButton = false;
-    if (chunkFiles.length > 0) {
-        const chunkContent = _fs.readFileSync(path.join(chunkDir, chunkFiles[0]), 'utf8');
-        hasBugButton = chunkContent.includes('Bugged') || chunkContent.includes('mark-bugged');
-    }
-    // Check build ID
-    let buildId = null;
-    const buildIdPath = path.join(dashboardPath, '_next', 'static');
-    if (_fs.existsSync(buildIdPath)) {
-        const buildDirs = _fs.readdirSync(buildIdPath).filter(f => f !== 'chunks' && f !== 'css' && f !== 'media');
-        buildId = buildDirs[0] || null;
-    }
-    res.json({ dashboardPath, exists, files, queueExists, queueFiles, chunkDir, chunkFiles, hasBugButton, buildId });
-});
 
 // Health check endpoint
 app.get('/health', async (req, res) => {

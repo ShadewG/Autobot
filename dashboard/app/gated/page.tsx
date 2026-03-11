@@ -62,6 +62,7 @@ import {
   ListChecks,
   CheckSquare,
   Square,
+  Bug,
 } from "lucide-react";
 import {
   Collapsible,
@@ -1506,6 +1507,37 @@ function MonitorPageContent() {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ reason: "Withdrawn from monitor queue" }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || `Failed (${res.status})`);
+            }
+          },
+        );
+      },
+    });
+  };
+
+  const handleMarkBugged = () => {
+    if (!selectedItem) return;
+    const caseId =
+      selectedItem.type === "proposal"
+        ? selectedItem.data.case_id
+        : selectedItem.data.id;
+    const item = selectedItem;
+    setShowDestructiveConfirm({
+      title: `Mark case #${caseId} as bugged?`,
+      description: "This removes the case from the queue so you can investigate. You can re-add it once fixed.",
+      onConfirm: () => {
+        setShowDestructiveConfirm(null);
+        scheduleUndoableAction(
+          `Bugged: case #${caseId}`,
+          item,
+          async () => {
+            const res = await fetch(`/api/requests/${caseId}/mark-bugged`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ description: "Marked as bugged from gated queue" }),
             });
             const data = await res.json();
             if (!res.ok || !data.success) {
@@ -3026,6 +3058,14 @@ function MonitorPageContent() {
                     >
                       <Ban className="h-3 w-3 mr-1" /> WITHDRAW
                     </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1 text-orange-400 border-orange-700/50 hover:bg-orange-950/20"
+                      onClick={handleMarkBugged}
+                      disabled={isSubmitting}
+                    >
+                      <Bug className="h-3 w-3 mr-1" /> BUGGED
+                    </Button>
                   </div>
                 </>
               );
@@ -3485,6 +3525,14 @@ function MonitorPageContent() {
                     disabled={isSubmitting}
                   >
                     <Ban className="h-3 w-3 mr-1" /> WITHDRAW
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="text-orange-400 border-orange-700/50 hover:bg-orange-950/20"
+                    onClick={handleMarkBugged}
+                    disabled={isSubmitting}
+                  >
+                    <Bug className="h-3 w-3 mr-1" /> BUGGED
                   </Button>
                   <Link href={`/requests/detail-v2?id=${selectedItem.data.id}`}>
                     <Button variant="ghost" className="text-xs text-muted-foreground">
