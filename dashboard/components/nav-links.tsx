@@ -3,10 +3,28 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import useSWR from "swr";
+import { ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useUserFilter } from "./user-filter";
 import { useAuth } from "./auth-provider";
+
+const adminLinks = [
+  { href: "/runs", label: "RUNS" },
+  { href: "/eval", label: "EVALS" },
+  { href: "/examples", label: "EXAMPLES" },
+  { href: "/reconciliation", label: "RECON" },
+  { href: "/errors", label: "ERRORS" },
+  { href: "/agent-log", label: "AGENT LOG" },
+  { href: "/simulate", label: "SIM" },
+  { href: "/admin", label: "ADMIN" },
+];
 
 export function NavLinks() {
   const pathname = usePathname();
@@ -23,7 +41,7 @@ export function NavLinks() {
     (liveData?.summary?.pending_approvals_total || 0) +
     (liveData?.summary?.human_review_total || 0);
 
-  const links = [
+  const coreLinks = [
     { href: "/gated", label: "QUEUE", count: queueCount },
     { href: "/requests", label: "CASES" },
     { href: "/agencies", label: "AGENCIES" },
@@ -31,25 +49,14 @@ export function NavLinks() {
     { href: "/analytics", label: "ANALYTICS" },
     { href: "/settings", label: "SETTINGS" },
     { href: "/feedback", label: "FEEDBACK" },
-    // Admin-only tabs: internal tooling and diagnostics
-    ...(isAdmin
-      ? [
-          { href: "/runs", label: "RUNS" },
-          { href: "/eval", label: "EVALS" },
-          { href: "/examples", label: "EXAMPLES" },
-          { href: "/reconciliation", label: "RECON" },
-          { href: "/errors", label: "ERRORS" },
-          { href: "/agent-log", label: "AGENT LOG" },
-          { href: "/simulate", label: "SIM" },
-          { href: "/admin", label: "ADMIN" },
-        ]
-      : []),
   ];
+
+  const isAdminActive = adminLinks.some((l) => pathname.startsWith(l.href));
 
   return (
     <div className="flex min-w-0 w-full flex-col gap-2 md:flex-row md:items-center md:justify-between">
       <nav className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap pr-1 text-xs tracking-wider [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:gap-6">
-        {links.map(({ href, label, count }) => {
+        {coreLinks.map(({ href, label, count }) => {
           const isActive = pathname.startsWith(href);
           return (
             <Link
@@ -74,6 +81,36 @@ export function NavLinks() {
             </Link>
           );
         })}
+        {isAdmin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={cn(
+                "flex items-center gap-1 uppercase transition-colors outline-none",
+                isAdminActive
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              ADMIN
+              <ChevronDown className="h-3 w-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[140px]">
+              {adminLinks.map(({ href, label }) => (
+                <DropdownMenuItem key={href} asChild>
+                  <Link
+                    href={href}
+                    className={cn(
+                      "w-full text-xs tracking-wider uppercase",
+                      pathname.startsWith(href) && "font-semibold"
+                    )}
+                  >
+                    {label}
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </nav>
       <div className="flex flex-wrap items-center gap-3 text-xs md:justify-end">
         <a
