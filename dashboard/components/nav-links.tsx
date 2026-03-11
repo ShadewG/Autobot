@@ -39,6 +39,7 @@ export function NavLinks() {
           { href: "/examples", label: "EXAMPLES" },
           { href: "/reconciliation", label: "RECON" },
           { href: "/errors", label: "ERRORS" },
+          { href: "/agent-log", label: "AGENT LOG" },
           { href: "/simulate", label: "SIM" },
           { href: "/admin", label: "ADMIN" },
         ]
