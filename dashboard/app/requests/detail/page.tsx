@@ -258,6 +258,52 @@ function formatLiveRunLabel(run: AgentRun | null): string | null {
   return null;
 }
 
+interface AgentLogEntry {
+  id: string;
+  timestamp: string;
+  kind: string;
+  source: string;
+  title: string;
+  summary: string;
+  severity: string;
+  run_id: number | null;
+  message_id: number | null;
+  proposal_id: number | null;
+  step: string | null;
+  payload: Record<string, unknown> | null;
+}
+
+interface AgentLogResponse {
+  success: boolean;
+  case_id: number;
+  count: number;
+  summary: {
+    total: number;
+    by_source: Record<string, number>;
+    by_kind: Record<string, number>;
+    by_severity: Record<string, number>;
+  };
+  entries: AgentLogEntry[];
+}
+
+function agentLogKindBadge(kind: string, severity?: string) {
+  const normalized = String(kind || '').toLowerCase();
+  const cls = severity === 'error'
+    ? 'bg-red-500/15 text-red-400 border-red-500/30'
+    : severity === 'warning'
+      ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+      : normalized === 'decision'
+        ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+        : normalized === 'portal'
+          ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+          : normalized === 'provider_event'
+            ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+            : normalized === 'agent_step'
+              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+              : 'border-border/50 text-muted-foreground';
+  return <Badge className={cn('text-[10px] px-1 py-0', cls)}>{kind.replace(/_/g, ' ')}</Badge>;
+}
+
 function buildTriggerRunUrl(triggerRunId?: string | null): string | null {
   if (!triggerRunId) return null;
   return `https://cloud.trigger.dev/orgs/frontwind-llc-27ae/projects/autobot-Z-SQ/env/prod/runs/${triggerRunId}`;
@@ -298,6 +344,50 @@ function normalizeDecisionReasoning(reasoning: string | string[] | null | undefi
     }
   }
   return trimmed;
+}
+
+function AgentLogTab({ caseId }: { caseId: string }) {
+  const { data, error, isLoading } = useSWR<AgentLogResponse>(`/requests/${caseId}/agent-log?limit=50`, fetcher);
+  const entries = data?.entries || [];
+
+  if (isLoading) {
+    return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading agent log...</div>;
+  }
+
+  if (error) {
+    return <div className="text-sm text-red-400">Failed to load agent log.</div>;
+  }
+
+  if (entries.length === 0) {
+    return <div className="text-sm text-muted-foreground">No agent log entries available for this case yet.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {entries.map((entry) => (
+        <div key={entry.id} className="border rounded-lg p-4 space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              {agentLogKindBadge(entry.kind, entry.severity)}
+              {entry.step && <Badge variant="outline">{entry.step}</Badge>}
+              {entry.run_id && <Badge variant="outline">run {entry.run_id}</Badge>}
+            </div>
+            <span className="text-xs text-muted-foreground">{formatDate(entry.timestamp)}</span>
+          </div>
+          <div className="text-sm font-medium whitespace-pre-wrap">{entry.title}</div>
+          <div className="text-sm text-muted-foreground whitespace-pre-wrap">{entry.summary}</div>
+          {entry.payload && (
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">Details</summary>
+              <pre className="text-xs bg-background border rounded p-3 overflow-x-auto whitespace-pre-wrap mt-2">
+                {JSON.stringify(entry.payload, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatAgencyNotes(notes?: string | null): string | null {
@@ -2826,73 +2916,10 @@ function RequestDetailContent() {
         <TabsContent value="agent-log" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Agent Decision Log</CardTitle>
+              <CardTitle>Agent Log</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {(agentDecisions.length > 0
-                  ? agentDecisions.map((decision) => ({
-                      id: `decision-${decision.id}`,
-                      type: decision.action_taken || "DECISION",
-                      timestamp: decision.created_at,
-                      summary: normalizeDecisionReasoning(decision.reasoning),
-                      raw_reasoning: decision.reasoning,
-                      confidence: decision.confidence,
-                      outcome: decision.outcome,
-                      trigger_type: decision.trigger_type,
-                    }))
-                  : timeline_events.filter((e) => e.ai_audit).map((event) => ({
-                      id: event.id,
-                      type: event.type,
-                      timestamp: event.timestamp,
-                      summary: event.summary || "Decision event",
-                      raw_reasoning: event.ai_audit || event.metadata || null,
-                      confidence: event.ai_audit?.confidence,
-                      outcome: null,
-                      trigger_type: null,
-                    })))
-                  .map((entry) => (
-                    <div key={entry.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <Badge variant="outline">{entry.type}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDate(entry.timestamp)}
-                        </span>
-                      </div>
-                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">
-                        {entry.summary || "No summary recorded"}
-                      </p>
-                      <div className="bg-muted rounded p-3 text-sm space-y-2">
-                        {typeof entry.confidence === "number" && (
-                          <p className="text-xs text-muted-foreground">
-                            Confidence: {Math.round(entry.confidence * 100)}%
-                          </p>
-                        )}
-                        {entry.trigger_type && (
-                          <p className="text-xs text-muted-foreground">Trigger: {entry.trigger_type}</p>
-                        )}
-                        {entry.outcome && (
-                          <p className="text-xs text-muted-foreground">Outcome: {entry.outcome}</p>
-                        )}
-                        {entry.raw_reasoning && (
-                          <details className="text-xs">
-                            <summary className="cursor-pointer text-muted-foreground">Full decision details</summary>
-                            <pre className="mt-2 whitespace-pre-wrap bg-background/60 border rounded p-2 text-[11px]">
-                              {typeof entry.raw_reasoning === "string"
-                                ? entry.raw_reasoning
-                                : JSON.stringify(entry.raw_reasoning, null, 2)}
-                            </pre>
-                          </details>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                {agentDecisions.length === 0 && timeline_events.filter((e) => e.ai_audit).length === 0 && (
-                  <p className="text-center text-muted-foreground py-8">
-                    No agent decisions recorded
-                  </p>
-                )}
-              </div>
+              <AgentLogTab caseId={id!} />
             </CardContent>
           </Card>
         </TabsContent>

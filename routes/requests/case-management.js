@@ -7,6 +7,7 @@ const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { sanitizeValue } = require('../../services/decision-trace-service');
 const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
 const recordsDeliveryService = require('../../services/records-delivery-service');
+const { buildCaseAgentLog } = require('../../services/agent-log-service');
 const { buildDismissHumanDecision } = proposalLifecycle;
 
 const SENSITIVE_PAYLOAD_KEY_PATTERNS = [
@@ -1618,6 +1619,33 @@ router.get('/:id/provider-payloads/:surface/:recordId', async (req, res) => {
         });
     } catch (error) {
         logger.error('Error fetching provider payload detail:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/agent-log
+ * Return a normalized per-case agent trace for the case detail Agent Log tab.
+ */
+router.get('/:id/agent-log', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const result = await buildCaseAgentLog(db, caseId, {
+            limit: req.query.limit,
+            source: req.query.source,
+            kind: req.query.kind,
+            before: req.query.before,
+            after: req.query.after,
+        });
+
+        res.json({ success: true, ...result });
+    } catch (error) {
+        logger.error('Error fetching agent log:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

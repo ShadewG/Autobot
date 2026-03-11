@@ -922,6 +922,144 @@ function ProviderPayloadsSection({ caseId }: { caseId: string }) {
 
 // ── Proposal History Section ─────────────────────────────────────────────────
 
+interface AgentLogEntry {
+  id: string;
+  timestamp: string;
+  kind: string;
+  source: string;
+  title: string;
+  summary: string;
+  severity: string;
+  run_id: number | null;
+  message_id: number | null;
+  proposal_id: number | null;
+  step: string | null;
+  payload: Record<string, unknown> | null;
+}
+
+interface AgentLogResponse {
+  success: boolean;
+  case_id: number;
+  count: number;
+  summary: {
+    total: number;
+    by_source: Record<string, number>;
+    by_kind: Record<string, number>;
+    by_severity: Record<string, number>;
+  };
+  entries: AgentLogEntry[];
+}
+
+function agentLogKindBadge(kind: string, severity?: string) {
+  const normalized = String(kind || '').toLowerCase();
+  const cls = severity === 'error'
+    ? 'bg-red-500/15 text-red-400 border-red-500/30'
+    : severity === 'warning'
+      ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+      : normalized === 'decision'
+        ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+        : normalized === 'portal'
+          ? 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+          : normalized === 'provider_event'
+            ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+            : normalized === 'agent_step'
+              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+              : 'border-border/50 text-muted-foreground';
+  return <Badge className={cn('text-[10px] px-1 py-0', cls)}>{kind.replace(/_/g, ' ')}</Badge>;
+}
+
+function AgentLogSection({ caseId, compact = false }: { caseId: string; compact?: boolean }) {
+  const [isOpen, setIsOpen] = useState(compact);
+  const [entries, setEntries] = useState<AgentLogEntry[]>([]);
+  const [summary, setSummary] = useState<AgentLogResponse['summary'] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLoad = async () => {
+    if (hasLoaded || isLoading) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetcher<AgentLogResponse>(`/requests/${caseId}/agent-log?limit=${compact ? 20 : 50}`);
+      setEntries(data.entries || []);
+      setSummary(data.summary || null);
+      setHasLoaded(true);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load agent log');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (compact) {
+    return (
+      <div className='space-y-1'>
+        {!hasLoaded && !isLoading && (
+          <Button size='sm' variant='outline' className='text-[10px]' onClick={handleLoad}>Load Agent Log</Button>
+        )}
+        {isLoading && <div className='flex items-center gap-2 py-2 text-[10px] text-muted-foreground'><Loader2 className='h-3 w-3 animate-spin' /> Loading agent log...</div>}
+        {error && <div className='text-[10px] text-red-400 py-1'>{error}</div>}
+        {hasLoaded && entries.length === 0 && !isLoading && <p className='text-xs text-muted-foreground'>No agent log entries yet</p>}
+        {entries.slice(0, 20).map((entry) => (
+          <div key={entry.id} className='rounded border border-border/40 p-2 text-[11px] space-y-1'>
+            <div className='flex items-center gap-2'>
+              <span className='text-muted-foreground shrink-0'>{formatRelativeTime(entry.timestamp)}</span>
+              {agentLogKindBadge(entry.kind, entry.severity)}
+              {entry.step && <Badge variant='outline' className='text-[10px] px-1 py-0'>{entry.step}</Badge>}
+            </div>
+            <div className='font-medium'>{entry.title}</div>
+            <div className='text-muted-foreground break-words'>{entry.summary}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <details open={isOpen || undefined} className='border-b border-border/50 group' onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      setIsOpen(open);
+      if (open) handleLoad();
+    }}>
+      <summary className='px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden'>
+        <ChevronRight className='h-3 w-3 transition-transform group-open:rotate-90 shrink-0' />
+        Agent Log
+        {hasLoaded && <span className='ml-auto text-muted-foreground'>{summary?.total ?? entries.length}</span>}
+      </summary>
+      <div className='px-3 pb-2'>
+        {isLoading && <div className='flex items-center gap-2 py-3 text-[10px] text-muted-foreground'><Loader2 className='h-3 w-3 animate-spin' /> Loading agent log...</div>}
+        {error && <div className='text-[10px] text-red-400 py-2'>{error}</div>}
+        {hasLoaded && entries.length === 0 && !isLoading && <div className='text-[10px] text-muted-foreground py-2'>No agent log entries recorded</div>}
+        {hasLoaded && entries.length > 0 && (
+          <div className='space-y-1.5'>
+            {entries.map((entry) => (
+              <div key={entry.id} className='border border-border/50 rounded-md p-2 text-[10px] space-y-1'>
+                <div className='flex items-center gap-2 flex-wrap'>
+                  {agentLogKindBadge(entry.kind, entry.severity)}
+                  {entry.step && <Badge variant='outline' className='text-[10px] px-1 py-0'>{entry.step}</Badge>}
+                  {entry.run_id && <Badge variant='outline' className='text-[10px] px-1 py-0'>run {entry.run_id}</Badge>}
+                  <span className='ml-auto text-muted-foreground'>{formatRelativeTime(entry.timestamp)}</span>
+                </div>
+                <div className='font-medium'>{entry.title}</div>
+                <div className='text-muted-foreground whitespace-pre-wrap break-words'>{entry.summary}</div>
+                {entry.payload && (
+                  <details>
+                    <summary className='cursor-pointer text-muted-foreground hover:text-foreground'>Details</summary>
+                    <pre className='mt-1 text-[10px] bg-muted/30 p-2 overflow-x-auto max-h-[240px] overflow-y-auto font-mono whitespace-pre-wrap break-all border border-border/30 rounded'>
+                      {JSON.stringify(entry.payload, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 interface ProposalHistoryItem {
   id: number;
   action_type: string;
@@ -3789,16 +3927,8 @@ function DetailV2Content() {
               </div>
             )}
             {bottomDrawer === "agent-log" && (
-              <div className="p-3 space-y-1">
-                {agentDecisions.length > 0 ? agentDecisions.slice(0, 20).map((d) => (
-                  <div key={d.id} className="flex items-start gap-2 text-[11px]">
-                    <span className="text-muted-foreground shrink-0">{formatRelativeTime(d.created_at)}</span>
-                    <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">{d.action_taken}</Badge>
-                    <span className="text-muted-foreground truncate">{typeof d.reasoning === 'string' ? d.reasoning : Array.isArray(d.reasoning) ? d.reasoning[0] : "—"}</span>
-                  </div>
-                )) : (
-                  <p className="text-xs text-muted-foreground">No agent decisions yet</p>
-                )}
+              <div className="p-3">
+                <AgentLogSection caseId={id!} compact />
               </div>
             )}
           </div>

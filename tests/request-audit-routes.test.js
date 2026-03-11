@@ -13,6 +13,7 @@ describe('Request audit/debug routes', function () {
   let originalGetProposalContentVersions;
   let originalGetPortalSubmissions;
   let originalGetCaseEmailEvents;
+  let originalGetDecisionTracesByCaseId;
 
   beforeEach(function () {
     originalGetCaseById = db.getCaseById;
@@ -21,6 +22,7 @@ describe('Request audit/debug routes', function () {
     originalGetProposalContentVersions = db.getProposalContentVersions;
     originalGetPortalSubmissions = db.getPortalSubmissions;
     originalGetCaseEmailEvents = db.getCaseEmailEvents;
+    originalGetDecisionTracesByCaseId = db.getDecisionTracesByCaseId;
   });
 
   afterEach(function () {
@@ -30,6 +32,7 @@ describe('Request audit/debug routes', function () {
     db.getProposalContentVersions = originalGetProposalContentVersions;
     db.getPortalSubmissions = originalGetPortalSubmissions;
     db.getCaseEmailEvents = originalGetCaseEmailEvents;
+    db.getDecisionTracesByCaseId = originalGetDecisionTracesByCaseId;
   });
 
   it('returns event ledger rows for a case', async function () {
@@ -342,6 +345,126 @@ describe('Request audit/debug routes', function () {
       response.body.entries.map((entry) => entry.source),
       ['email_events', 'error_events']
     );
+    assert.strictEqual(response.body.summary.total, 2);
+  });
+
+
+  it('returns a normalized agent log for a case', async function () {
+    db.getCaseById = async () => ({ id: 25169, case_name: 'QA Case' });
+    db.getPortalSubmissions = async () => ([
+      { id: 44, case_id: 25169, status: 'failed', portal_url: 'https://portal.example.gov', started_at: '2026-03-08T10:04:00.000Z' },
+    ]);
+    db.getCaseEmailEvents = async () => ([
+      { id: 700, case_id: 25169, message_id: 91, event_type: 'delivered', provider_message_id: 'sg-msg-1', event_timestamp: '2026-03-08T10:05:00.000Z', raw_payload: { token: 'secret-token' } },
+    ]);
+    db.getDecisionTracesByCaseId = async () => ([
+      {
+        id: 4,
+        case_id: 25169,
+        run_id: 55,
+        message_id: 91,
+        created_at: '2026-03-08T10:04:15.000Z',
+        classification: { intent: 'question' },
+        router_output: { action_type: 'SEND_CLARIFICATION' },
+        node_trace: { taskType: 'process-inbound', status: 'completed' },
+        gate_decision: { pause_reason: 'PENDING_APPROVAL' },
+        duration_ms: 1200,
+        started_at: '2026-03-08T10:04:10.000Z',
+        completed_at: '2026-03-08T10:04:15.000Z',
+      },
+    ]);
+
+    let callCount = 0;
+    db.query = async (sql) => {
+      callCount += 1;
+      if (callCount === 1) {
+        assert.match(sql, /FROM case_event_ledger/);
+        return {
+          rows: [
+            {
+              id: 1,
+              case_id: 25169,
+              event: 'CASE_ESCALATED',
+              transition_key: '25169:event:1',
+              context: { run_id: 55 },
+              created_at: '2026-03-08T10:00:00.000Z',
+            },
+          ],
+        };
+      }
+      if (callCount === 2) {
+        assert.match(sql, /FROM activity_log/);
+        return {
+          rows: [
+            {
+              id: 2,
+              case_id: 25169,
+              event_type: 'agent_run_step',
+              description: 'Run step: draft_response',
+              metadata: { run_id: 55, step: 'draft_response' },
+              actor_type: 'system',
+              source_service: 'trigger.dev',
+              created_at: '2026-03-08T10:03:00.000Z',
+            },
+          ],
+        };
+      }
+      assert.match(sql, /FROM error_events/);
+      return {
+        rows: [
+          {
+            id: 3,
+            case_id: 25169,
+            source_service: 'notion_service',
+            operation: 'sync_status',
+            error_message: 'Notion unavailable',
+            error_code: 'E_NOTION',
+            created_at: '2026-03-08T10:04:30.000Z',
+          },
+        ],
+      };
+    };
+
+    const app = express();
+    app.use('/api/requests', caseManagementRouter);
+
+    const response = await supertest(app).get('/api/requests/25169/agent-log?limit=10');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.count, 6);
+    assert.strictEqual(response.body.summary.by_kind.provider_event, 1);
+    assert.strictEqual(response.body.summary.by_kind.portal, 1);
+    assert.strictEqual(response.body.summary.by_kind.error, 1);
+    assert.deepStrictEqual(
+      response.body.entries.map((entry) => entry.kind),
+      ['provider_event', 'error', 'decision', 'portal', 'agent_step', 'state_transition']
+    );
+    assert.strictEqual(response.body.entries[0].payload.raw_payload.token, '[redacted]');
+    assert.match(response.body.entries[2].summary, /action SEND_CLARIFICATION/);
+  });
+
+  it('filters the agent log by kind', async function () {
+    db.getCaseById = async () => ({ id: 25169, case_name: 'QA Case' });
+    db.getPortalSubmissions = async () => ([{ id: 44, case_id: 25169, status: 'failed', started_at: '2026-03-08T10:04:00.000Z' }]);
+    db.getCaseEmailEvents = async () => ([{ id: 700, case_id: 25169, event_type: 'delivered', event_timestamp: '2026-03-08T10:05:00.000Z' }]);
+    db.getDecisionTracesByCaseId = async () => ([{ id: 4, case_id: 25169, created_at: '2026-03-08T10:04:15.000Z', node_trace: {}, classification: {}, router_output: {}, gate_decision: {}, started_at: '2026-03-08T10:04:10.000Z', completed_at: '2026-03-08T10:04:15.000Z' }]);
+
+    let callCount = 0;
+    db.query = async () => {
+      callCount += 1;
+      if (callCount === 1) return { rows: [{ id: 1, case_id: 25169, event: 'CASE_ESCALATED', created_at: '2026-03-08T10:00:00.000Z' }] };
+      if (callCount === 2) return { rows: [{ id: 2, case_id: 25169, event_type: 'agent_run_step', metadata: { step: 'draft_response' }, created_at: '2026-03-08T10:03:00.000Z' }] };
+      return { rows: [{ id: 3, case_id: 25169, source_service: 'notion_service', error_message: 'Notion unavailable', created_at: '2026-03-08T10:04:30.000Z' }] };
+    };
+
+    const app = express();
+    app.use('/api/requests', caseManagementRouter);
+
+    const response = await supertest(app).get('/api/requests/25169/agent-log?kind=error,provider_event');
+
+    assert.strictEqual(response.status, 200);
+    assert.deepStrictEqual(response.body.entries.map((entry) => entry.kind), ['provider_event', 'error']);
     assert.strictEqual(response.body.summary.total, 2);
   });
 
