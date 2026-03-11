@@ -320,4 +320,11 @@ City : Princeton
     assert.strictEqual(result.shouldBlockAutoDispatch, true);
     assert.strictEqual(result.reasonCode, 'MULTI_AGENCY_UNSCOPED');
   });
+
+  it('treats ampersand-joined multi-agency identities as compound', function () {
+    assert.strictEqual(
+      hasCompoundAgencyIdentity('GBI Cold Case Unit & Athens-Clarke County Police Department (ACCPD)'),
+      true
+    );
+  });
 });

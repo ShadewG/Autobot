@@ -443,13 +443,13 @@ function hasCompoundAgencyIdentity(value = '') {
 
   if (!normalized) return false;
   const segments = normalized
-    .split(/[;|]/)
+    .split(/[;|]|\s+&\s+/)
     .map((segment) => segment.trim())
     .filter(Boolean);
 
   const candidateText = segments.length > 1 ? segments : normalized.split(/\s*,\s*/).filter(Boolean);
   const agencyLikeParts = candidateText.filter((segment) =>
-    /(police department|sheriff(?:'s)? office|district attorney|prosecutor|coroner|state police|highway patrol|clerk of courts|fire and ems)/i.test(segment)
+    /(police department|sheriff(?:'s)? office|district attorney|prosecutor|coroner|state police|highway patrol|clerk of courts|fire and ems|bureau|unit|division|branch|task force)/i.test(segment)
   );
 
   return agencyLikeParts.length >= 2;
