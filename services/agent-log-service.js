@@ -364,7 +364,7 @@ async function buildGlobalAgentLog(db, options = {}) {
       params
     ),
     db.query(
-      `SELECT id, case_id, proposal_id, message_id, run_id, classification, router_output, node_trace, gate_decision, duration_ms, started_at, completed_at, created_at
+      `SELECT id, case_id, message_id, run_id, classification, router_output, node_trace, gate_decision, duration_ms, started_at, completed_at, created_at
        FROM decision_traces
        ${caseClause}
        ORDER BY COALESCE(completed_at, started_at, created_at) DESC, id DESC
