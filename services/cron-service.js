@@ -88,7 +88,6 @@ class CronService {
                 console.log(`[cron-lock] Skipped ${jobName} — already claimed for this tick`);
                 return null;
             }
-            console.log(`[cron-lock] Claimed ${tickKey}`);
             try {
                 return await fn();
             } finally {
@@ -135,11 +134,8 @@ class CronService {
                     const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
                     if (cases.length > 0) {
-                        const invocationId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                        console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing) [${invocationId}]`);
-                        await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`, {
-                            invocation_id: invocationId
-                        });
+                        console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing)`);
+                        await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
                     }
                 } catch (error) {
                     await errorTrackingService.captureException(error, {
