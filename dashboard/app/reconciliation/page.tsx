@@ -200,8 +200,8 @@ const SECTIONS: SectionConfig[] = [
   },
   {
     key: "portal_missing_request_number",
-    title: "Portal Missing Request Number",
-    description: "Portal cases without confirmation numbers",
+    title: "Portal Request Number Gaps",
+    description: "Completed portal submissions where a captured confirmation number was not written back",
     icon: <Globe className="h-4 w-4" />,
     getCount: (r) => r.portal_missing_request_number.count,
   },
@@ -214,8 +214,8 @@ const SECTIONS: SectionConfig[] = [
   },
   {
     key: "stale_proposals",
-    title: "Stale Proposals",
-    description: "Proposals pending approval for over 48 hours",
+    title: "Review Backlog",
+    description: "Human-review proposals pending approval for over 48 hours",
     icon: <Clock className="h-4 w-4" />,
     getCount: (r) => r.stale_proposals,
   },

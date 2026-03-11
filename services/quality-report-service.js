@@ -510,14 +510,23 @@ async function buildReconciliationReport() {
             FROM portal_tasks pt
             WHERE pt.case_id = c.id
               AND pt.status = 'COMPLETED'
+              AND NULLIF(BTRIM(COALESCE(pt.confirmation_number, '')), '') IS NOT NULL
           )
           OR EXISTS (
             SELECT 1
             FROM portal_submissions ps
             WHERE ps.case_id = c.id
               AND ps.status = 'completed'
+              AND COALESCE(ps.extracted_data::text, '') ~* '(confirmation_number|request_number)'
           )
-          OR COALESCE(c.last_portal_status, '') ILIKE '%completed%'
+          OR EXISTS (
+            SELECT 1
+            FROM activity_log al
+            WHERE al.case_id = c.id
+              AND al.event_type = 'portal_submission'
+              AND COALESCE(al.metadata::text, '') ~* 'confirmation_number'
+              AND COALESCE(al.metadata->>'confirmation_number', '') <> ''
+          )
         )
       ORDER BY c.created_at DESC
       LIMIT 20
