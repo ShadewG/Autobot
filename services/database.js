@@ -1986,12 +1986,12 @@ class DatabaseService {
     // Users
     // =========================================================================
 
-    async createUser({ name, email_handle }) {
+    async createUser({ name, email_handle, email = null }) {
         const result = await this.query(
-            `INSERT INTO users (name, email_handle)
-             VALUES ($1, $2)
+            `INSERT INTO users (name, email_handle, email)
+             VALUES ($1, $2, $3)
              RETURNING *`,
-            [name, email_handle]
+            [name, email_handle, email]
         );
         return result.rows[0];
     }
@@ -2021,6 +2021,61 @@ class DatabaseService {
 
     async getUserByEmail(email) {
         const result = await this.query('SELECT * FROM users WHERE email = $1', [email]);
+        return result.rows[0];
+    }
+
+    async getUserIdentityLink(provider, providerUserId) {
+        const result = await this.query(
+            'SELECT * FROM user_identity_links WHERE provider = $1 AND provider_user_id = $2 LIMIT 1',
+            [provider, providerUserId]
+        );
+        return result.rows[0];
+    }
+
+    async getUserIdentityLinkByDiscord(provider, discordId) {
+        if (!discordId) return null;
+        const result = await this.query(
+            'SELECT * FROM user_identity_links WHERE provider = $1 AND discord_id = $2 LIMIT 1',
+            [provider, discordId]
+        );
+        return result.rows[0];
+    }
+
+    async listUserIdentityLinksForUser(userId, provider = null) {
+        const result = provider
+            ? await this.query(
+                'SELECT * FROM user_identity_links WHERE user_id = $1 AND provider = $2 ORDER BY created_at ASC',
+                [userId, provider]
+            )
+            : await this.query(
+                'SELECT * FROM user_identity_links WHERE user_id = $1 ORDER BY created_at ASC',
+                [userId]
+            );
+        return result.rows;
+    }
+
+    async upsertUserIdentityLink({
+        user_id,
+        provider,
+        provider_user_id,
+        provider_email = null,
+        provider_username = null,
+        discord_id = null,
+    }) {
+        const result = await this.query(
+            `INSERT INTO user_identity_links (
+                user_id, provider, provider_user_id, provider_email, provider_username, discord_id
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (provider, provider_user_id)
+             DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                provider_email = EXCLUDED.provider_email,
+                provider_username = EXCLUDED.provider_username,
+                discord_id = EXCLUDED.discord_id,
+                updated_at = CURRENT_TIMESTAMP
+             RETURNING *`,
+            [user_id, provider, provider_user_id, provider_email, provider_username, discord_id]
+        );
         return result.rows[0];
     }
 
