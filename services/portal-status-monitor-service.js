@@ -193,6 +193,12 @@ async function checkCasePortalStatus(caseData, deps = {}) {
     const classification = await applyPortalStatusOutcome(caseData, result, { db: database });
     return { success: true, classification, result };
   } catch (error) {
+    // HTTP 402 = billing/quota exceeded — don't retry, just log once and skip
+    const statusCode = error?.response?.status || error?.status;
+    if (statusCode === 402) {
+      console.warn(`[portal-monitor] Skyvern 402 (billing) for case ${caseData.id} — skipping`);
+      return { success: false, skipped: true, reason: 'billing_quota_exceeded' };
+    }
     await errorTrackingService.captureException(error, {
       sourceService: 'portal_status_monitor',
       operation: 'check_case_portal_status',
