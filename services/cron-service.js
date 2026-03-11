@@ -70,19 +70,32 @@ class CronService {
      * Acquire a PostgreSQL advisory lock before running fn.
      * If another instance already holds the lock, silently skip.
      * Prevents duplicate cron execution across Railway replicas.
+     *
+     * Uses pg_try_advisory_xact_lock inside a held transaction so the lock
+     * survives Railway's connection-pooling proxy (which can reassign sessions
+     * between queries, breaking session-level advisory locks).
      */
     async runWithDbLock(lockId, fn) {
         const client = await db.pool.connect();
         try {
+            await client.query('BEGIN');
             const { rows } = await client.query(
-                'SELECT pg_try_advisory_lock($1) AS acquired', [lockId]
+                'SELECT pg_try_advisory_xact_lock($1) AS acquired', [lockId]
             );
-            if (!rows[0].acquired) return null;
+            if (!rows[0].acquired) {
+                await client.query('ROLLBACK');
+                return null;
+            }
+            // Lock is held for the lifetime of this transaction.
+            // Run fn() while keeping the transaction (and lock) open.
             try {
                 return await fn();
             } finally {
-                await client.query('SELECT pg_advisory_unlock($1)', [lockId]);
+                await client.query('COMMIT');
             }
+        } catch (err) {
+            try { await client.query('ROLLBACK'); } catch (_) {}
+            throw err;
         } finally {
             client.release();
         }
