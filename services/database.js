@@ -227,12 +227,12 @@ class DatabaseService {
                 if (Number.isFinite(configured) && configured > 0) return configured;
                 return process.env.NODE_ENV === 'production' ? 20000 : 10000;
             })(),
-            // Explicit pool size — keep local/test usage conservative so many parallel
-            // helper processes don't exhaust the shared Postgres connection budget.
+            // Pool size — production needs enough for 21 cron jobs + API requests.
+            // Railway Postgres allows 100 connections; 8 leaves plenty of headroom.
             max: (() => {
                 const configured = parseInt(process.env.PG_POOL_MAX, 10);
                 if (Number.isFinite(configured) && configured > 0) return configured;
-                return process.env.NODE_ENV === 'production' ? 4 : 3;
+                return process.env.NODE_ENV === 'production' ? 8 : 3;
             })(),
             allowExitOnIdle: process.env.NODE_ENV === 'production' ? false : true,
         };

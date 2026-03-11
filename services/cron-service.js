@@ -151,8 +151,8 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Operational alerting: check key failure/supersede counters in a rolling 1h window.
-        // Staggered to minute 3,18,33,48 to avoid pile-up with other */5 and */15 jobs
-        this.jobs.operationalAlerts = new CronJob('3,18,33,48 * * * *', async () => {
+        // Staggered to minute 6,21,36,51 to avoid collision with triggerDispatchRecovery
+        this.jobs.operationalAlerts = new CronJob('6,21,36,51 * * * *', async () => {
             try {
                 await this.runWithoutOverlap('operational_alert_check', () => this.checkOperationalAlerts());
             } catch (error) {

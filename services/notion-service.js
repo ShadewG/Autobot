@@ -1038,7 +1038,8 @@ class NotionService {
             }
 
             if (!statusPropertyInfo) {
-                throw new Error(`No status property found on Notion database ${this.databaseId}`);
+                console.warn(`No status property found on Notion database ${this.databaseId} — skipping query (Notion API may be down)`);
+                return [];
             }
 
             const filterKey = statusPropertyInfo.type === 'status' ? 'status' : 'select';
@@ -3201,6 +3202,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         if (this.databaseSchema && (now - this.databaseSchemaFetchedAt) < 5 * 60 * 1000) {
             return this.databaseSchema;
         }
+        // Cache failures for 60s to avoid hammering the Notion API when it's down
+        if (this._schemaFetchFailedAt && (now - this._schemaFetchFailedAt) < 60 * 1000) {
+            return null;
+        }
 
         try {
             const database = await this.notion.databases.retrieve({
@@ -3208,8 +3213,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             });
             this.databaseSchema = database.properties || {};
             this.databaseSchemaFetchedAt = now;
+            this._schemaFetchFailedAt = 0;
             return this.databaseSchema;
         } catch (error) {
+            this._schemaFetchFailedAt = now;
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'get_database_schema_properties',
