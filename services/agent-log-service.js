@@ -210,6 +210,36 @@ function normalizeDecisionTrace(row) {
   };
 }
 
+function buildSummary(entries) {
+  return entries.reduce((acc, entry) => {
+    acc.total += 1;
+    acc.by_source[entry.source] = (acc.by_source[entry.source] || 0) + 1;
+    acc.by_kind[entry.kind] = (acc.by_kind[entry.kind] || 0) + 1;
+    if (entry.severity && entry.severity !== 'info') {
+      acc.by_severity[entry.severity] = (acc.by_severity[entry.severity] || 0) + 1;
+    }
+    return acc;
+  }, { total: 0, by_source: {}, by_kind: {}, by_severity: {} });
+}
+
+function finalizeEntries(allEntries, { limit, sourceFilters, kindFilters, before, after }) {
+  const filtered = allEntries
+    .filter((row) => row.timestamp)
+    .filter((row) => sourceFilters.size === 0 || sourceFilters.has(row.source))
+    .filter((row) => kindFilters.size === 0 || kindFilters.has(row.kind))
+    .filter((row) => !before || new Date(row.timestamp).getTime() < before.getTime())
+    .filter((row) => !after || new Date(row.timestamp).getTime() > after.getTime())
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  const entries = filtered.slice(0, limit);
+  return {
+    count: entries.length,
+    summary: buildSummary(entries),
+    next_before: entries.length === limit ? entries[entries.length - 1]?.timestamp || null : null,
+    entries,
+  };
+}
+
 async function buildCaseAgentLog(db, caseId, options = {}) {
   const limit = Math.max(1, Math.min(parseInt(options.limit, 10) || 100, 300));
   const sourceFilters = new Set(parseCsvParam(options.source).map((value) => value.toLowerCase()));
@@ -254,40 +284,128 @@ async function buildCaseAgentLog(db, caseId, options = {}) {
     ...emailEvents.map(normalizeEmailEvent),
     ...errorEventsResult.rows.map(normalizeErrorEvent),
     ...decisionTraces.map(normalizeDecisionTrace),
-  ]
-    .filter((row) => row.timestamp)
-    .filter((row) => sourceFilters.size === 0 || sourceFilters.has(row.source))
-    .filter((row) => kindFilters.size === 0 || kindFilters.has(row.kind))
-    .filter((row) => !before || new Date(row.timestamp).getTime() < before.getTime())
-    .filter((row) => !after || new Date(row.timestamp).getTime() > after.getTime())
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  ];
 
-  const entries = allEntries.slice(0, limit);
-  const summary = entries.reduce((acc, entry) => {
-    acc.total += 1;
-    acc.by_source[entry.source] = (acc.by_source[entry.source] || 0) + 1;
-    acc.by_kind[entry.kind] = (acc.by_kind[entry.kind] || 0) + 1;
-    if (entry.severity && entry.severity !== 'info') {
-      acc.by_severity[entry.severity] = (acc.by_severity[entry.severity] || 0) + 1;
-    }
-    return acc;
-  }, { total: 0, by_source: {}, by_kind: {}, by_severity: {} });
+  const result = finalizeEntries(allEntries, {
+    limit,
+    sourceFilters,
+    kindFilters,
+    before,
+    after,
+  });
 
   return {
     case_id: caseId,
-    count: entries.length,
-    summary,
+    count: result.count,
+    summary: result.summary,
     filters: {
       sources: Array.from(sourceFilters),
       kinds: Array.from(kindFilters),
       before: before ? before.toISOString() : null,
       after: after ? after.toISOString() : null,
     },
-    next_before: entries.length === limit ? entries[entries.length - 1]?.timestamp || null : null,
-    entries,
+    next_before: result.next_before,
+    entries: result.entries,
+  };
+}
+
+async function buildGlobalAgentLog(db, options = {}) {
+  const limit = Math.max(1, Math.min(parseInt(options.limit, 10) || 100, 300));
+  const sourceFilters = new Set(parseCsvParam(options.source).map((value) => value.toLowerCase()));
+  const kindFilters = new Set(parseCsvParam(options.kind).map((value) => value.toLowerCase()));
+  const before = parseIsoTimestamp(options.before);
+  const after = parseIsoTimestamp(options.after);
+  const caseId = Number.isFinite(parseInt(options.caseId, 10)) ? parseInt(options.caseId, 10) : null;
+
+  const caseClause = caseId ? 'WHERE case_id = $1' : '';
+  const params = caseId ? [caseId, limit] : [limit];
+  const limitIndex = caseId ? 2 : 1;
+
+  const [ledgerResult, activityResult, portalResult, emailResult, errorEventsResult, decisionTraceResult] = await Promise.all([
+    db.query(
+      `SELECT id, case_id, event, transition_key, context, mutations_applied, projection, created_at
+       FROM case_event_ledger
+       ${caseClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+    db.query(
+      `SELECT id, case_id, event_type, description, metadata, actor_type, actor_id, source_service, created_at
+       FROM activity_log
+       ${caseClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+    db.query(
+      `SELECT *
+       FROM portal_submissions
+       ${caseClause}
+       ORDER BY COALESCE(started_at, created_at, completed_at) DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+    db.query(
+      `SELECT *
+       FROM email_events
+       ${caseClause}
+       ORDER BY COALESCE(event_timestamp, created_at) DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+    db.query(
+      `SELECT id, case_id, source_service, operation, error_name, error_code, error_message, retryable, retry_attempt, metadata, run_id, message_id, proposal_id, created_at
+       FROM error_events
+       ${caseClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+    db.query(
+      `SELECT id, case_id, proposal_id, message_id, run_id, classification, router_output, node_trace, gate_decision, duration_ms, started_at, completed_at, created_at
+       FROM decision_traces
+       ${caseClause}
+       ORDER BY COALESCE(completed_at, started_at, created_at) DESC, id DESC
+       LIMIT $${limitIndex}`,
+      params
+    ),
+  ]);
+
+  const allEntries = [
+    ...ledgerResult.rows.map(normalizeCaseEvent),
+    ...activityResult.rows.map(normalizeActivity),
+    ...portalResult.rows.map(normalizePortalSubmission),
+    ...emailResult.rows.map(normalizeEmailEvent),
+    ...errorEventsResult.rows.map(normalizeErrorEvent),
+    ...decisionTraceResult.rows.map(normalizeDecisionTrace),
+  ];
+
+  const result = finalizeEntries(allEntries, {
+    limit,
+    sourceFilters,
+    kindFilters,
+    before,
+    after,
+  });
+
+  return {
+    case_id: caseId,
+    count: result.count,
+    summary: result.summary,
+    filters: {
+      case_id: caseId,
+      sources: Array.from(sourceFilters),
+      kinds: Array.from(kindFilters),
+      before: before ? before.toISOString() : null,
+      after: after ? after.toISOString() : null,
+    },
+    next_before: result.next_before,
+    entries: result.entries,
   };
 }
 
 module.exports = {
   buildCaseAgentLog,
+  buildGlobalAgentLog,
 };

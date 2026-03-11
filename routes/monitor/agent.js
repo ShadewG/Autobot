@@ -1,10 +1,34 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const logger = require('../../services/logger');
 const {
     db,
     queueInboundRunForMessage
 } = require('./_helpers');
+const { buildGlobalAgentLog } = require('../../services/agent-log-service');
+
+/**
+ * GET /api/monitor/agent-log
+ * Return a normalized global agent trace stream across cases.
+ */
+router.get('/agent-log', async (req, res) => {
+    try {
+        const result = await buildGlobalAgentLog(db, {
+            limit: req.query.limit,
+            source: req.query.source,
+            kind: req.query.kind,
+            before: req.query.before,
+            after: req.query.after,
+            caseId: req.query.case_id,
+        });
+
+        res.json({ success: true, ...result });
+    } catch (error) {
+        logger.error('Error fetching global agent log:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 /**
  * POST /api/monitor/trigger-inbound-run
