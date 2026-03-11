@@ -84,8 +84,10 @@ class CronService {
             );
             if (!rows[0].acquired) {
                 await client.query('ROLLBACK');
+                console.log(`[cron-lock] Skipped job (lockId=${lockId}) — another instance holds the lock`);
                 return null;
             }
+            console.log(`[cron-lock] Acquired lock ${lockId}`);
             // Lock is held for the lifetime of this transaction.
             // Run fn() while keeping the transaction (and lock) open.
             try {
