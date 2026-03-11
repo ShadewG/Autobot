@@ -30,8 +30,8 @@ const getExecutor = lazy(() => require("../../services/executor-adapter"));
 
 const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
-const MAX_PORTAL_RUNS_PER_DAY = 3;
-const MAX_PORTAL_RUNS_TOTAL = 8;
+const MAX_PORTAL_RUNS_PER_DAY = 2;
+const MAX_PORTAL_RUNS_TOTAL = 2;
 const STALE_CREDENTIAL_DAYS = 30;
 
 function inferAgencyType(agencyName: any): string {

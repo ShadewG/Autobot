@@ -390,6 +390,11 @@ class DatabaseService {
         return sanitized;
     }
 
+    async _getCurrentCaseRow(caseId) {
+        const result = await this.query('SELECT * FROM cases WHERE id = $1', [caseId]);
+        return result.rows[0] || null;
+    }
+
     _normalizeProposalAuditFields(updates = {}) {
         if (!updates || typeof updates !== 'object') return {};
 
@@ -825,17 +830,22 @@ class DatabaseService {
 
     async updateCaseStatus(caseId, status, additionalFields = {}) {
         const sanitizedFields = this._stripLegacyCaseMutationFields(additionalFields || {});
-        const { __allowLegacyFromTrigger = false, __source = null, ...effectiveFields } = sanitizedFields;
+        const {
+            __allowLegacyFromTrigger = false,
+            __allowRestoreFromBugged = false,
+            __source = null,
+            ...effectiveFields
+        } = sanitizedFields;
         if (__source !== 'case_runtime' && this._isTriggerCallsite() && !__allowLegacyFromTrigger) {
             this._assertNoLegacyCaseMutation('updateCaseStatus', { caseId, status });
         }
 
         // Guard: bugged cases are frozen — only explicit un-bugging can change status
         if (status !== 'bugged') {
-            const currentCase = await this.query('SELECT status FROM cases WHERE id = $1', [caseId]);
-            if (currentCase.rows[0]?.status === 'bugged') {
+            const currentCase = await this._getCurrentCaseRow(caseId);
+            if (currentCase?.status === 'bugged' && !__allowRestoreFromBugged) {
                 console.log(`[updateCaseStatus] Blocked status change to '${status}' for bugged case ${caseId}`);
-                return { rows: [currentCase.rows[0]] };
+                return currentCase;
             }
         }
 
@@ -1049,11 +1059,20 @@ class DatabaseService {
 
     async updateCase(caseId, updates = {}) {
         updates = this._stripLegacyCaseMutationFields(updates);
-        if (!updates || Object.keys(updates).length === 0) {
+        const { __allowRestoreFromBugged = false, ...effectiveUpdates } = updates || {};
+        if (!effectiveUpdates || Object.keys(effectiveUpdates).length === 0) {
             return await this.getCaseById(caseId);
         }
 
-        const entries = Object.entries(updates).filter(([key, value]) => value !== undefined && key !== 'updated_at');
+        if (effectiveUpdates.status !== undefined && effectiveUpdates.status !== 'bugged') {
+            const currentCase = await this._getCurrentCaseRow(caseId);
+            if (currentCase?.status === 'bugged' && !__allowRestoreFromBugged) {
+                console.log(`[updateCase] Blocked status change to '${effectiveUpdates.status}' for bugged case ${caseId}`);
+                return currentCase;
+            }
+        }
+
+        const entries = Object.entries(effectiveUpdates).filter(([key, value]) => value !== undefined && key !== 'updated_at');
         if (entries.length === 0) {
             return await this.getCaseById(caseId);
         }
@@ -1065,8 +1084,8 @@ class DatabaseService {
         const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
         const updated = result.rows[0];
-        if (updated && updates.status && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(updates.status)) {
-            const preserveInboundProposals = CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS.includes(updates.status);
+        if (updated && effectiveUpdates.status && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(effectiveUpdates.status)) {
+            const preserveInboundProposals = CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS.includes(effectiveUpdates.status);
             await this.query(
                 `UPDATE proposals
                  SET status = 'DISMISSED',
@@ -1078,10 +1097,10 @@ class DatabaseService {
                  WHERE case_id = $1
                    AND status = ANY($3::text[])
                    AND ($4::boolean = false OR trigger_message_id IS NULL)`,
-                [caseId, `case_status:${updates.status}`, ACTIVE_PROPOSAL_STATUSES, preserveInboundProposals]
+                [caseId, `case_status:${effectiveUpdates.status}`, ACTIVE_PROPOSAL_STATUSES, preserveInboundProposals]
             );
         }
-        if (updated && (updates.status || updates.requires_human != null || updates.substatus)) {
+        if (updated && (effectiveUpdates.status || effectiveUpdates.requires_human != null || effectiveUpdates.substatus)) {
             emitDataUpdate('case_update', {
                 case_id: caseId,
                 status: updated.status,
@@ -1092,7 +1111,7 @@ class DatabaseService {
         }
 
         // Sync to Notion whenever status or substatus changes
-        if (updated && (updates.status || updates.substatus || updates.last_portal_status)) {
+        if (updated && (effectiveUpdates.status || effectiveUpdates.substatus || effectiveUpdates.last_portal_status)) {
             try {
                 const notionService = require('./notion-service');
                 notionService.syncStatusToNotion(caseId).catch(err =>
@@ -1980,6 +1999,18 @@ class DatabaseService {
             [caseId, limit]
         );
         return result.rows;
+    }
+
+    async getAutomatedPortalAttemptCount(caseId) {
+        const result = await this.query(
+            `SELECT COUNT(*)::int AS cnt
+             FROM agent_runs
+             WHERE case_id = $1
+               AND trigger_type IN ('submit_portal', 'portal_submit')
+               AND status <> 'cancelled'`,
+            [caseId]
+        );
+        return result.rows[0]?.cnt || 0;
     }
 
     // =========================================================================

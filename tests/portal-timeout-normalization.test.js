@@ -168,6 +168,7 @@ describe('Portal timeout normalization', function () {
     const dbStub = {
       query: queryStub,
       createAgentRunFull: sinon.stub().resolves({ id: 3001 }),
+      getAutomatedPortalAttemptCount: sinon.stub().resolves(0),
       logActivity: sinon.stub().resolves(),
     };
     const transitionCaseRuntime = sinon.stub().resolves();
@@ -214,6 +215,81 @@ describe('Portal timeout normalization', function () {
           case_id: 25210,
           portal_task_id: 166,
           block_reason: 'missing_portal_url',
+        })
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('skips portal dispatch once a case already has two automated portal attempts', async function () {
+    const queryStub = sinon.stub();
+    queryStub.onCall(0).resolves({
+      rows: [
+        {
+          id: 219,
+          case_id: 25209,
+          instructions: 'Retry automated portal submission',
+          action_type: 'SUBMIT_PORTAL',
+          portal_url: 'https://records.example.gov/portal',
+          portal_provider: 'govqa',
+          last_portal_status: 'previous attempt failed',
+        },
+      ],
+    });
+    queryStub.onCall(1).resolves({ rowCount: 1, rows: [{ id: 219 }] });
+
+    const dbStub = {
+      query: queryStub,
+      createAgentRunFull: sinon.stub().resolves({ id: 3002 }),
+      getAutomatedPortalAttemptCount: sinon.stub().resolves(2),
+      logActivity: sinon.stub().resolves(),
+    };
+    const transitionCaseRuntime = sinon.stub().resolves();
+    const triggerTask = sinon.stub().resolves({ handle: { id: 'run_test124' } });
+
+    const { cronService, restore } = loadCronService({
+      dbStub,
+      notionStub: { syncStatusToNotion: sinon.stub().resolves() },
+      followupStub: { start: sinon.stub() },
+      stuckResponseStub: {},
+      agencySyncStub: {},
+      pdContactStub: {},
+      triggerDispatchStub: { triggerTask },
+      discordStub: { notify: sinon.stub().resolves() },
+      caseRuntimeStub: {
+        transitionCaseRuntime,
+        CaseLockContention: class CaseLockContention extends Error {},
+      },
+    });
+
+    try {
+      const result = await cronService.dispatchPendingPortalTasks();
+
+      assert.strictEqual(result, 0);
+      sinon.assert.notCalled(dbStub.createAgentRunFull);
+      sinon.assert.notCalled(triggerTask);
+      sinon.assert.calledOnce(transitionCaseRuntime);
+      sinon.assert.calledWithExactly(
+        transitionCaseRuntime,
+        25209,
+        'PORTAL_ABORTED',
+        sinon.match({
+          portalTaskId: 219,
+          pauseReason: 'PORTAL_ABORTED',
+          error: sinon.match(/portal_attempt_limit_reached/i),
+        })
+      );
+      sinon.assert.calledOnce(dbStub.logActivity);
+      sinon.assert.calledWithExactly(
+        dbStub.logActivity,
+        'portal_dispatch_skipped',
+        sinon.match(/portal attempt limit reached/i),
+        sinon.match({
+          case_id: 25209,
+          portal_task_id: 219,
+          block_reason: 'portal_attempt_limit_reached',
+          prior_attempts: 2,
         })
       );
     } finally {

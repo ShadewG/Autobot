@@ -1925,6 +1925,46 @@ class CronService {
 
         for (const pt of pending.rows) {
             try {
+                const priorPortalAttempts = await db.getAutomatedPortalAttemptCount(pt.case_id);
+                if (priorPortalAttempts >= 2) {
+                    const completionNotes = `Skipped automatic portal dispatch: portal_attempt_limit_reached (${priorPortalAttempts} prior automated attempt${priorPortalAttempts === 1 ? '' : 's'})`;
+                    await db.query(
+                        `UPDATE portal_tasks
+                         SET status = 'CANCELLED',
+                             updated_at = NOW(),
+                             completion_notes = $2
+                         WHERE id = $1
+                           AND status = 'PENDING'`,
+                        [pt.id, completionNotes]
+                    );
+                    try {
+                        await transitionCaseRuntime(pt.case_id, 'PORTAL_ABORTED', {
+                            portalTaskId: pt.id,
+                            pauseReason: 'PORTAL_ABORTED',
+                            substatus: 'Portal automation limit reached; manual review required',
+                            error: completionNotes,
+                        });
+                    } catch (transitionErr) {
+                        console.warn(`Failed to transition capped portal task ${pt.id}:`, transitionErr.message);
+                    }
+                    try {
+                        await db.logActivity(
+                            'portal_dispatch_skipped',
+                            `Portal task #${pt.id} skipped before Skyvern dispatch (portal attempt limit reached)`,
+                            {
+                                case_id: pt.case_id,
+                                portal_task_id: pt.id,
+                                portal_url: pt.portal_url || null,
+                                portal_provider: pt.portal_provider || null,
+                                block_reason: 'portal_attempt_limit_reached',
+                                prior_attempts: priorPortalAttempts,
+                                source_service: 'cron_service',
+                            }
+                        );
+                    } catch (_) {}
+                    continue;
+                }
+
                 // Claim task atomically to prevent duplicate dispatches across concurrent cron workers.
                 const claimed = await db.query(
                     `UPDATE portal_tasks

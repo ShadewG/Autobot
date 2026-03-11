@@ -32,6 +32,7 @@ const { buildApprovalDraftUpdates } = require('../services/proposal-draft-histor
 const { classifyOperatorActionError, buildOperatorActionErrorResponse } = require('../services/operator-action-errors');
 const { isSupportedPortalUrl } = require('../utils/portal-utils');
 const { buildHumanDecision } = proposalLifecycle;
+const feeWorkflowService = require('../services/fee-workflow-service');
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
   const maxAttempts = options.maxAttempts || 5;
@@ -678,7 +679,11 @@ function inferInboundLocalDecision({ classification, message, llmStubs, autopilo
       actionType: feeAmount != null && feeAmount >= 1000 ? 'NEGOTIATE_FEE' : 'ACCEPT_FEE',
       requiresHuman,
       pauseReason: requiresHuman ? 'FEE_QUOTE' : null,
-      gateOptions: requiresHuman ? ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'] : [],
+      gateOptions: requiresHuman
+        ? (feeAmount != null && feeAmount < 1000
+            ? ['APPROVE', 'ADD_TO_INVOICING', 'WAIT_FOR_GOOD_TO_PAY', 'ADJUST', 'DISMISS', 'WITHDRAW']
+            : ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'])
+        : [],
       feeAmount,
     };
   }
@@ -1745,7 +1750,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
   try {
     // Validate action
-    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW', 'MANUAL_SUBMIT', 'RETRY_RESEARCH'];
+    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW', 'MANUAL_SUBMIT', 'RETRY_RESEARCH', 'ADD_TO_INVOICING', 'WAIT_FOR_GOOD_TO_PAY'];
     if (!action || !validActions.includes(action)) {
       return res.status(400).json({
         success: false,
@@ -1859,6 +1864,16 @@ router.post('/proposals/:id/decision', async (req, res) => {
       ...(validatedAttachments.length > 0 ? { attachments: validatedAttachments } : {}),
       ...(recipientOverride ? { recipient_override: recipientOverride } : {}),
     });
+
+    const feeWorkflowResult = await feeWorkflowService.handleFeeProposalDecision(proposal, {
+      action,
+      humanDecision,
+      reason: reason || null,
+      decidedBy: req.body.decidedBy || 'human',
+    });
+    if (feeWorkflowResult.handled) {
+      return res.json(feeWorkflowResult.response);
+    }
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
     if (action === 'DISMISS') {
@@ -2350,6 +2365,13 @@ router.post('/proposals/:id/decision', async (req, res) => {
         if (!portalUrl) throw new Error(`No portal URL on case ${caseId}`);
         if (!isSupportedPortalUrl(portalUrl, caseData?.portal_provider || null, caseData?.last_portal_status || null)) {
           throw new Error(`Portal URL on case ${caseId} is not automatable`);
+        }
+        const priorPortalAttempts = await db.getAutomatedPortalAttemptCount(caseId);
+        if (priorPortalAttempts >= 2) {
+          return res.status(409).json(buildOperatorActionErrorResponse(
+            new Error(`Portal automation attempt limit reached (${priorPortalAttempts} prior automated attempts)`),
+            'PORTAL_ATTEMPT_LIMIT_REACHED'
+          ));
         }
 
         const ptResult = await db.query(
