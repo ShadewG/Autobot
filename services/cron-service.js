@@ -67,39 +67,41 @@ class CronService {
     }
 
     /**
-     * Acquire a PostgreSQL advisory lock before running fn.
-     * If another instance already holds the lock, silently skip.
-     * Prevents duplicate cron execution across Railway replicas.
+     * Prevent duplicate cron execution across Railway replicas.
      *
-     * Uses pg_try_advisory_xact_lock inside a held transaction so the lock
-     * survives Railway's connection-pooling proxy (which can reassign sessions
-     * between queries, breaking session-level advisory locks).
+     * Claims a per-job, per-minute slot by INSERTing a row with a unique key
+     * into cron_locks. If the INSERT conflicts (another instance already
+     * claimed this tick), the job silently skips. Old rows are auto-pruned.
      */
     async runWithDbLock(lockId, fn) {
-        const client = await db.pool.connect();
+        const jobName = Object.entries(CronService.LOCK_IDS).find(([, v]) => v === lockId)?.[0] || `lock_${lockId}`;
+        const tickKey = `${jobName}:${new Date().toISOString().slice(0, 16)}`; // job:YYYY-MM-DDTHH:MM
         try {
-            await client.query('BEGIN');
-            const { rows } = await client.query(
-                'SELECT pg_try_advisory_xact_lock($1) AS acquired', [lockId]
+            const result = await db.query(
+                `INSERT INTO cron_locks (lock_key, acquired_at)
+                 VALUES ($1, NOW())
+                 ON CONFLICT (lock_key) DO NOTHING
+                 RETURNING lock_key`,
+                [tickKey]
             );
-            if (!rows[0].acquired) {
-                await client.query('ROLLBACK');
-                console.log(`[cron-lock] Skipped job (lockId=${lockId}) — another instance holds the lock`);
+            if (result.rowCount === 0) {
+                console.log(`[cron-lock] Skipped ${jobName} — already claimed for this tick`);
                 return null;
             }
-            console.log(`[cron-lock] Acquired lock ${lockId}`);
-            // Lock is held for the lifetime of this transaction.
-            // Run fn() while keeping the transaction (and lock) open.
+            console.log(`[cron-lock] Claimed ${tickKey}`);
             try {
                 return await fn();
             } finally {
-                await client.query('COMMIT');
+                // Prune rows older than 1 hour (fire-and-forget)
+                db.query(`DELETE FROM cron_locks WHERE acquired_at < NOW() - INTERVAL '1 hour'`).catch(() => {});
             }
         } catch (err) {
-            try { await client.query('ROLLBACK'); } catch (_) {}
+            // If cron_locks table doesn't exist yet, fall through and run anyway
+            if (err.code === '42P01') {
+                console.warn('[cron-lock] cron_locks table missing — running without lock');
+                return await fn();
+            }
             throw err;
-        } finally {
-            client.release();
         }
     }
 
