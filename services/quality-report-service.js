@@ -1,5 +1,6 @@
 const db = require('./database');
 const { inferAgencyType } = require('./successful-examples-service');
+const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 
 const DEDUPED_EVAL_CASES_CTE = `
     WITH ranked_eval_cases AS (
@@ -66,6 +67,22 @@ function summarizeFreeText(value) {
   if (!text) return null;
   return text.length > 140 ? `${text.slice(0, 137)}...` : text;
 }
+
+const REAL_CASES_WHERE = buildRealCaseWhereClause('c');
+const NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL = `
+  NOT (
+    LOWER(COALESCE(m.from_email, '')) ~ '@(nextrequest\\.com|govqa\\.us|custhelp\\.com|mycusthelp\\.com|mycusthelp\\.net)$'
+    AND (
+      LOWER(COALESCE(m.subject, '')) LIKE '%password assistance%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%welcome to the records center%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%portal account%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%unlock your%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%unrecognized email%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%has been submitted%'
+      OR LOWER(COALESCE(m.subject, '')) LIKE '%submission confirmation%'
+    )
+  )
+`;
 
 function inferActualClassificationFromExpectedAction(expectedAction) {
   switch (String(expectedAction || '').toUpperCase()) {
@@ -395,6 +412,7 @@ async function buildReconciliationReport() {
         AND p.status IN ('PENDING_APPROVAL', 'BLOCKED')
       WHERE la.requires_action = true
         AND p.id IS NULL
+        AND ${REAL_CASES_WHERE}
         AND c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled', 'records_received', 'case_completed')
       ORDER BY la.created_at DESC
       LIMIT 20
@@ -404,29 +422,40 @@ async function buildReconciliationReport() {
       FROM messages m
       LEFT JOIN cases c ON c.id = m.case_id
       WHERE m.last_error IS NOT NULL AND m.last_error != ''
+        AND COALESCE(m.last_error, '') <> 'test data - marked processed during cleanup'
+        AND (c.id IS NULL OR ${REAL_CASES_WHERE})
         AND (c.status IS NULL OR c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled'))
       ORDER BY m.created_at DESC
       LIMIT 20
     `),
     db.query(`
-      SELECT COUNT(*) as count FROM messages
-      WHERE direction = 'inbound' AND case_id IS NULL
+      SELECT COUNT(*) as count
+      FROM messages m
+      LEFT JOIN cases c ON c.id = m.case_id
+      WHERE direction = 'inbound' AND m.case_id IS NULL
         AND processed_at IS NULL
         AND (metadata->>'source' IS NULL)
+        AND ${NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL}
     `),
     db.query(`
-      SELECT COUNT(*) as count FROM proposals
-      WHERE status = 'PENDING_APPROVAL'
-        AND created_at < NOW() - INTERVAL '48 hours'
+      SELECT COUNT(*) as count
+      FROM proposals p
+      JOIN cases c ON c.id = p.case_id
+      WHERE p.status = 'PENDING_APPROVAL'
+        AND ${REAL_CASES_WHERE}
+        AND p.created_at < NOW() - INTERVAL '48 hours'
     `),
     db.query(`
       SELECT m.id as message_id, m.case_id, m.from_email, m.subject, m.created_at
       FROM messages m
       LEFT JOIN response_analysis ra ON ra.message_id = m.id
+      JOIN cases c ON c.id = m.case_id
       WHERE m.direction = 'inbound'
         AND m.case_id IS NOT NULL
         AND m.processed_at IS NULL
         AND ra.id IS NULL
+        AND ${REAL_CASES_WHERE}
+        AND ${NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL}
       ORDER BY m.created_at DESC
       LIMIT 20
     `),
@@ -436,6 +465,7 @@ async function buildReconciliationReport() {
       FROM cases c
       WHERE c.portal_url IS NOT NULL
         AND c.portal_url != ''
+        AND ${REAL_CASES_WHERE}
         AND (c.portal_request_number IS NULL OR c.portal_request_number = '')
         AND c.status IN ('sent', 'awaiting_response', 'portal_in_progress')
       ORDER BY c.created_at DESC
@@ -444,9 +474,11 @@ async function buildReconciliationReport() {
     db.query(`
       SELECT ar.id as run_id, ar.case_id, ar.trigger_type, ar.status, ar.started_at
       FROM agent_runs ar
+      JOIN cases c ON c.id = ar.case_id
       LEFT JOIN decision_traces dt ON dt.run_id = ar.id
       WHERE ar.started_at > NOW() - INTERVAL '7 days'
         AND ar.status IN ('completed', 'failed')
+        AND ${REAL_CASES_WHERE}
         AND dt.id IS NULL
       ORDER BY ar.started_at DESC
       LIMIT 20
@@ -470,6 +502,7 @@ async function buildReconciliationReport() {
       SELECT c.id as case_id, c.agency_name, c.state, c.status, c.pause_reason, c.updated_at
       FROM cases c
       WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+        AND ${REAL_CASES_WHERE}
         AND NOT EXISTS (
             SELECT 1 FROM proposals p WHERE p.case_id = c.id
             AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
@@ -503,6 +536,7 @@ async function buildReconciliationReport() {
       WHERE m.direction = 'inbound'
         AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
         AND m.case_id IS NULL
+        AND ${NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL}
         AND (m.thread_id IS NULL OR NOT EXISTS (
           SELECT 1 FROM email_threads t
           WHERE t.id = m.thread_id
@@ -529,6 +563,7 @@ async function buildReconciliationReport() {
       WHERE m.direction = 'inbound'
         AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
         AND COALESCE(NULLIF(m.normalized_body_text, ''), '') = ''
+        AND ${NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL}
         AND (
           COALESCE(NULLIF(m.body_text, ''), NULLIF(m.body_html, '')) IS NOT NULL
           OR COALESCE(m.attachment_count, 0) > 0
