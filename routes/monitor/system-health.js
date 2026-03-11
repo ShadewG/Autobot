@@ -3,6 +3,7 @@ const router = express.Router();
 const { db } = require('./_helpers');
 const { resolveReviewState, resolveControlState } = require('../requests/_helpers');
 const { evaluateImportAutoDispatchSafety } = require('../../utils/request-normalization');
+const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 
 const STUCK_CASES_CANDIDATE_SQL = `
     SELECT c.id, c.notion_page_id, c.agency_name, c.agency_email, c.portal_url, c.state, c.status, c.pause_reason, c.substatus,
@@ -111,9 +112,9 @@ router.get('/system-health', async (req, res) => {
             db.query(`
                 SELECT COUNT(*)::int AS count FROM proposals p
                 JOIN cases c ON c.id = p.case_id
-                WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                WHERE p.status = 'PENDING_APPROVAL'
                   AND p.created_at < NOW() - INTERVAL '48 hours'
-                  AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+                  AND ${buildRealCaseWhereClause('c')}
             `),
 
             // Overdue deadlines: cases past their statutory deadline
@@ -244,9 +245,9 @@ router.get('/system-health/details', async (req, res) => {
                    c.agency_name, c.state, c.status as case_status, c.pause_reason
             FROM proposals p
             JOIN cases c ON c.id = p.case_id
-            WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+            WHERE p.status = 'PENDING_APPROVAL'
               AND p.created_at < NOW() - INTERVAL '48 hours'
-              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+              AND ${buildRealCaseWhereClause('c')}
             ORDER BY p.created_at ASC LIMIT 100`,
         overdue_deadlines: `
             SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason,

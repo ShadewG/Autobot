@@ -123,4 +123,26 @@ describe('System health routes', function () {
     assert.strictEqual(response.body.count, 1);
     assert.strictEqual(response.body.items[0].message_id, 9001);
   });
+
+  it('uses real-case filtering for stale proposals and excludes blocked proposals', async function () {
+    const seenSql = [];
+    sinon.stub(db, 'query').callsFake(async (sql) => {
+      seenSql.push(String(sql));
+      return { rows: [{ count: 0 }] };
+    });
+
+    const app = express();
+    app.use('/api/monitor', router);
+
+    const response = await supertest(app).get('/api/monitor/system-health');
+
+    assert.strictEqual(response.status, 200);
+    const staleSql = seenSql.find((sql) => sql.includes('FROM proposals p') && sql.includes('created_at < NOW() - INTERVAL \'48 hours\''));
+    assert.ok(staleSql, 'expected stale proposal query to run');
+    assert.ok(staleSql.includes("p.status = 'PENDING_APPROVAL'"));
+    assert.ok(!staleSql.includes("p.status IN ('PENDING_APPROVAL', 'BLOCKED')"));
+    assert.ok(staleSql.includes('shadewofficial'));
+    assert.ok(staleSql.includes('@matcher.com'));
+    assert.ok(staleSql.includes('test@agency.gov'));
+  });
 });
