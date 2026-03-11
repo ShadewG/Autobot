@@ -6,6 +6,11 @@ const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 const { notify } = require('./event-bus');
 const pdfFormService = require('./pdf-form-service');
+const {
+    logExternalCallStarted,
+    logExternalCallCompleted,
+    logExternalCallFailed,
+} = require('./agent-log-events');
 
 /**
  * Portal Agent using Skyvern AI
@@ -63,7 +68,8 @@ class PortalAgentServiceSkyvern {
                 portalUrl,
                 navigationGoal,
                 navigationPayload,
-                maxSteps
+                maxSteps,
+                caseId: caseData.id || null,
             });
 
             if (finalTask.status !== 'completed') {
@@ -208,30 +214,81 @@ class PortalAgentServiceSkyvern {
         return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     }
 
-    async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps, maxPolls: maxPollsOverride }) {
+    async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps, maxPolls: maxPollsOverride, caseId = null }) {
         console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
         console.log(`⏳ Creating task...\n`);
 
         // Email address that receives verification codes
         const totpIdentifier = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
 
-        const response = await axios.post(
-            `${this.baseUrl}/tasks`,
-            {
+        const endpoint = `${this.baseUrl}/tasks`;
+        const startedAt = Date.now();
+        await logExternalCallStarted(database, {
+            caseId,
+            sourceService: 'portal_agent_service_skyvern',
+            provider: 'skyvern',
+            operation: 'create_task',
+            endpoint,
+            method: 'POST',
+            requestSummary: {
                 url: portalUrl,
-                navigation_goal: navigationGoal,
-                navigation_payload: navigationPayload,
                 max_steps_override: maxSteps,
-                engine: 'skyvern-2.0',
-                totp_identifier: totpIdentifier  // Enable TOTP/2FA support
             },
-            {
-                headers: {
-                    'x-api-key': this.apiKey,
-                    'Content-Type': 'application/json'
+        });
+        let response;
+        try {
+            response = await axios.post(
+                endpoint,
+                {
+                    url: portalUrl,
+                    navigation_goal: navigationGoal,
+                    navigation_payload: navigationPayload,
+                    max_steps_override: maxSteps,
+                    engine: 'skyvern-2.0',
+                    totp_identifier: totpIdentifier
+                },
+                {
+                    headers: {
+                        'x-api-key': this.apiKey,
+                        'Content-Type': 'application/json'
+                    }
                 }
-            }
-        );
+            );
+            await logExternalCallCompleted(database, {
+                caseId,
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'create_task',
+                endpoint,
+                method: 'POST',
+                durationMs: Date.now() - startedAt,
+                statusCode: response.status,
+                requestSummary: {
+                    url: portalUrl,
+                    max_steps_override: maxSteps,
+                },
+                responseSummary: {
+                    id: response.data?.task_id || response.data?.id || null,
+                    status: response.data?.status || null,
+                },
+            });
+        } catch (error) {
+            await logExternalCallFailed(database, {
+                caseId,
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'create_task',
+                endpoint,
+                method: 'POST',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    url: portalUrl,
+                    max_steps_override: maxSteps,
+                },
+                error: error?.message || String(error),
+            });
+            throw error;
+        }
 
         const task = response.data;
         console.log(`✅ Task created!`);
@@ -711,18 +768,58 @@ class PortalAgentServiceSkyvern {
      */
     async cancelWorkflowRun(workflowRunId, { timeoutMs } = {}) {
         if (!workflowRunId) return false;
+        const endpoint = `https://api.skyvern.com/v1/runs/${workflowRunId}/cancel`;
+        const startedAt = Date.now();
         try {
-            await axios.post(
-                `https://api.skyvern.com/v1/runs/${workflowRunId}/cancel`,
+            await logExternalCallStarted(database, {
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'cancel_workflow_run',
+                endpoint,
+                method: 'POST',
+                requestSummary: {
+                    run_id: workflowRunId,
+                },
+            });
+            const response = await axios.post(
+                endpoint,
                 {},
                 {
                     headers: { 'x-api-key': this.apiKey },
                     timeout: timeoutMs || 10000,
                 }
             );
+            await logExternalCallCompleted(database, {
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'cancel_workflow_run',
+                endpoint,
+                method: 'POST',
+                durationMs: Date.now() - startedAt,
+                statusCode: response.status,
+                requestSummary: {
+                    run_id: workflowRunId,
+                },
+                responseSummary: {
+                    run_id: workflowRunId,
+                    status: response.status,
+                },
+            });
             console.log(`🛑 Cancelled Skyvern run ${workflowRunId}`);
             return true;
         } catch (err) {
+            await logExternalCallFailed(database, {
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'cancel_workflow_run',
+                endpoint,
+                method: 'POST',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    run_id: workflowRunId,
+                },
+                error: err?.message || String(err),
+            });
             console.warn(`⚠️ Failed to cancel Skyvern run ${workflowRunId}: ${err.message}`);
             return false;
         }
@@ -1024,7 +1121,8 @@ class PortalAgentServiceSkyvern {
                 navigationGoal,
                 navigationPayload,
                 maxSteps: 15,
-                maxPolls: 60  // 5 minutes
+                maxPolls: 60,  // 5 minutes
+                caseId: caseData.id || null,
             });
 
             const taskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
@@ -1170,7 +1268,23 @@ class PortalAgentServiceSkyvern {
         }
         console.log('📦 Workflow payload:', JSON.stringify(safeLog, null, 2));
 
+        const workflowStartedAt = Date.now();
         try {
+            await logExternalCallStarted(database, {
+                caseId: caseData.id || null,
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'start_workflow_run',
+                endpoint: this.workflowRunUrl,
+                method: 'POST',
+                requestSummary: {
+                    workflow_id: this.workflowId,
+                    url: portalUrl,
+                },
+                metadata: {
+                    dry_run: !!dryRun,
+                },
+            });
             const response = await axios.post(
                 this.workflowRunUrl,
                 requestBody,
@@ -1182,6 +1296,27 @@ class PortalAgentServiceSkyvern {
                     timeout: this.workflowHttpTimeout
                 }
             );
+            await logExternalCallCompleted(database, {
+                caseId: caseData.id || null,
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'start_workflow_run',
+                endpoint: this.workflowRunUrl,
+                method: 'POST',
+                durationMs: Date.now() - workflowStartedAt,
+                statusCode: response.status,
+                requestSummary: {
+                    workflow_id: this.workflowId,
+                    url: portalUrl,
+                },
+                responseSummary: {
+                    workflow_run_id: response.data?.workflow_run_id || response.data?.run_id || response.data?.id || null,
+                    status: response.data?.status || null,
+                },
+                metadata: {
+                    dry_run: !!dryRun,
+                },
+            });
 
             const workflowResponse = response.data || {};
             const workflowRunId = workflowResponse.workflow_run_id || workflowResponse.run_id || workflowResponse.id || runId;
@@ -1625,6 +1760,23 @@ class PortalAgentServiceSkyvern {
             };
         } catch (error) {
             const message = String(error.response?.data?.message || error.response?.data?.error || error.message || 'Unknown crash');
+            await logExternalCallFailed(database, {
+                caseId: caseData.id || null,
+                sourceService: 'portal_agent_service_skyvern',
+                provider: 'skyvern',
+                operation: 'start_workflow_run',
+                endpoint: this.workflowRunUrl,
+                method: 'POST',
+                durationMs: Date.now() - workflowStartedAt,
+                requestSummary: {
+                    workflow_id: this.workflowId,
+                    url: portalUrl,
+                },
+                metadata: {
+                    dry_run: !!dryRun,
+                },
+                error: message,
+            });
             console.error('❌ Skyvern workflow API error:', message);
             // workflowRunLink may not be defined if error was thrown before assignment
             const safeRunLink = (typeof workflowRunLink !== 'undefined') ? workflowRunLink : null;
@@ -2529,7 +2681,8 @@ SUBMISSION STAGE OBJECTIVE:
             portalUrl,
             navigationGoal,
             navigationPayload,
-            maxSteps
+            maxSteps,
+            caseId: caseData.id || null,
         });
 
         if (finalTask.status !== 'completed') {

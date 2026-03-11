@@ -3,6 +3,11 @@ const db = require('./database');
 const aiService = require('./ai-service');
 const pdContactService = require('./pd-contact-service');
 const errorTrackingService = require('./error-tracking-service');
+const {
+    logExternalCallStarted,
+    logExternalCallCompleted,
+    logExternalCallFailed,
+} = require('./agent-log-events');
 const { normalizeAgencyEmailHint } = require('./canonical-agency');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
@@ -1026,7 +1031,19 @@ class NotionService {
      * Fetch cases from Notion database with a specific status
      */
     async fetchCasesWithStatus(status = 'Ready To Send') {
+        const startedAt = Date.now();
         try {
+            await logExternalCallStarted(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_cases_with_status',
+                endpoint: 'databases.query',
+                method: 'sdk',
+                requestSummary: {
+                    database_id: this.databaseId,
+                    status,
+                },
+            });
             const resolvedLiveStatus = await this.resolvePropertyName(this.liveStatusProperty);
             let statusPropertyName = resolvedLiveStatus;
             let statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
@@ -1198,8 +1215,37 @@ class NotionService {
                 cases.push(enrichedCase);
             }
 
+            await logExternalCallCompleted(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_cases_with_status',
+                endpoint: 'databases.query',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    database_id: this.databaseId,
+                    status,
+                },
+                responseSummary: {
+                    status: 'ok',
+                    count: cases.length,
+                },
+            });
             return cases;
         } catch (error) {
+            await logExternalCallFailed(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_cases_with_status',
+                endpoint: 'databases.query',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    database_id: this.databaseId,
+                    status,
+                },
+                error: error?.message || String(error),
+            });
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'fetch_cases_with_status',
@@ -1218,9 +1264,20 @@ class NotionService {
      * Fetch a single Notion page by ID
      */
     async fetchPageById(pageId) {
+        const startedAt = Date.now();
         try {
             // Remove hyphens if present for API call
             const cleanPageId = pageId.replace(/-/g, '');
+            await logExternalCallStarted(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_page_by_id',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                requestSummary: {
+                    page_id: cleanPageId,
+                },
+            });
 
             console.log(`Fetching Notion page: ${cleanPageId}`);
             const page = await this.notion.pages.retrieve({ page_id: cleanPageId });
@@ -1244,8 +1301,35 @@ class NotionService {
             enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
 
             enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
+            await logExternalCallCompleted(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_page_by_id',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    page_id: cleanPageId,
+                },
+                responseSummary: {
+                    id: page?.id || cleanPageId,
+                    status: 'ok',
+                },
+            });
             return enrichedCase;
         } catch (error) {
+            await logExternalCallFailed(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'fetch_page_by_id',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    page_id: pageId,
+                },
+                error: error?.message || String(error),
+            });
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'fetch_page_by_id',
@@ -2817,8 +2901,20 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
     }
 
     async _syncStatusToNotion(caseId) {
+        const startedAt = Date.now();
         let caseData = null;
         try {
+            await logExternalCallStarted(db, {
+                caseId,
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'sync_status_to_notion',
+                endpoint: 'pages.update',
+                method: 'sdk',
+                requestSummary: {
+                    case_id: caseId,
+                },
+            });
             caseData = await db.getCaseById(caseId);
             if (!caseData) {
                 console.error(`Case ${caseId} not found`);
@@ -2907,8 +3003,36 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             await this.updatePage(caseData.notion_page_id, updates);
             // Track successful outbound sync
             await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1', [caseId]);
+            await logExternalCallCompleted(db, {
+                caseId,
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'sync_status_to_notion',
+                endpoint: 'pages.update',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    case_id: caseId,
+                },
+                responseSummary: {
+                    status: 'ok',
+                },
+            });
             console.log(`Updated Notion page for case: ${caseData.case_name}`);
         } catch (error) {
+            await logExternalCallFailed(db, {
+                caseId,
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'sync_status_to_notion',
+                endpoint: 'pages.update',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    case_id: caseId,
+                },
+                error: error?.message || String(error),
+            });
             const quarantined = await this.quarantineMissingCasePage(caseData, 'sync_status_to_notion', error).catch(() => false);
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
@@ -3365,7 +3489,18 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
     }
 
     async processSinglePage(pageId) {
+        const startedAt = Date.now();
         try {
+            await logExternalCallStarted(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'process_single_page',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                requestSummary: {
+                    page_id: pageId,
+                },
+            });
             if (!hasValidNotionPageId(pageId)) {
                 throw new Error(`Invalid Notion page ID: ${pageId}`);
             }
@@ -3746,8 +3881,36 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 case_id: newCase.id
             });
 
+            await logExternalCallCompleted(db, {
+                caseId: newCase?.id || null,
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'process_single_page',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    page_id: pageId,
+                },
+                responseSummary: {
+                    id: newCase?.id || null,
+                    status: 'ok',
+                },
+            });
             return newCase;
         } catch (error) {
+            await logExternalCallFailed(db, {
+                sourceService: 'notion_service',
+                provider: 'notion',
+                operation: 'process_single_page',
+                endpoint: 'pages.retrieve',
+                method: 'sdk',
+                durationMs: Date.now() - startedAt,
+                requestSummary: {
+                    page_id: pageId,
+                },
+                error: error?.message || String(error),
+            });
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'process_single_page',

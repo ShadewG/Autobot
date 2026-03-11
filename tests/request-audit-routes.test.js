@@ -406,6 +406,21 @@ describe('Request audit/debug routes', function () {
               source_service: 'trigger.dev',
               created_at: '2026-03-08T10:03:00.000Z',
             },
+            {
+              id: 22,
+              case_id: 25169,
+              event_type: 'external_call_completed',
+              description: 'Completed openai analyze_response',
+              metadata: {
+                run_id: 55,
+                provider: 'openai',
+                operation: 'analyze_response',
+                model: 'gpt-5.2-2025-12-11',
+              },
+              actor_type: 'system',
+              source_service: 'ai_service',
+              created_at: '2026-03-08T10:03:30.000Z',
+            },
           ],
         };
       }
@@ -432,16 +447,18 @@ describe('Request audit/debug routes', function () {
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
-    assert.strictEqual(response.body.count, 6);
+    assert.strictEqual(response.body.count, 7);
     assert.strictEqual(response.body.summary.by_kind.provider_event, 1);
+    assert.strictEqual(response.body.summary.by_kind.external_call, 1);
     assert.strictEqual(response.body.summary.by_kind.portal, 1);
     assert.strictEqual(response.body.summary.by_kind.error, 1);
     assert.deepStrictEqual(
       response.body.entries.map((entry) => entry.kind),
-      ['provider_event', 'error', 'decision', 'portal', 'agent_step', 'state_transition']
+      ['provider_event', 'error', 'decision', 'portal', 'external_call', 'agent_step', 'state_transition']
     );
     assert.strictEqual(response.body.entries[0].payload.raw_payload.token, '[redacted]');
     assert.match(response.body.entries[2].summary, /action SEND_CLARIFICATION/);
+    assert.strictEqual(response.body.entries[4].payload.metadata.model, 'gpt-5.2-2025-12-11');
   });
 
   it('filters the agent log by kind', async function () {
@@ -454,18 +471,21 @@ describe('Request audit/debug routes', function () {
     db.query = async () => {
       callCount += 1;
       if (callCount === 1) return { rows: [{ id: 1, case_id: 25169, event: 'CASE_ESCALATED', created_at: '2026-03-08T10:00:00.000Z' }] };
-      if (callCount === 2) return { rows: [{ id: 2, case_id: 25169, event_type: 'agent_run_step', metadata: { step: 'draft_response' }, created_at: '2026-03-08T10:03:00.000Z' }] };
+      if (callCount === 2) return { rows: [
+        { id: 2, case_id: 25169, event_type: 'agent_run_step', metadata: { step: 'draft_response' }, created_at: '2026-03-08T10:03:00.000Z' },
+        { id: 22, case_id: 25169, event_type: 'external_call_completed', metadata: { provider: 'openai' }, created_at: '2026-03-08T10:03:30.000Z' },
+      ] };
       return { rows: [{ id: 3, case_id: 25169, source_service: 'notion_service', error_message: 'Notion unavailable', created_at: '2026-03-08T10:04:30.000Z' }] };
     };
 
     const app = express();
     app.use('/api/requests', caseManagementRouter);
 
-    const response = await supertest(app).get('/api/requests/25169/agent-log?kind=error,provider_event');
+    const response = await supertest(app).get('/api/requests/25169/agent-log?kind=error,provider_event,external_call');
 
     assert.strictEqual(response.status, 200);
-    assert.deepStrictEqual(response.body.entries.map((entry) => entry.kind), ['provider_event', 'error']);
-    assert.strictEqual(response.body.summary.total, 2);
+    assert.deepStrictEqual(response.body.entries.map((entry) => entry.kind), ['provider_event', 'error', 'external_call']);
+    assert.strictEqual(response.body.summary.total, 3);
   });
 
   it('returns proposal content versions for a case proposal', async function () {

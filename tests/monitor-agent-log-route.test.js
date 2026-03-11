@@ -26,7 +26,12 @@ describe('Global agent log monitor route', function () {
       }
       if (callCount === 2) {
         assert.match(sql, /FROM activity_log/);
-        return { rows: [{ id: 2, case_id: 101, event_type: 'agent_run_step', description: 'Run step: decide_action', metadata: { run_id: 9, step: 'decide_action' }, created_at: '2026-03-10T10:01:00.000Z' }] };
+        return {
+          rows: [
+            { id: 2, case_id: 101, event_type: 'agent_run_step', description: 'Run step: decide_action', metadata: { run_id: 9, step: 'decide_action' }, created_at: '2026-03-10T10:01:00.000Z' },
+            { id: 22, case_id: 101, event_type: 'external_call_completed', description: 'Completed notion fetch_page_by_id', metadata: { provider: 'notion', operation: 'fetch_page_by_id' }, created_at: '2026-03-10T10:01:30.000Z' },
+          ],
+        };
       }
       if (callCount === 3) {
         assert.match(sql, /FROM portal_submissions/);
@@ -64,13 +69,14 @@ describe('Global agent log monitor route', function () {
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
-    assert.strictEqual(response.body.count, 6);
+    assert.strictEqual(response.body.count, 7);
     assert.deepStrictEqual(
       response.body.entries.map((entry) => entry.kind),
-      ['decision', 'error', 'provider_event', 'portal', 'agent_step', 'state_transition']
+      ['decision', 'error', 'provider_event', 'portal', 'external_call', 'agent_step', 'state_transition']
     );
     assert.strictEqual(response.body.entries[2].payload.raw_payload.token, '[redacted]');
     assert.strictEqual(response.body.summary.by_kind.decision, 1);
+    assert.strictEqual(response.body.summary.by_kind.external_call, 1);
   });
 
   it('filters the global agent log by case and kind', async function () {
@@ -79,7 +85,10 @@ describe('Global agent log monitor route', function () {
       callCount += 1;
       assert.strictEqual(params[0], 25169);
       if (callCount === 1) return { rows: [{ id: 1, case_id: 25169, event: 'CASE_UPDATED', created_at: '2026-03-10T10:00:00.000Z' }] };
-      if (callCount === 2) return { rows: [{ id: 2, case_id: 25169, event_type: 'agent_run_step', metadata: { step: 'draft_response' }, created_at: '2026-03-10T10:01:00.000Z' }] };
+      if (callCount === 2) return { rows: [
+        { id: 2, case_id: 25169, event_type: 'agent_run_step', metadata: { step: 'draft_response' }, created_at: '2026-03-10T10:01:00.000Z' },
+        { id: 22, case_id: 25169, event_type: 'external_call_completed', metadata: { provider: 'openai' }, created_at: '2026-03-10T10:01:30.000Z' },
+      ] };
       if (callCount === 3) return { rows: [] };
       if (callCount === 4) return { rows: [{ id: 4, case_id: 25169, event_type: 'delivered', event_timestamp: '2026-03-10T10:03:00.000Z' }] };
       if (callCount === 5) return { rows: [{ id: 5, case_id: 25169, source_service: 'trigger.dev', error_message: 'boom', created_at: '2026-03-10T10:04:00.000Z' }] };
@@ -89,11 +98,11 @@ describe('Global agent log monitor route', function () {
     const app = express();
     app.use('/api/monitor', router);
 
-    const response = await supertest(app).get('/api/monitor/agent-log?case_id=25169&kind=error,provider_event');
+    const response = await supertest(app).get('/api/monitor/agent-log?case_id=25169&kind=error,provider_event,external_call');
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.filters.case_id, 25169);
-    assert.deepStrictEqual(response.body.entries.map((entry) => entry.kind), ['error', 'provider_event']);
-    assert.strictEqual(response.body.summary.total, 2);
+    assert.deepStrictEqual(response.body.entries.map((entry) => entry.kind), ['error', 'provider_event', 'external_call']);
+    assert.strictEqual(response.body.summary.total, 3);
   });
 });

@@ -6,6 +6,11 @@ const crypto = require('crypto');
 const { extractUrls } = require('../utils/contact-utils');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const {
+    logExternalCallStarted,
+    logExternalCallCompleted,
+    logExternalCallFailed,
+} = require('./agent-log-events');
+const {
     PORTAL_PROVIDERS,
     PORTAL_EMAIL_DOMAINS,
     normalizePortalUrl,
@@ -22,6 +27,71 @@ class SendGridService {
         // Use the clean root domain (authenticated via em7571.foib-request.com)
         this.defaultFromEmail = 'requests@foib-request.com';
         this.fromName = 'FOIA Request Team';
+    }
+
+    async logSendgridStarted(caseId, operation, msg, extra = {}) {
+        await logExternalCallStarted(db, {
+            caseId: caseId || null,
+            sourceService: 'sendgrid_service',
+            provider: 'sendgrid',
+            operation,
+            endpoint: 'sgMail.send',
+            method: 'sdk',
+            requestSummary: {
+                to: msg?.to || null,
+                subject: msg?.subject || null,
+                message_type: msg?.customArgs?.message_type || null,
+                attachments: msg?.attachments || [],
+            },
+            metadata: extra,
+        });
+    }
+
+    async logSendgridCompleted(caseId, operation, msg, response, startedAt, extra = {}) {
+        await logExternalCallCompleted(db, {
+            caseId: caseId || null,
+            sourceService: 'sendgrid_service',
+            provider: 'sendgrid',
+            operation,
+            endpoint: 'sgMail.send',
+            method: 'sdk',
+            durationMs: Date.now() - startedAt,
+            statusCode: response?.[0]?.statusCode || null,
+            requestSummary: {
+                to: msg?.to || null,
+                subject: msg?.subject || null,
+                message_type: msg?.customArgs?.message_type || null,
+                attachments: msg?.attachments || [],
+            },
+            responseSummary: {
+                statusCode: response?.[0]?.statusCode || null,
+                sendgrid_message_id: response?.[0]?.headers?.['x-message-id'] || null,
+            },
+            metadata: extra,
+        });
+    }
+
+    async logSendgridFailed(caseId, operation, msg, error, startedAt, extra = {}) {
+        await logExternalCallFailed(db, {
+            caseId: caseId || null,
+            sourceService: 'sendgrid_service',
+            provider: 'sendgrid',
+            operation,
+            endpoint: 'sgMail.send',
+            method: 'sdk',
+            durationMs: Date.now() - startedAt,
+            requestSummary: {
+                to: msg?.to || null,
+                subject: msg?.subject || null,
+                message_type: msg?.customArgs?.message_type || null,
+                attachments: msg?.attachments || [],
+            },
+            error: error?.message || String(error),
+            metadata: {
+                ...extra,
+                error_code: error?.code || null,
+            },
+        });
     }
 
     truncatePayloadText(value, maxLength = 50000) {
@@ -121,6 +191,8 @@ class SendGridService {
      * Send a FOIA request email
      */
     async sendFOIARequest(caseId, requestText, subject, toEmail, instantMode = false) {
+        let msg = null;
+        let startedAt = null;
         try {
             const caseData = await db.getCaseById(caseId);
             if (!caseData) {
@@ -143,7 +215,7 @@ class SendGridService {
 
             const fromEmail = await this.getFromEmail(caseId);
 
-            const msg = {
+            msg = {
                 to: toEmail,
                 from: {
                     email: fromEmail,
@@ -164,7 +236,10 @@ class SendGridService {
                 }
             };
 
+            startedAt = Date.now();
+            await this.logSendgridStarted(caseId, 'send_initial_request', msg);
             const response = await sgMail.send(msg);
+            await this.logSendgridCompleted(caseId, 'send_initial_request', msg, response, startedAt);
             console.log('Email sent successfully:', response[0].statusCode);
 
             // Store in database
@@ -189,6 +264,7 @@ class SendGridService {
             };
         } catch (error) {
             console.error('Error sending email:', error);
+            await this.logSendgridFailed(caseId, 'send_initial_request', msg, error, startedAt || Date.now());
             await db.logActivity('email_send_failed', `Failed to send email for case ${caseId}`, {
                 case_id: caseId,
                 error: error.message
@@ -201,13 +277,15 @@ class SendGridService {
      * Send a follow-up email
      */
     async sendFollowUp(caseId, followUpText, subject, toEmail, originalMessageId) {
+        let msg = null;
+        let startedAt = null;
         try {
             const messageId = this.generateMessageId();
             const threadId = originalMessageId || this.generateThreadId(caseId);
 
             const fromEmail = await this.getFromEmail(caseId);
 
-            const msg = {
+            msg = {
                 to: toEmail,
                 from: {
                     email: fromEmail,
@@ -228,7 +306,10 @@ class SendGridService {
                 }
             };
 
+            startedAt = Date.now();
+            await this.logSendgridStarted(caseId, 'send_follow_up', msg);
             const response = await sgMail.send(msg);
+            await this.logSendgridCompleted(caseId, 'send_follow_up', msg, response, startedAt);
             console.log('Follow-up sent successfully:', response[0].statusCode);
 
             await this.logSentMessage({
@@ -251,6 +332,7 @@ class SendGridService {
             };
         } catch (error) {
             console.error('Error sending follow-up:', error);
+            await this.logSendgridFailed(caseId, 'send_follow_up', msg, error, startedAt || Date.now());
             throw error;
         }
     }
@@ -259,6 +341,8 @@ class SendGridService {
      * Send an auto-reply
      */
     async sendAutoReply(caseId, replyText, subject, toEmail, inReplyToMessageId) {
+        let msg = null;
+        let startedAt = null;
         try {
             const messageId = this.generateMessageId();
 
@@ -279,7 +363,7 @@ class SendGridService {
 
             const fromEmail = await this.getFromEmail(caseId);
 
-            const msg = {
+            msg = {
                 to: toEmail,
                 from: {
                     email: fromEmail,
@@ -300,7 +384,10 @@ class SendGridService {
                 }
             };
 
+            startedAt = Date.now();
+            await this.logSendgridStarted(caseId, 'send_auto_reply', msg);
             const response = await sgMail.send(msg);
+            await this.logSendgridCompleted(caseId, 'send_auto_reply', msg, response, startedAt);
             console.log('Auto-reply sent successfully:', response[0].statusCode);
 
             await this.logSentMessage({
@@ -322,6 +409,7 @@ class SendGridService {
             };
         } catch (error) {
             console.error('Error sending auto-reply:', error);
+            await this.logSendgridFailed(caseId, 'send_auto_reply', msg, error, startedAt || Date.now());
             throw error;
         }
     }
@@ -2463,11 +2551,13 @@ class SendGridService {
             attachments
         } = params;
 
+        let msg = null;
+        let startedAt = null;
         try {
             const messageId = this.generateMessageId();
             const fromEmail = await this.getFromEmail(caseId);
 
-            const msg = {
+            msg = {
                 to,
                 from: {
                     email: fromEmail,
@@ -2493,7 +2583,10 @@ class SendGridService {
                 }
             };
 
+            startedAt = Date.now();
+            await this.logSendgridStarted(caseId, 'send_email', msg);
             const response = await sgMail.send(msg);
+            await this.logSendgridCompleted(caseId, 'send_email', msg, response, startedAt);
             console.log('Email sent successfully:', response[0].statusCode);
 
             // Log to database if we have a case ID
@@ -2521,6 +2614,7 @@ class SendGridService {
             };
         } catch (error) {
             console.error('Error sending email:', error);
+            await this.logSendgridFailed(caseId, 'send_email', msg, error, startedAt || Date.now());
             if (caseId) {
                 await db.logActivity('email_send_failed', `Failed to send email for case ${caseId}`, {
                     case_id: caseId,

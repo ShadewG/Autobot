@@ -6,6 +6,11 @@ const responseHandlingPrompts = require('../prompts/response-handling-prompts');
 const denialResponsePrompts = require('../prompts/denial-response-prompts');
 const { buildModelMetadata } = require('../utils/ai-model-metadata');
 const { getCanonicalMessageText, normalizeMessageBody } = require('../lib/message-normalization');
+const {
+    logExternalCallStarted,
+    logExternalCallCompleted,
+    logExternalCallFailed,
+} = require('./agent-log-events');
 
 const DEFAULT_REQUEST_STRATEGY = {
     tone: 'collaborative',
@@ -65,20 +70,109 @@ class AIService {
             : null;
     }
 
+    _buildTraceContext(traceContext = {}, defaults = {}) {
+        const context = {
+            provider: defaults.provider || traceContext.provider || null,
+            operation: defaults.operation || traceContext.operation || null,
+            sourceService: traceContext.sourceService || traceContext.source_service || defaults.sourceService || defaults.source_service || 'ai_service',
+            caseId: traceContext.caseId ?? traceContext.case_id ?? defaults.caseId ?? defaults.case_id ?? null,
+            messageId: traceContext.messageId ?? traceContext.message_id ?? defaults.messageId ?? defaults.message_id ?? null,
+            proposalId: traceContext.proposalId ?? traceContext.proposal_id ?? defaults.proposalId ?? defaults.proposal_id ?? null,
+            runId: traceContext.runId ?? traceContext.run_id ?? defaults.runId ?? defaults.run_id ?? null,
+            actorId: traceContext.actorId ?? traceContext.actor_id ?? defaults.actorId ?? defaults.actor_id ?? null,
+            endpoint: traceContext.endpoint || defaults.endpoint || null,
+            method: traceContext.method || defaults.method || null,
+            model: traceContext.model || defaults.model || null,
+            requestSummary: traceContext.requestSummary || defaults.requestSummary || null,
+            metadata: {
+                ...(defaults.metadata || {}),
+                ...(traceContext.metadata || {}),
+            },
+        };
+
+        if (!context.metadata || Object.keys(context.metadata).length === 0) {
+            delete context.metadata;
+        }
+
+        return context;
+    }
+
+    async _withExternalCallTrace(baseContext, fn) {
+        const startedAt = Date.now();
+        await logExternalCallStarted(db, baseContext);
+        try {
+            const result = await fn();
+            await logExternalCallCompleted(db, {
+                ...baseContext,
+                durationMs: Date.now() - startedAt,
+                responseSummary: result?.responseSummary || result?.response || null,
+                statusCode: result?.statusCode ?? null,
+                model: result?.model || baseContext.model || null,
+                metadata: {
+                    ...(baseContext.metadata || {}),
+                    ...(result?.metadata || {}),
+                },
+            });
+            return result?.value !== undefined ? result.value : result;
+        } catch (error) {
+            await logExternalCallFailed(db, {
+                ...baseContext,
+                durationMs: Date.now() - startedAt,
+                error: error?.message || String(error),
+                metadata: {
+                    ...(baseContext.metadata || {}),
+                    error_name: error?.name || null,
+                    error_code: error?.code || null,
+                },
+            });
+            throw error;
+        }
+    }
+
     /**
      * Call OpenAI Responses API with Anthropic fallback.
      * Returns the output text string.
      */
-    async callAI(input, { effort = 'medium', maxTokens = 4000, includeMetadata = false } = {}) {
+    async callAI(input, { effort = 'medium', maxTokens = 4000, includeMetadata = false, traceContext = {} } = {}) {
         try {
             if (!this.openai) throw new Error('OPENAI_API_KEY not configured');
-            const startedAt = Date.now();
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort },
-                text: { verbosity: 'medium' },
-                input,
+            const model = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
+            const context = this._buildTraceContext(traceContext, {
+                provider: 'openai',
+                operation: 'responses.create',
+                endpoint: 'responses.create',
+                method: 'sdk',
+                model,
+                requestSummary: {
+                    model,
+                    effort,
+                    max_tokens: maxTokens,
+                },
             });
+
+            const { response, startedAt } = await this._withExternalCallTrace(context, async () => {
+                const startedAt = Date.now();
+                const response = await this.openai.responses.create({
+                    model,
+                    reasoning: { effort },
+                    text: { verbosity: 'medium' },
+                    input,
+                });
+                return {
+                    value: { response, startedAt },
+                    responseSummary: {
+                        id: response.id,
+                        model: response.model,
+                        status: response.status,
+                    },
+                    model,
+                    metadata: {
+                        prompt_tokens: response.usage?.input_tokens || response.usage?.prompt_tokens || null,
+                        completion_tokens: response.usage?.output_tokens || response.usage?.completion_tokens || null,
+                    },
+                };
+            });
+
             const text = response.output_text?.trim() || '';
             if (!includeMetadata) {
                 return text;
@@ -94,12 +188,41 @@ class AIService {
         } catch (openaiError) {
             console.error('OpenAI failed, falling back to Anthropic:', openaiError.message);
             if (!this.anthropic) throw openaiError;
-            const startedAt = Date.now();
-            const response = await this.anthropic.messages.create({
-                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
-                max_tokens: maxTokens,
-                messages: [{ role: 'user', content: input }],
+            const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+            const context = this._buildTraceContext(traceContext, {
+                provider: 'anthropic',
+                operation: 'messages.create',
+                endpoint: 'messages.create',
+                method: 'sdk',
+                model,
+                requestSummary: {
+                    model,
+                    max_tokens: maxTokens,
+                },
             });
+
+            const { response, startedAt } = await this._withExternalCallTrace(context, async () => {
+                const startedAt = Date.now();
+                const response = await this.anthropic.messages.create({
+                    model,
+                    max_tokens: maxTokens,
+                    messages: [{ role: 'user', content: input }],
+                });
+                return {
+                    value: { response, startedAt },
+                    responseSummary: {
+                        id: response.id,
+                        model,
+                        stop_reason: response.stop_reason,
+                    },
+                    model,
+                    metadata: {
+                        prompt_tokens: response.usage?.input_tokens || null,
+                        completion_tokens: response.usage?.output_tokens || null,
+                    },
+                };
+            });
+
             const text = response.content[0].text?.trim() || '';
             if (!includeMetadata) {
                 return text;
@@ -449,23 +572,52 @@ class AIService {
 
             // Try GPT-5 first (latest and most capable for FOIA generation)
             try {
-                const startedAt = Date.now();
-                const response = await this.openai.chat.completions.create({
-                    model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: systemPrompt
+                const model = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
+                const { response, startedAt } = await this._withExternalCallTrace(
+                    this._buildTraceContext({ caseId: caseData?.id }, {
+                        provider: 'openai',
+                        operation: 'chat.completions.create',
+                        endpoint: 'chat.completions.create',
+                        method: 'sdk',
+                        model,
+                        requestSummary: {
+                            model,
+                            subject_name: caseData?.subject_name || null,
+                            agency_name: caseData?.agency_name || null,
                         },
-                        {
-                            role: 'user',
-                            content: userPrompt
-                        }
-                    ],
-                    reasoning_effort: 'medium',
-                    verbosity: 'medium',
-                    max_completion_tokens: 4000  // Increased to ensure we get content after reasoning
-                });
+                    }),
+                    async () => {
+                        const startedAt = Date.now();
+                        const response = await this.openai.chat.completions.create({
+                            model,
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: systemPrompt
+                                },
+                                {
+                                    role: 'user',
+                                    content: userPrompt
+                                }
+                            ],
+                            reasoning_effort: 'medium',
+                            verbosity: 'medium',
+                            max_completion_tokens: 4000
+                        });
+                        return {
+                            value: { response, startedAt },
+                            responseSummary: {
+                                id: response.id,
+                                model,
+                            },
+                            model,
+                            metadata: {
+                                prompt_tokens: response.usage?.prompt_tokens || null,
+                                completion_tokens: response.usage?.completion_tokens || null,
+                            },
+                        };
+                    }
+                );
 
                 let requestText = response.choices[0].message.content;
 
@@ -533,18 +685,47 @@ class AIService {
         const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature, options.examplesContext || '');
 
         const modelUsed = process.env.CLAUDE_MODEL || 'claude-3-7-sonnet-20250219';
-        const startedAt = Date.now();
-        const response = await this.anthropic.messages.create({
-            model: modelUsed,
-            max_tokens: 2000,
-            system: systemPrompt,
-            messages: [
-                {
-                    role: 'user',
-                    content: userPrompt
-                }
-            ]
-        });
+        const { response, startedAt } = await this._withExternalCallTrace(
+            this._buildTraceContext({ caseId: caseData?.id }, {
+                provider: 'anthropic',
+                operation: 'messages.create',
+                endpoint: 'messages.create',
+                method: 'sdk',
+                model: modelUsed,
+                requestSummary: {
+                    model: modelUsed,
+                    subject_name: caseData?.subject_name || null,
+                    agency_name: caseData?.agency_name || null,
+                },
+            }),
+            async () => {
+                const startedAt = Date.now();
+                const response = await this.anthropic.messages.create({
+                    model: modelUsed,
+                    max_tokens: 2000,
+                    system: systemPrompt,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: userPrompt
+                        }
+                    ]
+                });
+                return {
+                    value: { response, startedAt },
+                    responseSummary: {
+                        id: response.id,
+                        model: modelUsed,
+                        stop_reason: response.stop_reason,
+                    },
+                    model: modelUsed,
+                    metadata: {
+                        prompt_tokens: response.usage?.input_tokens || null,
+                        completion_tokens: response.usage?.output_tokens || null,
+                    },
+                };
+            }
+        );
 
         const requestText = this.normalizeGeneratedDraftSignature(
             response.content[0].text, userSignature, { includeEmail: false, includeAddress: false }
@@ -852,15 +1033,48 @@ Please analyze and provide a JSON response with:
 Return ONLY valid JSON, no other text.`;
 
             // Use GPT-5 with medium reasoning for analysis (better at understanding nuance)
-            const startedAt = Date.now();
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },
-                text: { verbosity: 'low' },  // Low verbosity for JSON output
-                input: `${responseHandlingPrompts.analysisSystemPrompt}
+            const model = 'gpt-5.2-2025-12-11';
+            const { response, startedAt } = await this._withExternalCallTrace(
+                this._buildTraceContext({
+                    caseId: caseData?.id,
+                    messageId: messageData?.id,
+                }, {
+                    provider: 'openai',
+                    operation: 'analyze_response',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        agency_name: caseData?.agency_name || null,
+                        message_subject: messageData?.subject || null,
+                    },
+                }),
+                async () => {
+                    const startedAt = Date.now();
+                    const response = await this.openai.responses.create({
+                        model,
+                        reasoning: { effort: 'medium' },
+                        text: { verbosity: 'low' },
+                        input: `${responseHandlingPrompts.analysisSystemPrompt}
 
 ${prompt}`
-            });
+                    });
+                    return {
+                        value: { response, startedAt },
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                        metadata: {
+                            prompt_tokens: response.usage?.input_tokens || response.usage?.prompt_tokens || null,
+                            completion_tokens: response.usage?.output_tokens || response.usage?.completion_tokens || null,
+                        },
+                    };
+                }
+            );
             const modelMetadata = buildModelMetadata({
                 response,
                 usage: response.usage,
@@ -918,10 +1132,35 @@ ${prompt}`
      */
     async generateMessageSummary(subject, bodyText) {
         const snippet = (bodyText || '').substring(0, 500);
-        const response = await this.openai.responses.create({
-            model: 'gpt-5.2-2025-12-11',
-            input: `Summarize this email in ONE sentence (max 120 chars). Subject: ${subject}\n\n${snippet}`
-        });
+        const model = 'gpt-5.2-2025-12-11';
+        const response = await this._withExternalCallTrace(
+            this._buildTraceContext({}, {
+                provider: 'openai',
+                operation: 'generate_message_summary',
+                endpoint: 'responses.create',
+                method: 'sdk',
+                model,
+                requestSummary: {
+                    model,
+                    subject,
+                },
+            }),
+            async () => {
+                const response = await this.openai.responses.create({
+                    model,
+                    input: `Summarize this email in ONE sentence (max 120 chars). Subject: ${subject}\n\n${snippet}`
+                });
+                return {
+                    value: response,
+                    responseSummary: {
+                        id: response.id,
+                        model,
+                        status: response.status,
+                    },
+                    model,
+                };
+            }
+        );
         return response.output_text.trim();
     }
 
@@ -1713,11 +1952,37 @@ Generate a phone call briefing as JSON:
 Return ONLY valid JSON.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },
-                input: prompt
-            });
+            const model = 'gpt-5.2-2025-12-11';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({ caseId: caseData?.id }, {
+                    provider: 'openai',
+                    operation: 'generate_phone_call_briefing',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        agency_name: caseData?.agency_name || phoneTask?.agency_name || null,
+                        case_name: caseData?.case_name || null,
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.responses.create({
+                        model,
+                        reasoning: { effort: 'medium' },
+                        input: prompt
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -1750,11 +2015,38 @@ Respond with JSON:
   "draft_notes": "if email action, brief outline of what the email should say based on the call"
 }`;
 
-            const response = await this.openai.responses.create({
-                model: 'gpt-4o-mini',
-                input: [{ role: 'user', content: prompt }],
-                text: { format: { type: 'json_object' } },
-            });
+            const model = 'gpt-4o-mini';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({}, {
+                    provider: 'openai',
+                    operation: 'suggest_next_step_after_call',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        case_name,
+                        agency_name,
+                        outcome,
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.responses.create({
+                        model,
+                        input: [{ role: 'user', content: prompt }],
+                        text: { format: { type: 'json_object' } },
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -1789,11 +2081,38 @@ Return JSON only:
   "recommended_follow_up": "single sentence next step"
 }`;
 
-            const response = await this.openai.responses.create({
-                model: 'gpt-4o-mini',
-                input: [{ role: 'user', content: prompt }],
-                text: { format: { type: 'json_object' } },
-            });
+            const model = 'gpt-4o-mini';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({}, {
+                    provider: 'openai',
+                    operation: 'summarize_phone_call_for_conversation',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        case_name,
+                        agency_name,
+                        outcome,
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.responses.create({
+                        model,
+                        input: [{ role: 'user', content: prompt }],
+                        text: { format: { type: 'json_object' } },
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const raw = response.output_text?.trim();
             const jsonMatch = raw?.match(/\{[\s\S]*\}/);
@@ -1878,11 +2197,37 @@ Rules:
 - Return ONLY valid JSON.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                input: `You are a FOIA case triage specialist. Analyze cases and recommend the most appropriate next action. Return only valid JSON.\n\n${prompt}`
-            });
+            const model = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({ caseId: caseData?.id }, {
+                    provider: 'openai',
+                    operation: 'triage_stuck_case',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        agency_name: caseData?.agency_name || null,
+                        case_name: caseData?.case_name || null,
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.responses.create({
+                        model,
+                        reasoning: { effort: 'low' },
+                        input: `You are a FOIA case triage specialist. Analyze cases and recommend the most appropriate next action. Return only valid JSON.\n\n${prompt}`
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -1930,12 +2275,38 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
             }
             const prompt = promptParts.join('\n\n');
 
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                text: { verbosity: 'low' },
-                input: `${systemPrompt}\n\nSchema:\n${schema}\n\n${prompt}`
-            });
+            const model = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({}, {
+                    provider: 'openai',
+                    operation: 'normalize_notion_case',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        has_properties: Boolean(rawPayload?.properties),
+                        has_full_text: Boolean(rawPayload?.full_text),
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.responses.create({
+                        model,
+                        reasoning: { effort: 'low' },
+                        text: { verbosity: 'low' },
+                        input: `${systemPrompt}\n\nSchema:\n${schema}\n\n${prompt}`
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const rawText = response.output_text?.trim();
             if (!rawText) return {};
@@ -2032,15 +2403,42 @@ Return valid JSON matching the schema below. Use null for missing fields, [] for
 
             const prompt = parts.join('\n\n');
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Schema:\n${schema}\n\n${prompt}` }
-                ],
-                response_format: { type: 'json_object' },
-                temperature: 0
-            });
+            const model = 'gpt-4o-mini';
+            const response = await this._withExternalCallTrace(
+                this._buildTraceContext({}, {
+                    provider: 'openai',
+                    operation: 'normalize_and_extract_contacts',
+                    endpoint: 'chat.completions.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        has_case_page_props: Boolean(casePageProps),
+                        has_case_page_content: Boolean(casePageContent),
+                        has_pd_page_props: Boolean(pdPageProps),
+                        has_pd_page_text: Boolean(pdPageText),
+                    },
+                }),
+                async () => {
+                    const response = await this.openai.chat.completions.create({
+                        model,
+                        messages: [
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: `Schema:\n${schema}\n\n${prompt}` }
+                        ],
+                        response_format: { type: 'json_object' },
+                        temperature: 0
+                    });
+                    return {
+                        value: response,
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                        },
+                        model,
+                    };
+                }
+            );
 
             const rawText = response.choices?.[0]?.message?.content?.trim();
             if (!rawText) return null;
@@ -2468,13 +2866,43 @@ Return JSON:
 Return ONLY valid JSON.`;
 
         try {
-            const startedAt = Date.now();
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },
-                text: { verbosity: 'medium' },
-                input: prompt
-            });
+            const model = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
+            const { response, startedAt } = await this._withExternalCallTrace(
+                this._buildTraceContext({ caseId: caseData?.id }, {
+                    provider: 'openai',
+                    operation: 'generate_reformulated_request',
+                    endpoint: 'responses.create',
+                    method: 'sdk',
+                    model,
+                    requestSummary: {
+                        model,
+                        agency_name: caseData?.agency_name || null,
+                        subject_name: caseData?.subject_name || null,
+                    },
+                }),
+                async () => {
+                    const startedAt = Date.now();
+                    const response = await this.openai.responses.create({
+                        model,
+                        reasoning: { effort: 'medium' },
+                        text: { verbosity: 'medium' },
+                        input: prompt
+                    });
+                    return {
+                        value: { response, startedAt },
+                        responseSummary: {
+                            id: response.id,
+                            model,
+                            status: response.status,
+                        },
+                        model,
+                        metadata: {
+                            prompt_tokens: response.usage?.input_tokens || response.usage?.prompt_tokens || null,
+                            completion_tokens: response.usage?.output_tokens || response.usage?.completion_tokens || null,
+                        },
+                    };
+                }
+            );
 
             const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);

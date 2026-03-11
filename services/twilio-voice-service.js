@@ -1,4 +1,10 @@
 const axios = require('axios');
+const db = require('./database');
+const {
+  logExternalCallStarted,
+  logExternalCallCompleted,
+  logExternalCallFailed,
+} = require('./agent-log-events');
 
 function xmlEscape(value) {
   return String(value || '')
@@ -91,28 +97,90 @@ async function startStatusCheckCall({ task, caseData }) {
     StatusCallbackMethod: 'POST',
   });
 
-  const response = await axios.post(
-    `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Calls.json`,
-    payload.toString(),
-    {
-      auth: {
-        username: config.accountSid,
-        password: config.authToken,
-      },
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      timeout: 15000,
-    }
-  );
+  const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Calls.json`;
+  const startedAt = Date.now();
+  await logExternalCallStarted(db, {
+    caseId: caseData?.id || task?.case_id || null,
+    sourceService: 'twilio_voice_service',
+    provider: 'twilio',
+    operation: 'start_status_check_call',
+    endpoint,
+    method: 'POST',
+    requestSummary: {
+      to: task.agency_phone,
+      from: config.fromNumber,
+      status_callback: statusCallback,
+    },
+    metadata: {
+      phone_task_id: task?.id || null,
+    },
+  });
 
-  return {
-    callSid: response.data?.sid,
-    status: response.data?.status || 'queued',
-    twiml,
-    to: task.agency_phone,
-    from: config.fromNumber,
-  };
+  try {
+    const response = await axios.post(
+      endpoint,
+      payload.toString(),
+      {
+        auth: {
+          username: config.accountSid,
+          password: config.authToken,
+        },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 15000,
+      }
+    );
+
+    await logExternalCallCompleted(db, {
+      caseId: caseData?.id || task?.case_id || null,
+      sourceService: 'twilio_voice_service',
+      provider: 'twilio',
+      operation: 'start_status_check_call',
+      endpoint,
+      method: 'POST',
+      durationMs: Date.now() - startedAt,
+      statusCode: response.status,
+      requestSummary: {
+        to: task.agency_phone,
+        from: config.fromNumber,
+      },
+      responseSummary: {
+        sid: response.data?.sid,
+        status: response.data?.status || null,
+      },
+      metadata: {
+        phone_task_id: task?.id || null,
+      },
+    });
+
+    return {
+      callSid: response.data?.sid,
+      status: response.data?.status || 'queued',
+      twiml,
+      to: task.agency_phone,
+      from: config.fromNumber,
+    };
+  } catch (error) {
+    await logExternalCallFailed(db, {
+      caseId: caseData?.id || task?.case_id || null,
+      sourceService: 'twilio_voice_service',
+      provider: 'twilio',
+      operation: 'start_status_check_call',
+      endpoint,
+      method: 'POST',
+      durationMs: Date.now() - startedAt,
+      requestSummary: {
+        to: task.agency_phone,
+        from: config.fromNumber,
+      },
+      error: error?.message || String(error),
+      metadata: {
+        phone_task_id: task?.id || null,
+      },
+    });
+    throw error;
+  }
 }
 
 module.exports = {
