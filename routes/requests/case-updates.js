@@ -176,6 +176,11 @@ router.post('/:id/mark-bugged', async (req, res) => {
             pause_reason: 'BUG_REPORTED',
         });
 
+        // Dismiss pending proposals so the case leaves the approval queue
+        try {
+            await db.dismissPendingProposals(requestId, 'Case marked as bugged');
+        } catch (_) {}
+
         await db.logActivity('case_marked_bugged', `Case marked as bugged: ${description || 'No description'}`, {
             case_id: requestId,
             previous_status: previousStatus,

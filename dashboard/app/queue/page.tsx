@@ -41,6 +41,7 @@ import {
   RefreshCw,
   Globe,
   Search,
+  Bug,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -91,12 +92,14 @@ function ProposalCard({
   proposal,
   onDecision,
   onLookupContact,
+  onMarkBugged,
   isProcessing,
   isLookingUpContact,
 }: {
   proposal: ProposalListItem;
   onDecision: (id: number, action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string, attachments?: Attachment[]) => Promise<void>;
   onLookupContact: (caseId: number) => Promise<void>;
+  onMarkBugged: (caseId: number, description: string) => Promise<void>;
   isProcessing: boolean;
   isLookingUpContact: boolean;
 }) {
@@ -104,6 +107,8 @@ function ProposalCard({
   const [showAdjust, setShowAdjust] = useState(false);
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
+  const [showBugged, setShowBugged] = useState(false);
+  const [bugDescription, setBugDescription] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const labelConfig = ACTION_TYPE_LABELS[proposal.action_type] || {
@@ -316,6 +321,17 @@ function ProposalCard({
             Withdraw
           </Button>
 
+          <Button
+            onClick={() => setShowBugged(true)}
+            disabled={isProcessing}
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-orange-500 hover:text-orange-500"
+          >
+            <Bug className="h-4 w-4" />
+            Bugged
+          </Button>
+
           <div className="ml-auto text-xs text-muted-foreground">
             {new Date(proposal.created_at).toLocaleString()}
           </div>
@@ -363,6 +379,40 @@ function ProposalCard({
             </Button>
             <Button variant="destructive" onClick={handleWithdraw} disabled={isProcessing}>
               {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Withdraw Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark as Bugged Dialog */}
+      <Dialog open={showBugged} onOpenChange={setShowBugged}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark as Bugged</DialogTitle>
+            <DialogDescription>
+              This removes the case from the queue so you can investigate and fix the issue. You can re-add it once resolved.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={bugDescription}
+            onChange={(e) => setBugDescription(e.target.value)}
+            placeholder="Describe the bug or issue..."
+            className="min-h-24"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBugged(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                await onMarkBugged(proposal.case_id, bugDescription || "Marked as bugged from queue");
+                setShowBugged(false);
+                setBugDescription("");
+              }}
+              disabled={isProcessing}
+            >
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Mark as Bugged"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -418,6 +468,18 @@ export default function QueuePage() {
       console.error("Contact lookup failed:", err);
     } finally {
       setResearchingCaseId(null);
+    }
+  };
+
+  const handleMarkBugged = async (caseId: number, description: string) => {
+    try {
+      await fetchAPI(`/requests/${caseId}/mark-bugged`, {
+        method: "POST",
+        body: JSON.stringify({ description }),
+      });
+      mutate();
+    } catch (err) {
+      console.error("Mark as bugged failed:", err);
     }
   };
 
@@ -479,6 +541,7 @@ export default function QueuePage() {
               proposal={proposal}
               onDecision={handleDecision}
               onLookupContact={handleLookupContact}
+              onMarkBugged={handleMarkBugged}
               isProcessing={processingId === proposal.id}
               isLookingUpContact={researchingCaseId === proposal.case_id}
             />
