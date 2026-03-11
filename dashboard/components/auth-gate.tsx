@@ -9,6 +9,7 @@ import { NavLinks } from "./nav-links";
 import { OnboardingModal } from "./onboarding-modal";
 import { ChangelogPopup } from "./changelog-popup";
 import { BugReportButton } from "./bug-report-button";
+import { NotionLinkPrompt } from "./notion-link-prompt";
 
 const PUBLIC_PATHS = ["/portal-link"];
 
@@ -52,6 +53,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <OnboardingModal />
       <ChangelogPopup />
       <BugReportButton />
+      <NotionLinkPrompt />
     </div>
   );
 }

@@ -39,6 +39,32 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /notion-names — Unique Notion assignee names from imported cases
+ * Used during onboarding so users can pick which Notion person they are.
+ */
+router.get('/notion-names', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT DISTINCT c.assigned_person AS name,
+                   COUNT(*)::int AS case_count,
+                   u.id AS linked_user_id,
+                   u.name AS linked_user_name
+            FROM cases c
+            LEFT JOIN users u ON u.notion_name IS NOT NULL
+                AND LOWER(u.notion_name) = LOWER(c.assigned_person)
+                AND u.active = true
+            WHERE c.assigned_person IS NOT NULL
+              AND TRIM(c.assigned_person) != ''
+            GROUP BY c.assigned_person, u.id, u.name
+            ORDER BY case_count DESC
+        `);
+        res.json({ success: true, names: result.rows });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST / — Create user
  */
 router.post('/', express.json(), async (req, res) => {

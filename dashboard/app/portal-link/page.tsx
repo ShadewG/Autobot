@@ -29,7 +29,14 @@ interface PendingData {
   } | null;
 }
 
-type Step = "loading" | "choose" | "link-existing" | "create-account" | "done";
+interface NotionName {
+  name: string;
+  case_count: number;
+  linked_user_id: number | null;
+  linked_user_name: string | null;
+}
+
+type Step = "loading" | "choose" | "link-existing" | "create-account" | "notion-link" | "done";
 
 export default function PortalLinkPage() {
   return (
@@ -74,6 +81,11 @@ function PortalLinkContent() {
   const [addrZip, setAddrZip] = useState("");
   const [creating, setCreating] = useState(false);
 
+  // Notion link step
+  const [notionNames, setNotionNames] = useState<NotionName[]>([]);
+  const [linkedUserId, setLinkedUserId] = useState<number | null>(null);
+  const [savingNotion, setSavingNotion] = useState(false);
+
   // Check token on mount
   useEffect(() => {
     if (!portalToken) {
@@ -107,6 +119,58 @@ function PortalLinkContent() {
       });
   }, [portalToken, next]);
 
+  const goToNotionStep = async (userId: number) => {
+    setLinkedUserId(userId);
+    setError(null);
+    try {
+      const res = await fetch("/api/users/notion-names");
+      const data = await res.json();
+      if (data.success && data.names?.length > 0) {
+        // Only show names not already linked to another user
+        const available = (data.names as NotionName[]).filter(
+          (n) => !n.linked_user_id || n.linked_user_id === userId
+        );
+        if (available.length > 0) {
+          setNotionNames(available);
+          setStep("notion-link");
+          return;
+        }
+      }
+    } catch {}
+    // No Notion names to link — skip to done
+    finishOnboarding();
+  };
+
+  const finishOnboarding = () => {
+    setStep("done");
+    setTimeout(() => {
+      window.location.assign(next);
+    }, 1000);
+  };
+
+  const handleNotionLink = async (notionName: string) => {
+    if (!linkedUserId) return;
+    setSavingNotion(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/users/${linkedUserId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ notion_name: notionName }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to save");
+      }
+      finishOnboarding();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSavingNotion(false);
+    }
+  };
+
   const handleLinkExisting = async () => {
     setLinking(true);
     setError(null);
@@ -125,10 +189,7 @@ function PortalLinkContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to link account");
       }
-      setStep("done");
-      setTimeout(() => {
-        window.location.assign(next);
-      }, 1000);
+      await goToNotionStep(data.user.id);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -164,10 +225,7 @@ function PortalLinkContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to create account");
       }
-      setStep("done");
-      setTimeout(() => {
-        window.location.assign(next);
-      }, 1000);
+      await goToNotionStep(data.user.id);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -211,6 +269,7 @@ function PortalLinkContent() {
             {step === "choose" && "Link your portal account"}
             {step === "link-existing" && "Sign in to your existing account"}
             {step === "create-account" && "Set up your new account"}
+            {step === "notion-link" && "Link your Notion identity"}
           </p>
           {pending?.portal?.username && step === "choose" && (
             <p className="text-xs text-muted-foreground">
@@ -515,6 +574,55 @@ function PortalLinkContent() {
             >
               {creating && <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />}
               Create account
+            </Button>
+          </div>
+        )}
+
+        {/* Step: Notion link */}
+        {step === "notion-link" && (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Select which Notion person you are so cases assigned to you in
+              Notion are automatically linked to your account.
+            </p>
+
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {notionNames.map((n) => {
+                const isTaken =
+                  n.linked_user_id !== null && n.linked_user_id !== linkedUserId;
+                return (
+                  <button
+                    key={n.name}
+                    disabled={savingNotion || isTaken}
+                    onClick={() => handleNotionLink(n.name)}
+                    className={
+                      "w-full flex items-center justify-between rounded-md border px-3 py-2.5 text-left transition-colors " +
+                      (isTaken
+                        ? "opacity-40 cursor-not-allowed"
+                        : "hover:bg-card hover:border-foreground/20")
+                    }
+                  >
+                    <div>
+                      <div className="text-sm text-foreground">{n.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {n.case_count} case{n.case_count !== 1 ? "s" : ""}
+                        {isTaken && ` \u00b7 linked to ${n.linked_user_name}`}
+                      </div>
+                    </div>
+                    {savingNotion ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            <Button
+              variant="ghost"
+              className="w-full text-muted-foreground"
+              onClick={finishOnboarding}
+            >
+              Skip for now
             </Button>
           </div>
         )}
