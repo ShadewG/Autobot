@@ -556,6 +556,11 @@ async function processProposalDecision(
             err.status = 400;
             throw err;
         }
+        if (!isSupportedPortalUrl(portalUrl, caseData.portal_provider || null, caseData.last_portal_status || null)) {
+            const err = new Error(`Portal URL on case ${caseId} is not automatable`);
+            err.status = 400;
+            throw err;
+        }
 
         await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'APPROVED',

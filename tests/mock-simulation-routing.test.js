@@ -106,6 +106,44 @@ describe("mock simulation routing", function () {
     sinon.assert.notCalled(caseRuntime.transitionCaseRuntime);
   });
 
+  it("routes real portal redirects with non-automatable docs URLs into research instead of creating a portal task", async function () {
+    database.getCaseById.resolves({
+      id: 25210,
+      portal_url: "https://www.civicplus.help/nextrequest/docs/requesters",
+      portal_provider: "nextrequest",
+      last_portal_status: null,
+      request_summary: "Portal request",
+    });
+
+    const result = await decideNextAction(
+      25210,
+      "PORTAL_REDIRECT",
+      [],
+      null,
+      "neutral",
+      "SUPERVISED",
+      "INBOUND_MESSAGE",
+      true,
+      null,
+      "use_portal",
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      []
+    );
+
+    assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
+    assert.ok(
+      result.reasoning.some((line) => /no automatable portal url/i.test(String(line))),
+      `expected non-automatable portal reasoning, got ${JSON.stringify(result.reasoning)}`
+    );
+    sinon.assert.notCalled(database.updateCasePortalStatus);
+    sinon.assert.notCalled(caseRuntime.transitionCaseRuntime);
+  });
+
   it("routes missing fee amounts to NEGOTIATE_FEE in simulation mode", async function () {
     const result = await decideNextAction(
       0,

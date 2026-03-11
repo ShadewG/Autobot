@@ -30,6 +30,7 @@ const proposalLifecycle = require('../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../services/proposal-feedback');
 const { buildApprovalDraftUpdates } = require('../services/proposal-draft-history');
 const { classifyOperatorActionError, buildOperatorActionErrorResponse } = require('../services/operator-action-errors');
+const { isSupportedPortalUrl } = require('../utils/portal-utils');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
@@ -2347,6 +2348,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
         const caseData = await db.getCaseById(caseId);
         const portalUrl = caseData?.portal_url;
         if (!portalUrl) throw new Error(`No portal URL on case ${caseId}`);
+        if (!isSupportedPortalUrl(portalUrl, caseData?.portal_provider || null, caseData?.last_portal_status || null)) {
+          throw new Error(`Portal URL on case ${caseId} is not automatable`);
+        }
 
         const ptResult = await db.query(
           `INSERT INTO portal_tasks (case_id, portal_url, action_type, status, proposal_id, instructions)

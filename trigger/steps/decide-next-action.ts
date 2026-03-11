@@ -1357,6 +1357,28 @@ function noAction(reasoning: string[]): DecisionResult {
   return decision("NONE", { isComplete: true, requiresHuman: false, reasoning });
 }
 
+function portalRedirectFallbackDecision(
+  reasoningPrefix: string[],
+  portalUrl: string | null | undefined,
+  provider: string | null | undefined,
+  lastPortalStatus?: string | null
+): DecisionResult | null {
+  if (hasAutomatablePortal(portalUrl, provider, lastPortalStatus)) {
+    return null;
+  }
+  return decision("RESEARCH_AGENCY", {
+    requiresHuman: true,
+    canAutoExecute: false,
+    pauseReason: "SCOPE",
+    researchLevel: "light",
+    reasoning: [
+      ...reasoningPrefix,
+      "Portal submission was requested, but no automatable portal URL is available.",
+      "Research the correct portal or alternate delivery channel instead of creating a placeholder portal task.",
+    ],
+  });
+}
+
 function shouldPrioritizeBodycamCustodianResearch(
   caseData: any,
   latestAnalysis: any,
@@ -2450,11 +2472,25 @@ async function deterministicRouting(
     if (!hasRealCase) {
       return noAction(["Portal redirect - task creation skipped in simulation (no real case)"]);
     }
-    await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-    await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
     try {
       const caseData = await db.getCaseById(caseId);
       const effectiveUrl = portalUrl || caseData?.portal_url;
+      const fallbackDecision = portalRedirectFallbackDecision(
+        [],
+        effectiveUrl,
+        caseData?.portal_provider || null,
+        caseData?.last_portal_status || null
+      );
+      if (fallbackDecision) {
+        logger.warn("Portal redirect missing automatable portal URL; routing to research instead", {
+          caseId,
+          portalUrl: effectiveUrl || null,
+          provider: caseData?.portal_provider || null,
+        });
+        return fallbackDecision;
+      }
+      await db.updateCasePortalStatus(caseId, { portal_url: effectiveUrl });
+      await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
       const task = await createPortalTask({
         caseId,
         portalUrl: effectiveUrl,
@@ -2607,11 +2643,25 @@ export async function decideNextAction(
         if (!hasRealCase) {
           return noAction([...reasoning, "Portal redirect - task creation skipped in simulation (no real case)"]);
         }
-        await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_required" });
         try {
           const caseData = await db.getCaseById(caseId);
           const effectiveUrl = portalUrl || caseData?.portal_url;
+          const fallbackDecision = portalRedirectFallbackDecision(
+            reasoning,
+            effectiveUrl,
+            caseData?.portal_provider || null,
+            caseData?.last_portal_status || null
+          );
+          if (fallbackDecision) {
+            logger.warn("Suggested portal redirect missing automatable portal URL; routing to research instead", {
+              caseId,
+              portalUrl: effectiveUrl || null,
+              provider: caseData?.portal_provider || null,
+            });
+            return fallbackDecision;
+          }
+          await db.updateCasePortalStatus(caseId, { portal_url: effectiveUrl });
+          await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_required" });
           const task = await createPortalTask({
             caseId,
             portalUrl: effectiveUrl,
@@ -3326,13 +3376,23 @@ export async function decideNextAction(
 
       // PORTAL_REDIRECT: create portal task (this side effect must stay at decision time)
       if (classification === "PORTAL_REDIRECT") {
-        await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
         const effectiveUrl = portalUrl || preComputed.caseData?.portal_url;
-        if (!effectiveUrl) {
-          logger.warn("PORTAL_REDIRECT: no effective portal URL, skipping portal task (v2)", { caseId });
-          return noAction(["Portal redirect but no portal URL available (v2)"]);
+        const fallbackDecision = portalRedirectFallbackDecision(
+          [],
+          effectiveUrl,
+          preComputed.caseData?.portal_provider || null,
+          preComputed.caseData?.last_portal_status || null
+        );
+        if (fallbackDecision) {
+          logger.warn("PORTAL_REDIRECT: no automatable portal URL, routing to research instead (v2)", {
+            caseId,
+            portalUrl: effectiveUrl || null,
+            provider: preComputed.caseData?.portal_provider || null,
+          });
+          return fallbackDecision;
         }
+        await db.updateCasePortalStatus(caseId, { portal_url: effectiveUrl });
+        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
         try {
           const task = await createPortalTask({
             caseId,

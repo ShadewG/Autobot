@@ -47,6 +47,21 @@ function isLikelyContactInfoUrl(portalUrl: string | null | undefined): boolean {
   return hasContactMarker && !hasPortalMarker;
 }
 
+function isLikelyDocumentationPortalUrl(portalUrl: string | null | undefined): boolean {
+  if (!portalUrl) return false;
+  const value = String(portalUrl).toLowerCase();
+  const documentationMarkers = [
+    "/docs",
+    "/documentation",
+    "/help",
+    "/support",
+    "/faq",
+    "/kb",
+    "/knowledge",
+  ];
+  return documentationMarkers.some((needle) => value.includes(needle));
+}
+
 export function hasAutomatablePortal(
   portalUrl: string | null | undefined,
   provider: string | null | undefined,
@@ -56,5 +71,6 @@ export function hasAutomatablePortal(
   if (isNonAutomatablePortalProvider(provider)) return false;
   if (isNonAutomatablePortalStatus(lastPortalStatus)) return false;
   if (isLikelyContactInfoUrl(portalUrl)) return false;
+  if (isLikelyDocumentationPortalUrl(portalUrl)) return false;
   return true;
 }

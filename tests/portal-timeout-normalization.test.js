@@ -146,4 +146,78 @@ describe('Portal timeout normalization', function () {
       restore();
     }
   });
+
+  it('cancels invalid pending portal tasks before any submit-portal dispatch occurs', async function () {
+    const queryStub = sinon.stub();
+    queryStub.onCall(0).resolves({
+      rows: [
+        {
+          id: 166,
+          case_id: 25210,
+          instructions: 'Submit through agency portal at: their website',
+          action_type: 'SUBMIT_VIA_PORTAL',
+          portal_url: null,
+          portal_provider: null,
+          last_portal_status: null,
+        },
+      ],
+    });
+    queryStub.onCall(1).resolves({ rowCount: 1, rows: [{ id: 166 }] });
+    queryStub.onCall(2).resolves({ rowCount: 1, rows: [{ id: 166 }] });
+
+    const dbStub = {
+      query: queryStub,
+      createAgentRunFull: sinon.stub().resolves({ id: 3001 }),
+      logActivity: sinon.stub().resolves(),
+    };
+    const transitionCaseRuntime = sinon.stub().resolves();
+    const triggerTask = sinon.stub().resolves({ handle: { id: 'run_test123' } });
+
+    const { cronService, restore } = loadCronService({
+      dbStub,
+      notionStub: { syncStatusToNotion: sinon.stub().resolves() },
+      followupStub: { start: sinon.stub() },
+      stuckResponseStub: {},
+      agencySyncStub: {},
+      pdContactStub: {},
+      triggerDispatchStub: { triggerTask },
+      discordStub: { notify: sinon.stub().resolves() },
+      caseRuntimeStub: {
+        transitionCaseRuntime,
+        CaseLockContention: class CaseLockContention extends Error {},
+      },
+    });
+
+    try {
+      const result = await cronService.dispatchPendingPortalTasks();
+
+      assert.strictEqual(result, 0);
+      sinon.assert.notCalled(dbStub.createAgentRunFull);
+      sinon.assert.notCalled(triggerTask);
+      sinon.assert.calledOnce(transitionCaseRuntime);
+      sinon.assert.calledWithExactly(
+        transitionCaseRuntime,
+        25210,
+        'PORTAL_ABORTED',
+        sinon.match({
+          portalTaskId: 166,
+          pauseReason: 'PORTAL_ABORTED',
+          error: sinon.match(/missing_portal_url/i),
+        })
+      );
+      sinon.assert.calledOnce(dbStub.logActivity);
+      sinon.assert.calledWithExactly(
+        dbStub.logActivity,
+        'portal_dispatch_skipped',
+        sinon.match(/skipped before Skyvern dispatch/i),
+        sinon.match({
+          case_id: 25210,
+          portal_task_id: 166,
+          block_reason: 'missing_portal_url',
+        })
+      );
+    } finally {
+      restore();
+    }
+  });
 });

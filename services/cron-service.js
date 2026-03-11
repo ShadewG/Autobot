@@ -28,6 +28,55 @@ function normalizePortalTimeoutError(rawError) {
     return value;
 }
 
+function isNonAutomatablePortalProvider(provider) {
+    if (!provider) return false;
+    const value = String(provider).toLowerCase();
+    return (
+        value.includes('no online portal') ||
+        value.includes('paper form required') ||
+        value.includes('paper form') ||
+        value.includes('mail-in form')
+    );
+}
+
+function isNonAutomatablePortalStatus(status) {
+    if (!status) return false;
+    const value = String(status).toLowerCase();
+    return (
+        value.includes('alternative path required') ||
+        value.includes('pdf_form_pending') ||
+        value.includes('not_real_portal') ||
+        value.includes('contact_info_only') ||
+        value.includes('manual_research_required')
+    );
+}
+
+function isLikelyContactInfoUrl(portalUrl) {
+    if (!portalUrl) return false;
+    const value = String(portalUrl).toLowerCase();
+    const contactLike = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
+    const portalLike = ['/portal', '/request', '/requests', 'nextrequest', 'publicrecords', 'recordrequest', 'foia'];
+    const hasContactMarker = contactLike.some((needle) => value.includes(needle));
+    const hasPortalMarker = portalLike.some((needle) => value.includes(needle));
+    return hasContactMarker && !hasPortalMarker;
+}
+
+function isLikelyDocumentationPortalUrl(portalUrl) {
+    if (!portalUrl) return false;
+    const value = String(portalUrl).toLowerCase();
+    return ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge']
+        .some((needle) => value.includes(needle));
+}
+
+function getPortalDispatchBlockReason(portalUrl, provider, lastPortalStatus) {
+    if (!portalUrl || !String(portalUrl).trim()) return 'missing_portal_url';
+    if (isNonAutomatablePortalProvider(provider)) return 'non_automatable_provider';
+    if (isNonAutomatablePortalStatus(lastPortalStatus)) return 'non_automatable_status';
+    if (isLikelyContactInfoUrl(portalUrl)) return 'contact_info_url';
+    if (isLikelyDocumentationPortalUrl(portalUrl)) return 'documentation_url';
+    return null;
+}
+
 class CronService {
     // Stable lock IDs for each cron job (arbitrary offset to avoid collisions with app locks)
     static LOCK_IDS = {
@@ -1858,7 +1907,7 @@ class CronService {
         // Find actionable portal_tasks that are PENDING and have no active submit-portal Trigger.dev run
         const pending = await db.query(`
             SELECT pt.id, pt.case_id, pt.instructions, pt.action_type,
-                   c.portal_url, c.portal_provider
+                   c.portal_url, c.portal_provider, c.last_portal_status
             FROM portal_tasks pt
             JOIN cases c ON c.id = pt.case_id
             WHERE pt.status = 'PENDING'
@@ -1888,6 +1937,49 @@ class CronService {
                     [pt.id]
                 );
                 if (claimed.rowCount === 0) {
+                    continue;
+                }
+
+                const blockReason = getPortalDispatchBlockReason(
+                    pt.portal_url,
+                    pt.portal_provider,
+                    pt.last_portal_status
+                );
+                if (blockReason) {
+                    const completionNotes = `Skipped automatic portal dispatch: ${blockReason}`;
+                    await db.query(
+                        `UPDATE portal_tasks
+                         SET status = 'CANCELLED',
+                             updated_at = NOW(),
+                             completion_notes = $2
+                         WHERE id = $1`,
+                        [pt.id, completionNotes]
+                    );
+                    try {
+                        await transitionCaseRuntime(pt.case_id, 'PORTAL_ABORTED', {
+                            portalTaskId: pt.id,
+                            pauseReason: 'PORTAL_ABORTED',
+                            substatus: 'Portal requires manual review before automation',
+                            error: completionNotes,
+                        });
+                    } catch (transitionErr) {
+                        console.warn(`Failed to transition blocked portal task ${pt.id}:`, transitionErr.message);
+                    }
+                    try {
+                        await db.logActivity(
+                            'portal_dispatch_skipped',
+                            `Portal task #${pt.id} skipped before Skyvern dispatch (${blockReason})`,
+                            {
+                                case_id: pt.case_id,
+                                portal_task_id: pt.id,
+                                portal_url: pt.portal_url || null,
+                                portal_provider: pt.portal_provider || null,
+                                last_portal_status: pt.last_portal_status || null,
+                                block_reason: blockReason,
+                                source_service: 'cron_service',
+                            }
+                        );
+                    } catch (_) {}
                     continue;
                 }
 

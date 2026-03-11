@@ -139,11 +139,56 @@ function detectPortalSystemEmail(fromEmail, subject) {
     return null;
 }
 
-function isSupportedPortalUrl(url) {
+function isNonAutomatablePortalProvider(provider) {
+    if (!provider) return false;
+    const value = String(provider).toLowerCase();
+    return (
+        value.includes('no online portal') ||
+        value.includes('paper form required') ||
+        value.includes('paper form') ||
+        value.includes('mail-in form') ||
+        value.includes('custom form')
+    );
+}
+
+function isNonAutomatablePortalStatus(status) {
+    if (!status) return false;
+    const value = String(status).toLowerCase();
+    return (
+        value.includes('alternative path required') ||
+        value.includes('pdf_form_pending') ||
+        value.includes('not_real_portal') ||
+        value.includes('contact_info_only') ||
+        value.includes('manual_research_required')
+    );
+}
+
+function isLikelyContactInfoUrl(url) {
+    if (!url) return false;
+    const value = String(url).toLowerCase();
+    const contactLike = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
+    const portalLike = ['/portal', '/request', '/requests', 'nextrequest', 'publicrecords', 'recordrequest', 'foia'];
+    const hasContactMarker = contactLike.some((needle) => value.includes(needle));
+    const hasPortalMarker = portalLike.some((needle) => value.includes(needle));
+    return hasContactMarker && !hasPortalMarker;
+}
+
+function isLikelyDocumentationPortalUrl(url) {
+    if (!url) return false;
+    const value = String(url).toLowerCase();
+    return ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge']
+        .some((needle) => value.includes(needle));
+}
+
+function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
     if (!url) return false;
 
     const normalized = normalizePortalUrl(url);
     if (!normalized) return false;
+    if (isNonAutomatablePortalProvider(provider)) return false;
+    if (isNonAutomatablePortalStatus(lastPortalStatus)) return false;
+    if (isLikelyContactInfoUrl(normalized)) return false;
+    if (isLikelyDocumentationPortalUrl(normalized)) return false;
 
     try {
         const urlObj = new URL(normalized);
@@ -168,5 +213,7 @@ module.exports = {
     detectPortalProviderByUrl,
     detectPortalProviderByHostname,
     detectPortalSystemEmail,
-    isSupportedPortalUrl
+    isSupportedPortalUrl,
+    isNonAutomatablePortalProvider,
+    isNonAutomatablePortalStatus
 };
