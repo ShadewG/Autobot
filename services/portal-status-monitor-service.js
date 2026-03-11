@@ -193,6 +193,10 @@ async function checkCasePortalStatus(caseData, deps = {}) {
     const classification = await applyPortalStatusOutcome(caseData, result, { db: database });
     return { success: true, classification, result };
   } catch (error) {
+    // No saved portal account — expected condition, not an error
+    if (error?.message?.includes('No saved portal account')) {
+      return { success: false, skipped: true, reason: 'no_portal_account' };
+    }
     // HTTP 402 = billing/quota exceeded — don't retry, just log once and skip
     const statusCode = error?.response?.status || error?.status;
     if (statusCode === 402) {
