@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "cd dashboard && npm install && npm run build",
+    "build": "cd dashboard && npm install && npm run build && echo 'Dashboard build complete' && ls -la out/ | head -5",
     "dev": "nodemon server.js",
     "migrate": "node database/migrate.js",
     "test-setup": "node test-setup.js",

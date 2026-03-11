@@ -42,6 +42,12 @@ app.use('/api/screenshots', express.static('/data/screenshots'));
 
 // Serve Next.js dashboard static files
 const dashboardPath = path.join(__dirname, 'dashboard', 'out');
+if (fs.existsSync(dashboardPath)) {
+    const queueDir = path.join(dashboardPath, 'queue');
+    console.log(`Dashboard: serving from ${dashboardPath} (queue/ exists: ${fs.existsSync(queueDir)})`);
+} else {
+    console.warn(`Dashboard: ${dashboardPath} does not exist — no static files will be served`);
+}
 app.use(express.static(dashboardPath));
 
 // Health check endpoint
