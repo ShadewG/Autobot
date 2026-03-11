@@ -48,6 +48,7 @@ function sanitizePayload(value) {
 
 function classifyActivityKind(eventType = '', metadata = {}) {
   const event = String(eventType).toLowerCase();
+  if (event.startsWith('external_call_')) return 'external_call';
   if (event === 'agent_run_step') return 'agent_step';
   if (event.startsWith('agent_run_')) return 'execution';
   if (event.includes('proposal') && event.includes('dismiss')) return 'human_decision';
@@ -342,7 +343,7 @@ async function buildGlobalAgentLog(db, options = {}) {
       `SELECT *
        FROM portal_submissions
        ${caseClause}
-       ORDER BY COALESCE(started_at, created_at, completed_at) DESC, id DESC
+       ORDER BY COALESCE(started_at, completed_at) DESC, id DESC
        LIMIT $${limitIndex}`,
       params
     ),
