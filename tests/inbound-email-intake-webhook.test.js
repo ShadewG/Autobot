@@ -9,6 +9,8 @@ const emailIntakeService = require('../services/email-intake-service');
 
 describe('Inbound email intake webhook', function () {
   let originalLogActivity;
+  let originalCreateMessage;
+  let originalQuery;
   let originalProcessInboundEmail;
   let originalExtractEmail;
   let originalIsEmailIntakeRecipient;
@@ -16,12 +18,16 @@ describe('Inbound email intake webhook', function () {
 
   beforeEach(function () {
     originalLogActivity = db.logActivity;
+    originalCreateMessage = db.createMessage;
+    originalQuery = db.query;
     originalProcessInboundEmail = sendgridService.processInboundEmail;
     originalExtractEmail = sendgridService.extractEmail;
     originalIsEmailIntakeRecipient = emailIntakeService.isEmailIntakeRecipient;
     originalCreateEmailIntakeCase = emailIntakeService.createEmailIntakeCase;
 
     db.logActivity = async () => ({ id: 1 });
+    db.createMessage = async () => ({ id: 777 });
+    db.query = async () => ({ rows: [] });
     sendgridService.extractEmail = (value) => {
       const match = String(value || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       return match ? match[0].toLowerCase() : String(value || '').toLowerCase();
@@ -30,6 +36,8 @@ describe('Inbound email intake webhook', function () {
 
   afterEach(function () {
     db.logActivity = originalLogActivity;
+    db.createMessage = originalCreateMessage;
+    db.query = originalQuery;
     sendgridService.processInboundEmail = originalProcessInboundEmail;
     sendgridService.extractEmail = originalExtractEmail;
     emailIntakeService.isEmailIntakeRecipient = originalIsEmailIntakeRecipient;
@@ -116,5 +124,38 @@ describe('Inbound email intake webhook', function () {
     assert.strictEqual(inboundPayload.to, 'normal-inbox@example.com');
     assert.strictEqual(inboundPayload.subject, 'Normal reply');
     assert.strictEqual(inboundPayload.text, 'Body text');
+  });
+
+  it('links unmatched inbound emails by explicit autobot case reference', async function () {
+    const seenQueries = [];
+
+    emailIntakeService.isEmailIntakeRecipient = () => false;
+    sendgridService.processInboundEmail = async () => ({ matched: false });
+    db.query = async (sql, params) => {
+      seenQueries.push({ sql: String(sql), params });
+      if (String(sql).includes('SELECT id FROM cases')) {
+        return { rows: [{ id: 25156 }] };
+      }
+      if (String(sql).includes('SELECT id FROM email_threads')) {
+        return { rows: [{ id: 58 }] };
+      }
+      if (String(sql).includes('UPDATE messages SET case_id')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    };
+
+    const response = await supertest(createApp())
+      .post('/webhooks/inbound')
+      .field('from', 'Warren County <programmers@usnx.com>')
+      .field('to', 'sam@foib-request.com')
+      .field('subject', 'Submission Confirmation')
+      .field('text', 'Please note this submission. Case ID: 25156');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.case_id, 25156);
+    assert.ok(seenQueries.some((q) => q.sql.includes('SELECT id FROM cases')));
+    assert.ok(seenQueries.some((q) => q.sql.includes('UPDATE messages SET case_id')));
   });
 });

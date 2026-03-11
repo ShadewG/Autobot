@@ -10,6 +10,7 @@ const { notify } = require('../services/event-bus');
 const { transitionCaseRuntime } = require('../services/case-runtime');
 const { detectPortalSystemEmail } = require('../utils/portal-utils');
 const emailIntakeService = require('../services/email-intake-service');
+const { extractReferencedCaseId } = require('../utils/case-reference-extraction');
 
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
@@ -371,6 +372,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
                 });
 
                 const savedMsgId = unmatchedMessage?.id;
+                const referencedCaseId = extractReferencedCaseId(subjectRaw, textRaw, htmlRaw);
 
                 // Check if this is a portal system email (password reset, welcome, etc.)
                 // These don't need matching or analysis — just log and mark processed
@@ -383,6 +385,47 @@ router.post('/inbound', upload.any(), async (req, res) => {
                         message_id: savedMsgId, from: fromRaw, subject: subjectRaw,
                         portal_system_type: portalSystemInfo.type, provider: portalSystemInfo.provider
                     });
+                } else if (referencedCaseId) {
+                    const caseResult = await db.query('SELECT id FROM cases WHERE id = $1 LIMIT 1', [referencedCaseId]);
+                    if (caseResult.rows.length > 0) {
+                        let threadId = null;
+                        const threadResult = await db.query(
+                            'SELECT id FROM email_threads WHERE case_id = $1 ORDER BY created_at DESC LIMIT 1',
+                            [referencedCaseId]
+                        );
+                        if (threadResult.rows.length > 0) {
+                            threadId = threadResult.rows[0].id;
+                        }
+
+                        await db.query(
+                            'UPDATE messages SET case_id = $1, thread_id = COALESCE($2, thread_id) WHERE id = $3',
+                            [referencedCaseId, threadId, savedMsgId]
+                        );
+
+                        if (analysisQueue) {
+                            await analysisQueue.add('analyze-response', {
+                                messageId: savedMsgId,
+                                caseId: referencedCaseId,
+                                instantReply: false
+                            }, {
+                                jobId: `analyze-${savedMsgId}`,
+                                delay: 2000,
+                                attempts: 3,
+                                backoff: { type: 'exponential', delay: 3000 }
+                            });
+                        }
+
+                        await db.logActivity('webhook_case_reference_matched',
+                            `Linked inbound MSG #${savedMsgId} to case #${referencedCaseId} via explicit case reference`,
+                            { message_id: savedMsgId, case_id: referencedCaseId, from: fromRaw, subject: subjectRaw }
+                        );
+
+                        return res.status(200).json({
+                            success: true,
+                            message: 'Email received and linked by case reference',
+                            case_id: referencedCaseId
+                        });
+                    }
                 } else {
                 // Retry: try portal signal matching on the saved message
                 // processInboundEmail uses thread headers which aren't available here,
