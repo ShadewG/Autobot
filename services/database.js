@@ -184,6 +184,34 @@ function choosePreferredPortalUrl(values) {
         .sort((left, right) => scorePortalUrl(right) - scorePortalUrl(left))[0] || null;
 }
 
+function buildResearchHandoffDraftBody(proposalData) {
+    const actionType = String(proposalData?.actionType || "").trim().toUpperCase();
+    const incomingStatus = String(proposalData?.status || "PENDING_APPROVAL").trim().toUpperCase();
+    const existingDraft = String(proposalData?.draftBodyText || "").trim();
+    if (actionType !== "RESEARCH_AGENCY" || incomingStatus !== "PENDING_APPROVAL" || existingDraft) {
+        return null;
+    }
+
+    const subjectName = String(proposalData?.draftSubject || proposalData?.caseName || `case ${proposalData?.caseId || ""}`).trim();
+    const reasoningLines = Array.isArray(proposalData?.reasoning)
+        ? proposalData.reasoning.map((line) => String(line || "").trim()).filter(Boolean)
+        : [];
+    const bullets = reasoningLines.slice(0, 4).map((line) => `- ${line}`);
+    if (bullets.length === 0) {
+        bullets.push("- Research completed, but a verified delivery path was not found.");
+    }
+
+    return [
+        `Research handoff required for ${subjectName}.`,
+        "",
+        "What the system found:",
+        ...bullets,
+        "",
+        "Next step:",
+        "Review the suggested redirect target, add a verified portal/email/contact if you have one, or retry research with better clues.",
+    ].join("\n");
+}
+
 function mergeCaseAgencyNotes(existingNotes, duplicateRows, mergedEmail, mergedPortal) {
     const notes = [];
     for (const note of existingNotes.map((value) => String(value || '').trim()).filter(Boolean)) {
@@ -2484,6 +2512,14 @@ class DatabaseService {
             proposalData.canAutoExecute = false;
             proposalData.draftSubject = proposalData.draftSubject || `Action needed: case ${proposalData.caseId}`;
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
+        }
+
+        const researchHandoffBody = buildResearchHandoffDraftBody({
+            ...proposalData,
+            status: incomingStatus,
+        });
+        if (researchHandoffBody) {
+            proposalData.draftBodyText = researchHandoffBody;
         }
 
         let caseRow = null;

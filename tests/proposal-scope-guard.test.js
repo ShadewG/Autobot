@@ -218,4 +218,74 @@ describe("proposal scoping and queue guardrails", function () {
     assert.strictEqual(queryStub.getCall(1).args[1][25], "DISMISSED");
     assert.strictEqual(queryStub.getCall(1).args[1][26], 778);
   });
+
+  it("fills operator-facing body text for pending research handoff proposals", async function () {
+    const queryStub = sinon.stub(db, "query");
+    sinon.stub(db, "_ensureProposalContentVersion").resolves(null);
+    sinon.stub(db, "updateCaseStatus").resolves({});
+    sinon.stub(db, "getProposalById").resolves({
+      id: 904,
+      proposal_key: "7005:research:ca779:RESEARCH_AGENCY:0",
+      status: "PENDING_APPROVAL",
+      can_auto_execute: false,
+      requires_human: true,
+      case_agency_id: 779,
+      draft_body_text: "Research handoff required for Research handoff: redirect to correct custodian.\n\nWhat the system found:\n- WRONG AGENCY: Current agency has no jurisdiction.\n- Research identified the correct federal custodian.\n- No email or portal was found for the suggested agency.\n\nNext step:\nReview the suggested redirect target, add a verified portal/email/contact if you have one, or retry research with better clues.",
+    });
+    sinon.stub(db, "getCaseById").resolves({
+      id: 7005,
+      status: "needs_human_review",
+      case_name: "Redirect case",
+      subject_name: "Redirect subject",
+      agency_name: "Wrong Police Department",
+      agency_email: "pending-research@placeholder.invalid",
+      portal_url: null,
+      import_warnings: [],
+    });
+    sinon.stub(db, "resolveProposalCaseAgency").resolves({
+      id: 779,
+      case_id: 7005,
+      agency_name: "Wrong Police Department",
+      agency_email: "pending-research@placeholder.invalid",
+      portal_url: null,
+      is_primary: true,
+    });
+
+    queryStub.onCall(0).resolves({ rows: [], rowCount: 0 });
+    queryStub.onCall(1).resolves({
+      rows: [{
+        id: 904,
+        proposal_key: "7005:research:ca779:RESEARCH_AGENCY:0",
+        status: "PENDING_APPROVAL",
+        can_auto_execute: false,
+        requires_human: true,
+        case_agency_id: 779,
+        draft_body_text: "Research handoff required for Research handoff: redirect to correct custodian.\n\nWhat the system found:\n- WRONG AGENCY: Current agency has no jurisdiction.\n- Research identified the correct federal custodian.\n- No email or portal was found for the suggested agency.\n\nNext step:\nReview the suggested redirect target, add a verified portal/email/contact if you have one, or retry research with better clues.",
+      }],
+      rowCount: 1,
+    });
+
+    const proposal = await db.upsertProposal({
+      proposalKey: "7005:research:ca779:RESEARCH_AGENCY:0",
+      caseId: 7005,
+      runId: 8804,
+      actionType: "RESEARCH_AGENCY",
+      draftSubject: "Research handoff: redirect to correct custodian",
+      draftBodyText: "",
+      reasoning: [
+        "WRONG AGENCY: Current agency has no jurisdiction.",
+        "Research identified the correct federal custodian.",
+        "No email or portal was found for the suggested agency.",
+      ],
+      canAutoExecute: false,
+      requiresHuman: true,
+      status: "PENDING_APPROVAL",
+      caseAgencyId: 779,
+    });
+
+    assert.ok(proposal.draft_body_text.includes("Research handoff required"));
+    assert.ok(proposal.draft_body_text.includes("Current agency has no jurisdiction"));
+    assert.ok(proposal.draft_body_text.includes("retry research"));
+    assert.strictEqual(queryStub.callCount, 2);
+  });
 });
