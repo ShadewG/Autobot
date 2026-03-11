@@ -118,6 +118,63 @@ async function latestInboundRequestsEmailResend(caseId: number): Promise<boolean
   }
 }
 
+const STATUS_UPDATE_COMPLETED_PORTAL_STATUSES = new Set([
+  "completed",
+  "submitted",
+  "success",
+  "succeeded",
+]);
+
+async function getStatusUpdateSubmissionEvidence(caseId: number, caseData?: any): Promise<{
+  hasEvidence: boolean;
+  reasons: string[];
+  outboundCount: number;
+  completedPortalCount: number;
+}> {
+  const resolvedCaseData = caseData || await db.getCaseById(caseId);
+  const reasons: string[] = [];
+
+  const hasSendDate = Boolean(resolvedCaseData?.send_date);
+  if (hasSendDate) {
+    reasons.push("Case has a recorded send date");
+  }
+
+  const outboundResult = await db.query(
+    `SELECT COUNT(*)::int AS outbound_count
+     FROM messages
+     WHERE case_id = $1
+       AND direction = 'outbound'`,
+    [caseId]
+  );
+  const outboundCount = Number(outboundResult.rows?.[0]?.outbound_count || 0);
+  if (outboundCount > 0) {
+    reasons.push(`Prior outbound correspondence already exists (${outboundCount} message${outboundCount === 1 ? "" : "s"})`);
+  }
+
+  const completedPortalResult = await db.query(
+    `SELECT COUNT(*)::int AS completed_count
+     FROM portal_submissions
+     WHERE case_id = $1
+       AND status = 'completed'`,
+    [caseId]
+  );
+  const completedPortalCount = Number(completedPortalResult.rows?.[0]?.completed_count || 0);
+
+  const lastPortalStatus = String(resolvedCaseData?.last_portal_status || "").trim().toLowerCase();
+  const hasCompletedPortal = STATUS_UPDATE_COMPLETED_PORTAL_STATUSES.has(lastPortalStatus)
+    || completedPortalCount > 0;
+  if (hasCompletedPortal) {
+    reasons.push("Case has a completed portal submission");
+  }
+
+  return {
+    hasEvidence: hasSendDate || outboundCount > 0 || hasCompletedPortal,
+    reasons,
+    outboundCount,
+    completedPortalCount,
+  };
+}
+
 function clarificationLooksLikeRequestFormWorkflow(latestInbound: any, latestAnalysis: any): boolean {
   const corpus = [
     latestInbound?.subject || "",
@@ -1775,6 +1832,17 @@ export async function validateDecision(
     return { valid: false, reason: "DENIAL without a specific subtype should use SEND_REBUTTAL or CLOSE_CASE, not SEND_CLARIFICATION" };
   }
 
+  if (classification !== "DENIAL" && aiDecisionResult.action === "SEND_STATUS_UPDATE") {
+    const caseData = await db.getCaseById(caseId);
+    const submissionEvidence = await getStatusUpdateSubmissionEvidence(caseId, caseData);
+    if (!submissionEvidence.hasEvidence) {
+      return {
+        valid: false,
+        reason: "SEND_STATUS_UPDATE requires real submission evidence (send date, prior outbound, or completed portal submission) — imported request references alone are not sufficient",
+      };
+    }
+  }
+
   if (ALWAYS_GATE_ACTIONS.includes(aiDecisionResult.action as ActionType) && !aiDecisionResult.requiresHuman) {
     return { valid: false, reason: `${aiDecisionResult.action} must require human review` };
   }
@@ -2704,25 +2772,16 @@ export async function decideNextAction(
               researchLevel: "deep",
             });
           }
-          const outboundResult = await db.query(
-            `SELECT COUNT(*)::int AS outbound_count
-             FROM messages
-             WHERE case_id = $1
-               AND direction = 'outbound'`,
-            [caseId]
-          );
-          const outboundCount = Number(outboundResult.rows[0]?.outbound_count || 0);
-          const hasPriorSubmission =
-            Boolean(caseDataForReview?.send_date) ||
-            outboundCount > 0;
+          const submissionEvidence = await getStatusUpdateSubmissionEvidence(caseId, caseDataForReview);
+          const hasPriorSubmission = submissionEvidence.hasEvidence;
           if (hasPriorSubmission) {
             return decision("SEND_STATUS_UPDATE", {
               adjustmentInstruction: ri || "Send a status update by email instead of portal",
               reasoning: [
                 ...reasoning,
-                outboundCount > 0
-                  ? `Prior outbound correspondence already exists (${outboundCount} message${outboundCount === 1 ? "" : "s"})`
-                  : "Case already has a recorded send date",
+                ...(submissionEvidence.reasons.length > 0
+                  ? submissionEvidence.reasons
+                  : ["Case has prior submission evidence"]),
                 "Switching to a status update instead of drafting another initial request",
               ],
             });
