@@ -135,8 +135,11 @@ class CronService {
                     const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
                     if (cases.length > 0) {
-                        console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing)`);
-                        await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
+                        const invocationId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                        console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing) [${invocationId}]`);
+                        await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`, {
+                            invocation_id: invocationId
+                        });
                     }
                 } catch (error) {
                     await errorTrackingService.captureException(error, {
