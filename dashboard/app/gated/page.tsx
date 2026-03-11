@@ -1025,6 +1025,7 @@ function MonitorPageContent() {
   } | null>(null);
   const [showDismissDialog, setShowDismissDialog] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [showQueueList, setShowQueueList] = useState(false);
   const initialCaseApplied = useRef(false);
   const reviewInstructionRef = useRef<HTMLTextAreaElement | null>(null);
   const adjustInstructionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1308,6 +1309,11 @@ function MonitorPageContent() {
           e.preventDefault();
           setShowDismissDialog(true);
         }
+      }
+      // Toggle queue list with 'l'
+      if (e.key === "l") {
+        e.preventDefault();
+        setShowQueueList((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -2197,13 +2203,57 @@ function MonitorPageContent() {
               {bulkMode ? "Exit Bulk" : "Bulk"}
             </Button>
           )}
-          {!bulkMode && (
+          {!bulkMode && (<>
+            <Button
+              variant={showQueueList ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setShowQueueList(!showQueueList)}
+              title="Toggle queue list (l)"
+            >
+              <Activity className="h-3 w-3" />
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => mutate()} title="Refresh">
               <RefreshCw className="h-3 w-3" />
             </Button>
-          )}
+          </>)}
         </div>
       </div>
+
+      {/* ── Compact Queue List ────────────────── */}
+      {showQueueList && queue.length > 0 && !bulkMode && (
+        <div className="mb-3 border rounded bg-card max-h-[200px] overflow-y-auto">
+          {queue.map((item, idx) => {
+            const isActive = idx === safeIndex;
+            const caseId = item.type === "proposal" ? item.data.case_id : item.data.id;
+            const agency = item.type === "proposal"
+              ? deriveDisplayAgencyName(item.data)
+              : (item.data as HumanReviewCase).agency_name || "Unknown";
+            const actionLabel = item.type === "proposal"
+              ? (ACTION_LABELS[(item.data as PendingProposal).action_type] || (item.data as PendingProposal).action_type?.replace(/_/g, " "))
+              : (item.data as HumanReviewCase).status?.replace(/_/g, " ");
+            return (
+              <button
+                key={item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`}
+                className={cn(
+                  "w-full text-left px-2 py-1 text-[10px] flex items-center gap-2 border-b border-border/30 last:border-b-0 transition-colors",
+                  isActive ? "bg-muted/60" : "hover:bg-muted/30"
+                )}
+                onClick={() => setCurrentIndex(idx)}
+              >
+                <span className="text-muted-foreground font-mono shrink-0 w-6 text-right">{idx + 1}.</span>
+                <span className="text-muted-foreground font-mono shrink-0">#{caseId}</span>
+                {item.type === "proposal" && (
+                  <span className="text-muted-foreground/50 font-mono shrink-0">P{item.data.id}</span>
+                )}
+                <span className="truncate flex-1">{agency}</span>
+                <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 h-3.5">
+                  {actionLabel}
+                </Badge>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Bulk Select Mode ─────────────────── */}
       {bulkMode && bulkProposals.length > 0 && (
@@ -2353,6 +2403,9 @@ function MonitorPageContent() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground font-mono">
                     #{selectedItem.data.case_id}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/50 font-mono">
+                    P{selectedItem.data.id}
                   </span>
                   <h2 className="text-sm font-semibold">
                     {selectedItem.data.case_name || "Unnamed Case"}
