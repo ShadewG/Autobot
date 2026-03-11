@@ -17,6 +17,7 @@ import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
+import { isTransientError } from "../lib/transient-errors";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
@@ -40,13 +41,21 @@ async function waitForHumanDecision(
 export const processFollowup = task({
   id: "process-followup",
   maxDuration: 600,
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 3 },
 
   onFailure: async ({ payload, error }) => {
     if (!payload || typeof payload !== "object") return;
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
+      if (isTransientError(error)) {
+        await db.logActivity("agent_run_transient_failure", `Process-followup hit transient error for case ${caseId}, will not escalate: ${String(error).substring(0, 200)}`, {
+          case_id: caseId,
+          actor_type: "system",
+          source_service: "trigger.dev",
+        });
+        return;
+      }
       await caseRuntime.transitionCaseRuntime(caseId, "RUN_FAILED", {
         runId: Number.isFinite(Number((payload as any).runId)) ? Number((payload as any).runId) : undefined,
         error: String(error).substring(0, 500),

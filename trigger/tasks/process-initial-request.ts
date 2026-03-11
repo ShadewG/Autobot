@@ -18,6 +18,7 @@ import { scheduleFollowups } from "../steps/schedule-followups";
 import { commitState } from "../steps/commit-state";
 import { researchContext, emptyResearchContext } from "../steps/research-context";
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
+import { isTransientError } from "../lib/transient-errors";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
 const { evaluateImportAutoDispatchSafety } = require("../../utils/request-normalization");
@@ -88,6 +89,12 @@ export async function draftInitialRequestProposalsForCase(
   const activeCaseAgencies = Array.isArray(caseAgencies)
     ? caseAgencies.filter((agency: any) => agency && agency.is_active !== false)
     : [];
+  const inferredSingleAgencyId = explicitCaseAgencyId
+    ?? (activeCaseAgencies.length === 1
+      ? Number(activeCaseAgencies[0]?.id || 0) || null
+      : (routeMode
+        ? Number((activeCaseAgencies.find((agency: any) => agency?.is_primary) || activeCaseAgencies[0])?.id || 0) || null
+        : null));
 
   if (explicitCaseAgencyId || routeMode || activeCaseAgencies.length <= 1) {
     const singleDraft = await draftInitialRequest(
@@ -95,7 +102,7 @@ export async function draftInitialRequestProposalsForCase(
       runId,
       autopilotMode,
       routeMode,
-      explicitCaseAgencyId
+      inferredSingleAgencyId
     );
     return {
       mode: "single" as const,
@@ -165,13 +172,21 @@ async function waitForHumanDecision(
 export const processInitialRequest = task({
   id: "process-initial-request",
   maxDuration: 600,
-  retry: { maxAttempts: 2 },
+  retry: { maxAttempts: 3 },
 
   onFailure: async ({ payload, error }) => {
     if (!payload || typeof payload !== "object") return;
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
+      if (isTransientError(error)) {
+        await db.logActivity("agent_run_transient_failure", `Process-initial-request hit transient error for case ${caseId}, will not escalate: ${String(error).substring(0, 200)}`, {
+          case_id: caseId,
+          actor_type: "system",
+          source_service: "trigger.dev",
+        });
+        return;
+      }
       await caseRuntime.transitionCaseRuntime(caseId, "RUN_FAILED", {
         runId: Number.isFinite(Number((payload as any).runId)) ? Number((payload as any).runId) : undefined,
         error: String(error).substring(0, 500),
