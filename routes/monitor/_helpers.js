@@ -12,6 +12,7 @@ const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
 const { buildApprovalDraftUpdates } = require('../../services/proposal-draft-history');
 const { buildHumanDecision } = proposalLifecycle;
+const feeWorkflowService = require('../../services/fee-workflow-service');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -181,7 +182,7 @@ async function processProposalDecision(
         draft_subject = undefined,
     } = {}
 ) {
-    const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS', 'RETRY_RESEARCH'];
+    const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS', 'RETRY_RESEARCH', 'ADD_TO_INVOICING', 'WAIT_FOR_GOOD_TO_PAY'];
     if (!allowedActions.includes(action)) {
         const err = new Error(`action must be one of: ${allowedActions.join(', ')}`);
         err.status = 400;
@@ -260,6 +261,19 @@ async function processProposalDecision(
         reason,
         decidedBy: userId || decidedBy,
     });
+
+    const feeWorkflowResult = await feeWorkflowService.handleFeeProposalDecision(proposal, {
+        action,
+        humanDecision,
+        reason: reason || null,
+        userId: userId || null,
+        decidedBy: userId || decidedBy,
+    });
+    if (feeWorkflowResult.handled) {
+        notify('info', feeWorkflowResult.response.message, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
+        return feeWorkflowResult.response;
+    }
 
     if (action === 'RETRY_RESEARCH') {
         const humanDecisionForRetry = buildHumanDecision(action, {

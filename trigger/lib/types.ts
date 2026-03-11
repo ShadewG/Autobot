@@ -62,7 +62,7 @@ export type ActionType =
   | "SUBMIT_PORTAL"
   | "SEND_PDF_EMAIL";
 
-export type HumanDecisionAction = "APPROVE" | "ADJUST" | "DISMISS" | "WITHDRAW";
+export type HumanDecisionAction = "APPROVE" | "ADJUST" | "DISMISS" | "WITHDRAW" | "ADD_TO_INVOICING" | "WAIT_FOR_GOOD_TO_PAY";
 
 export interface HumanDecision {
   action: HumanDecisionAction;

@@ -212,7 +212,9 @@ export async function createProposalAndGate(
     caseAgencyId: effectiveCaseAgencyId || null,
     adjustmentCount: adjustmentCount || 0,
     lessonsApplied: lessonsApplied || null,
-    gateOptions: gateOptions || ["APPROVE", "ADJUST", "DISMISS", "WITHDRAW"],
+    gateOptions: gateOptions || (actionType === "ACCEPT_FEE"
+      ? ["APPROVE", "ADD_TO_INVOICING", "WAIT_FOR_GOOD_TO_PAY", "ADJUST", "DISMISS", "WITHDRAW"]
+      : ["APPROVE", "ADJUST", "DISMISS", "WITHDRAW"]),
     actionChain: hasChain ? chainActions : null,
     chainId,
     chainStep: hasChain ? 0 : null,

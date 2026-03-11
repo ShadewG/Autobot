@@ -2848,6 +2848,10 @@ export async function decideNextAction(
           adjustmentInstruction: ri,
           reasoning,
         }),
+        send_status_update: async () => decision("SEND_STATUS_UPDATE", {
+          adjustmentInstruction: ri || 'Send a short update confirming payment/asking the agency to proceed with the request',
+          reasoning,
+        }),
         decline_fee: async () => decision("DECLINE_FEE", {
           adjustmentInstruction: ri || "Decline the quoted fee and explain why",
           reasoning,

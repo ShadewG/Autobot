@@ -375,4 +375,76 @@ describe('Review and control state regressions', function () {
     assert.strictEqual(controlState, 'BLOCKED');
     assert.deepStrictEqual(mismatches, []);
   });
+
+  it('treats waiting-good-to-pay fee cases with no proposal as blocked manual work', function () {
+    const caseData = {
+      id: 25161,
+      status: 'needs_human_fee_approval',
+      requires_human: true,
+      pause_reason: 'WAITING_GOOD_TO_PAY',
+      substatus: 'Waiting for good-to-pay approval before accepting fee',
+    };
+
+    const reviewState = resolveReviewState({
+      caseData,
+      activeProposal: null,
+      activeRun: null,
+    });
+
+    const controlState = resolveControlState({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    const mismatches = detectControlMismatches({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    assert.strictEqual(reviewState, 'IDLE');
+    assert.strictEqual(controlState, 'BLOCKED');
+    assert.deepStrictEqual(mismatches, []);
+  });
+
+  it('treats waiting-invoice-payment fee cases with no proposal as blocked manual work', function () {
+    const caseData = {
+      id: 25161,
+      status: 'needs_human_fee_approval',
+      requires_human: true,
+      pause_reason: 'WAITING_INVOICE_PAYMENT',
+      substatus: 'Added to invoicing — waiting for payment',
+    };
+
+    const reviewState = resolveReviewState({
+      caseData,
+      activeProposal: null,
+      activeRun: null,
+    });
+
+    const controlState = resolveControlState({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    const mismatches = detectControlMismatches({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    assert.strictEqual(reviewState, 'IDLE');
+    assert.strictEqual(controlState, 'BLOCKED');
+    assert.deepStrictEqual(mismatches, []);
+  });
 });

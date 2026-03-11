@@ -143,6 +143,36 @@ test('needs_contact_info without proposal → IDLE manual handoff', () => {
     assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
 });
 
+test('waiting good to pay without proposal → IDLE manual handoff', () => {
+    const result = resolveReviewState({
+        caseData: {
+            id: 1301,
+            status: 'needs_human_fee_approval',
+            requires_human: true,
+            pause_reason: 'WAITING_GOOD_TO_PAY',
+            substatus: 'Waiting for good-to-pay approval before accepting fee',
+        },
+        activeProposal: null,
+        activeRun: null,
+    });
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
+});
+
+test('waiting invoice payment without proposal → IDLE manual handoff', () => {
+    const result = resolveReviewState({
+        caseData: {
+            id: 1302,
+            status: 'needs_human_fee_approval',
+            requires_human: true,
+            pause_reason: 'WAITING_INVOICE_PAYMENT',
+            substatus: 'Added to invoicing — waiting for payment',
+        },
+        activeProposal: null,
+        activeRun: null,
+    });
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
+});
+
 test('PENDING_PORTAL proposal → DECISION_REQUIRED', () => {
     const result = resolveReviewState({
         caseData: { id: 131, status: 'needs_human_review', requires_human: true, pause_reason: 'UNSPECIFIED' },

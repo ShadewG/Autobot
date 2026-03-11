@@ -2542,6 +2542,11 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 if (!value) return;
                 if (propSet.has(name)) properties[name] = { url: value };
             };
+            const setMultiSelect = (name, values) => {
+                if (!Array.isArray(values)) return;
+                const normalized = values.map((value) => String(value || '').trim()).filter(Boolean);
+                if (propSet.has(name)) properties[name] = { multi_select: normalized.map((name) => ({ name })) };
+            };
 
             const liveStatusPropName = this.liveStatusProperty;
 
@@ -2611,6 +2616,18 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             // Denial tracking
             setRichText('Denial Reason', updates.denial_reason);
             setDate('Case Denied Date', updates.denial_date);
+
+            // Fee workflow / invoicing fields
+            setRichText('Payment Notes', updates.payment_notes);
+            setRichText('Mailing Address', updates.mailing_address);
+            setUrl('Payment Link', updates.payment_link);
+            setRichText('Payment Link Login', updates.payment_link_login);
+            setRichText('Invoice #', updates.invoice_number);
+            setRichText('Vendor', updates.vendor);
+            setDate('Invoice Added Date', updates.invoice_added_date);
+            setDate('Invoice Status Change', updates.invoice_status_change);
+            setDate('Date Payment Sent', updates.date_payment_sent);
+            setMultiSelect('Label', updates.labels);
 
             if (Object.keys(properties).length === 0) {
                 console.warn(`No valid Notion properties to update for page ${pageId}`);

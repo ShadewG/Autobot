@@ -13,6 +13,7 @@ const draftQualityEvalService = require('./draft-quality-eval-service');
 const qualityReportService = require('./quality-report-service');
 const errorTrackingService = require('./error-tracking-service');
 const portalStatusMonitorService = require('./portal-status-monitor-service');
+const feeWorkflowService = require('./fee-workflow-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const { countsTowardDismissCircuitBreaker } = require('./proposal-lifecycle');
 const { tasks } = require('@trigger.dev/sdk');
@@ -88,6 +89,7 @@ class CronService {
         weeklyQualityReport:     100006,
         draftQualityEval:        100007,
         dailyOperatorDigest:     100008,
+        feeWorkflowMonitor:      100022,
         priorityAutoEscalate:    100009,
         stuckResponseCheck:      100010,
         readyToSendSweep:        100011,
@@ -328,6 +330,24 @@ class CronService {
                         operation: 'daily_operator_digest_cron',
                     });
                     console.error('Error in daily operator digest cron:', error);
+                }
+            });
+        }, null, true, 'America/New_York');
+
+        // Advance fee workflow cases waiting on invoicing/good-to-pay every 10 minutes
+        this.jobs.feeWorkflowMonitor = new CronJob('4,14,24,34,44,54 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.feeWorkflowMonitor, async () => {
+                try {
+                    const result = await feeWorkflowService.sweepFeeWorkflowCases({ limit: 25 });
+                    if ((result.advanced || []).length > 0) {
+                        console.log('[fee-workflow-cron] advanced ' + result.advanced.length + ' case(s)');
+                    }
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'fee_workflow_monitor_cron',
+                    });
+                    console.error('Error in fee workflow monitor cron:', error);
                 }
             });
         }, null, true, 'America/New_York');
