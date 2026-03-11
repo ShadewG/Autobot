@@ -42,7 +42,17 @@ function normalizeEmailKey(email = '') {
 
 function normalizePortalKey(portalUrl = '') {
     const normalized = normalizePortalUrl(portalUrl);
-    return normalized ? normalized.toLowerCase() : null;
+    if (!normalized) return null;
+
+    try {
+        const url = new URL(normalized);
+        const host = url.hostname.toLowerCase();
+        const provider = detectPortalProviderByUrl(normalized);
+        if (provider?.name) return `${provider.name}:${host}`;
+        return normalized.toLowerCase();
+    } catch (error) {
+        return normalized.toLowerCase();
+    }
 }
 
 function hasSyntheticPlaceholderBackfill({ agencyEmail, portalUrl, addedSource }) {
@@ -53,40 +63,77 @@ function hasSyntheticPlaceholderBackfill({ agencyEmail, portalUrl, addedSource }
     );
 }
 
+function isCaseRowBackfillAgency(agency) {
+    return ['case_row_backfill', 'case_row_fallback'].includes(String(agency?.added_source || ''));
+}
+
+function shouldCollapsePortalBackfillAgency(existing, agency) {
+    const existingPortalKey = normalizePortalKey(existing?.portal_url);
+    const nextPortalKey = normalizePortalKey(agency?.portal_url);
+    if (!existingPortalKey || !nextPortalKey || existingPortalKey !== nextPortalKey) {
+        return false;
+    }
+
+    const existingBackfill = isCaseRowBackfillAgency(existing);
+    const nextBackfill = isCaseRowBackfillAgency(agency);
+    if (existingBackfill === nextBackfill) {
+        return false;
+    }
+
+    const canonicalAgency = existingBackfill ? agency : existing;
+    if (!canonicalAgency?.agency_id && !normalizeEmailKey(canonicalAgency?.agency_email)) {
+        return false;
+    }
+
+    return true;
+}
+
+function mergeCaseAgencyRows(existing, agency) {
+    const existingUpdatedAt = new Date(existing.updated_at || existing.created_at || 0).getTime();
+    const nextUpdatedAt = new Date(agency.updated_at || agency.created_at || 0).getTime();
+    const preferred = nextUpdatedAt > existingUpdatedAt ? agency : existing;
+    const fallback = preferred === agency ? existing : agency;
+
+    return {
+        ...preferred,
+        is_primary: Boolean(existing.is_primary || agency.is_primary),
+        is_active: existing.is_active !== false || agency.is_active !== false,
+        agency_email: preferred.agency_email || fallback.agency_email || null,
+        portal_url: normalizePortalUrl(preferred.portal_url || fallback.portal_url || null),
+        portal_provider: preferred.portal_provider || fallback.portal_provider || null,
+        notes: preferred.notes || fallback.notes || null,
+        contact_research_notes: preferred.contact_research_notes || fallback.contact_research_notes || null,
+    };
+}
+
 function dedupeCanonicalCaseAgencies(caseAgencies = []) {
-    const deduped = new Map();
+    const deduped = [];
 
     for (const agency of caseAgencies) {
         const dedupeKey =
             [normalizeAgencyNameKey(agency?.agency_name), normalizeEmailKey(agency?.agency_email), normalizePortalKey(agency?.portal_url)]
                 .filter(Boolean)
                 .join('|')
-            || `case-agency-${agency?.id ?? deduped.size + 1}`;
+            || `case-agency-${agency?.id ?? deduped.length + 1}`;
 
-        const existing = deduped.get(dedupeKey);
-        if (!existing) {
-            deduped.set(dedupeKey, agency);
+        const existingIndex = deduped.findIndex((entry) => {
+            const entryKey = [
+                normalizeAgencyNameKey(entry?.agency_name),
+                normalizeEmailKey(entry?.agency_email),
+                normalizePortalKey(entry?.portal_url),
+            ].filter(Boolean).join('|') || `case-agency-${entry?.id ?? 'existing'}`;
+            return entryKey === dedupeKey || shouldCollapsePortalBackfillAgency(entry, agency);
+        });
+
+        if (existingIndex === -1) {
+            deduped.push(agency);
             continue;
         }
 
-        const existingUpdatedAt = new Date(existing.updated_at || existing.created_at || 0).getTime();
-        const nextUpdatedAt = new Date(agency.updated_at || agency.created_at || 0).getTime();
-        const preferred = nextUpdatedAt > existingUpdatedAt ? agency : existing;
-        const fallback = preferred === agency ? existing : agency;
-
-        deduped.set(dedupeKey, {
-            ...preferred,
-            is_primary: Boolean(existing.is_primary || agency.is_primary),
-            is_active: existing.is_active !== false || agency.is_active !== false,
-            agency_email: preferred.agency_email || fallback.agency_email || null,
-            portal_url: normalizePortalUrl(preferred.portal_url || fallback.portal_url || null),
-            portal_provider: preferred.portal_provider || fallback.portal_provider || null,
-            notes: preferred.notes || fallback.notes || null,
-            contact_research_notes: preferred.contact_research_notes || fallback.contact_research_notes || null,
-        });
+        deduped[existingIndex] = mergeCaseAgencyRows(deduped[existingIndex], agency);
     }
 
-    return Array.from(deduped.values());
+    return deduped;
 }
 
 function buildExistingContactFallback(caseAgency, caseData) {
