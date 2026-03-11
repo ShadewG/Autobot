@@ -71,7 +71,20 @@ app.get('/api/debug/dashboard-status', (req, res) => {
     if (_fs.existsSync(chunkDir)) {
         chunkFiles = _fs.readdirSync(chunkDir);
     }
-    res.json({ dashboardPath, exists, files, queueExists, queueFiles, chunkDir, chunkFiles });
+    // Check if Bug icon exists in the queue page chunk
+    let hasBugButton = false;
+    if (chunkFiles.length > 0) {
+        const chunkContent = _fs.readFileSync(path.join(chunkDir, chunkFiles[0]), 'utf8');
+        hasBugButton = chunkContent.includes('Bugged') || chunkContent.includes('mark-bugged');
+    }
+    // Check build ID
+    let buildId = null;
+    const buildIdPath = path.join(dashboardPath, '_next', 'static');
+    if (_fs.existsSync(buildIdPath)) {
+        const buildDirs = _fs.readdirSync(buildIdPath).filter(f => f !== 'chunks' && f !== 'css' && f !== 'media');
+        buildId = buildDirs[0] || null;
+    }
+    res.json({ dashboardPath, exists, files, queueExists, queueFiles, chunkDir, chunkFiles, hasBugButton, buildId });
 });
 
 // Health check endpoint
