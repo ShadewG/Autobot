@@ -3202,8 +3202,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         if (this.databaseSchema && (now - this.databaseSchemaFetchedAt) < 5 * 60 * 1000) {
             return this.databaseSchema;
         }
-        // Cache failures for 60s to avoid hammering the Notion API when it's down
-        if (this._schemaFetchFailedAt && (now - this._schemaFetchFailedAt) < 60 * 1000) {
+        // Cache failures for 5 min (matching sync interval) to avoid hammering Notion when it's down
+        if (this._schemaFetchFailedAt && (now - this._schemaFetchFailedAt) < 5 * 60 * 1000) {
             return null;
         }
 
