@@ -43,6 +43,42 @@ describe('Request recovery helpers and portal reconciliation', function () {
       assert.strictEqual(deduped[0].notes, 'Primary agency');
     });
 
+    it('collapses stale portal backfill rows behind the canonical agency row', function () {
+      const deduped = dedupeCaseAgencies([
+        {
+          id: 59,
+          agency_id: 1102,
+          agency_name: 'Santa Rosa County Sheriff’s Office, Florida',
+          agency_email: 'records@srso.net',
+          portal_url: 'https://srsofl.justfoia.com/publicportal',
+          portal_provider: 'JustFOIA',
+          added_source: 'manual',
+          is_primary: true,
+          is_active: true,
+          updated_at: '2026-03-05T17:40:44.834Z',
+        },
+        {
+          id: 36,
+          agency_id: 152,
+          agency_name: 'Stow Police Department',
+          agency_email: 'stowpd@stow.oh.us',
+          portal_url: 'https://srsofl.justfoia.com/Forms/Launch/d705cbd6-1396-49b7-939e-8d86c5a87deb',
+          portal_provider: 'Auto-detected',
+          added_source: 'case_row_backfill',
+          is_primary: false,
+          is_active: true,
+          updated_at: '2026-03-04T10:54:26.618Z',
+        },
+      ]);
+
+      assert.strictEqual(deduped.length, 1);
+      assert.strictEqual(deduped[0].id, 59);
+      assert.strictEqual(deduped[0].agency_id, 1102);
+      assert.strictEqual(deduped[0].agency_name, 'Santa Rosa County Sheriff’s Office, Florida');
+      assert.strictEqual(deduped[0].agency_email, 'records@srso.net');
+      assert.strictEqual(deduped[0].portal_url, 'https://srsofl.justfoia.com/publicportal');
+    });
+
     it('filters duplicate research candidates that already exist on the case', function () {
       const candidates = filterExistingAgencyCandidates(
         [
