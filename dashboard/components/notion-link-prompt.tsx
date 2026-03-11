@@ -7,7 +7,7 @@ import { useAuth } from "./auth-provider";
 
 interface NotionName {
   name: string;
-  case_count: number;
+  email: string | null;
   linked_user_id: number | null;
   linked_user_name: string | null;
 }
@@ -112,9 +112,6 @@ export function NotionLinkPrompt() {
                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                 ) : null}
                 {n.name}
-                <span className="ml-1 text-muted-foreground">
-                  ({n.case_count})
-                </span>
               </Button>
             );
           })}

@@ -4116,6 +4116,33 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         }
         return resolved;
     }
+
+    /**
+     * List all people (workspace members) from Notion.
+     * Returns [{id, name, email, type}]
+     */
+    async listNotionPeople() {
+        const people = [];
+        let cursor;
+        do {
+            const response = await this.notion.users.list({
+                start_cursor: cursor,
+                page_size: 100,
+            });
+            for (const user of response.results) {
+                if (user.type === 'person') {
+                    people.push({
+                        id: user.id,
+                        name: user.name || null,
+                        email: user.person?.email || null,
+                        type: user.type,
+                    });
+                }
+            }
+            cursor = response.has_more ? response.next_cursor : undefined;
+        } while (cursor);
+        return people;
+    }
 }
 
 module.exports = new NotionService();

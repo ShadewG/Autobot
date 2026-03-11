@@ -31,7 +31,7 @@ interface PendingData {
 
 interface NotionName {
   name: string;
-  case_count: number;
+  email: string | null;
   linked_user_id: number | null;
   linked_user_name: string | null;
 }
@@ -605,8 +605,8 @@ function PortalLinkContent() {
                     <div>
                       <div className="text-sm text-foreground">{n.name}</div>
                       <div className="text-xs text-muted-foreground">
-                        {n.case_count} case{n.case_count !== 1 ? "s" : ""}
-                        {isTaken && ` \u00b7 linked to ${n.linked_user_name}`}
+                        {n.email || ""}
+                        {isTaken && `${n.email ? " \u00b7 " : ""}linked to ${n.linked_user_name}`}
                       </div>
                     </div>
                     {savingNotion ? (

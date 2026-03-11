@@ -39,27 +39,42 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * GET /notion-names — Unique Notion assignee names from imported cases
- * Used during onboarding so users can pick which Notion person they are.
+ * GET /notion-names — Notion workspace members for identity linking.
+ * Merges Notion people with local user mappings so the frontend
+ * can show which ones are already claimed.
  */
 router.get('/notion-names', async (req, res) => {
     try {
-        const result = await db.query(`
-            SELECT DISTINCT c.assigned_person AS name,
-                   COUNT(*)::int AS case_count,
-                   u.id AS linked_user_id,
-                   u.name AS linked_user_name
-            FROM cases c
-            LEFT JOIN users u ON u.notion_name IS NOT NULL
-                AND LOWER(u.notion_name) = LOWER(c.assigned_person)
-                AND u.active = true
-            WHERE c.assigned_person IS NOT NULL
-              AND TRIM(c.assigned_person) != ''
-            GROUP BY c.assigned_person, u.id, u.name
-            ORDER BY case_count DESC
-        `);
-        res.json({ success: true, names: result.rows });
+        const notionService = require('../services/notion-service');
+        const [notionPeople, users] = await Promise.all([
+            notionService.listNotionPeople(),
+            db.listUsers(true),
+        ]);
+
+        // Build a map of notion_name -> user for quick lookup
+        const linkedMap = {};
+        for (const u of users) {
+            if (u.notion_name) {
+                linkedMap[u.notion_name.toLowerCase()] = { id: u.id, name: u.name };
+            }
+        }
+
+        const names = notionPeople
+            .filter(p => p.name)
+            .map(p => {
+                const linked = linkedMap[p.name.toLowerCase()] || null;
+                return {
+                    name: p.name,
+                    email: p.email || null,
+                    linked_user_id: linked?.id || null,
+                    linked_user_name: linked?.name || null,
+                };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        res.json({ success: true, names });
     } catch (error) {
+        console.error('Error fetching Notion names:', error.message);
         res.status(500).json({ success: false, error: error.message });
     }
 });
