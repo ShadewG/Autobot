@@ -70,6 +70,17 @@ describe("status update evidence guard", function () {
       last_portal_status: "completed",
       additional_details: "PRR-2025-1168 and your security key is DCC5EBE0.",
     });
+    database.query.restore();
+    sinon.stub(database, "query").callsFake(async (sql) => {
+      const text = String(sql);
+      if (/outbound_count/i.test(text)) {
+        return { rows: [{ outbound_count: 0 }] };
+      }
+      if (/completed_count/i.test(text)) {
+        return { rows: [{ completed_count: 1 }] };
+      }
+      return { rows: [] };
+    });
 
     const result = await validateDecision(
       {
@@ -123,6 +134,17 @@ describe("status update evidence guard", function () {
       send_date: null,
       last_portal_status: "completed",
       additional_details: "PRR-2025-1168 and your security key is DCC5EBE0.",
+    });
+    database.query.restore();
+    sinon.stub(database, "query").callsFake(async (sql) => {
+      const text = String(sql);
+      if (/outbound_count/i.test(text)) {
+        return { rows: [{ outbound_count: 0 }] };
+      }
+      if (/completed_count/i.test(text)) {
+        return { rows: [{ completed_count: 1 }] };
+      }
+      return { rows: [] };
     });
 
     const result = await decideNextAction(

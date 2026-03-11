@@ -118,13 +118,6 @@ async function latestInboundRequestsEmailResend(caseId: number): Promise<boolean
   }
 }
 
-const STATUS_UPDATE_COMPLETED_PORTAL_STATUSES = new Set([
-  "completed",
-  "submitted",
-  "success",
-  "succeeded",
-]);
-
 async function getStatusUpdateSubmissionEvidence(caseId: number, caseData?: any): Promise<{
   hasEvidence: boolean;
   reasons: string[];
@@ -160,9 +153,7 @@ async function getStatusUpdateSubmissionEvidence(caseId: number, caseData?: any)
   );
   const completedPortalCount = Number(completedPortalResult.rows?.[0]?.completed_count || 0);
 
-  const lastPortalStatus = String(resolvedCaseData?.last_portal_status || "").trim().toLowerCase();
-  const hasCompletedPortal = STATUS_UPDATE_COMPLETED_PORTAL_STATUSES.has(lastPortalStatus)
-    || completedPortalCount > 0;
+  const hasCompletedPortal = completedPortalCount > 0;
   if (hasCompletedPortal) {
     reasons.push("Case has a completed portal submission");
   }
