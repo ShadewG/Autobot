@@ -181,6 +181,24 @@ router.post('/:id/mark-bugged', async (req, res) => {
             await db.dismissPendingProposals(requestId, 'Case marked as bugged');
         } catch (_) {}
 
+        // Cancel active agent runs so no in-flight task can change the status back
+        try {
+            await db.query(
+                `UPDATE agent_runs SET status = 'failed', error = 'case_marked_bugged', ended_at = NOW()
+                 WHERE case_id = $1 AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting')`,
+                [requestId]
+            );
+        } catch (_) {}
+
+        // Cancel active portal tasks
+        try {
+            await db.query(
+                `UPDATE portal_tasks SET status = 'CANCELLED', updated_at = NOW()
+                 WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+                [requestId]
+            );
+        } catch (_) {}
+
         await db.logActivity('case_marked_bugged', `Case marked as bugged: ${description || 'No description'}`, {
             case_id: requestId,
             previous_status: previousStatus,

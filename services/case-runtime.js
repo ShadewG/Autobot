@@ -327,6 +327,18 @@ async function transitionCaseRuntime(caseId, event, context = {}) {
     // 3. Load snapshot
     const snapshot = await loadCaseSnapshot(txQuery, caseId);
 
+    // 3b. Guard: bugged cases are frozen — no automated transitions
+    if (snapshot.caseData.status === 'bugged') {
+      projection = computeProjection(snapshot);
+      await txQuery(
+        `INSERT INTO case_event_ledger (case_id, event, transition_key, context, mutations_applied, projection)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [caseId, event, context.transitionKey || null, JSON.stringify(context),
+         JSON.stringify({ _skipped: 'case_is_bugged' }), JSON.stringify(projection)]
+      );
+      return; // No mutations applied
+    }
+
     // 4. Compute mutations (pure)
     const mutations = computeMutations(snapshot, event, context);
 

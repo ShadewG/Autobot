@@ -829,6 +829,16 @@ class DatabaseService {
         if (__source !== 'case_runtime' && this._isTriggerCallsite() && !__allowLegacyFromTrigger) {
             this._assertNoLegacyCaseMutation('updateCaseStatus', { caseId, status });
         }
+
+        // Guard: bugged cases are frozen — only explicit un-bugging can change status
+        if (status !== 'bugged') {
+            const currentCase = await this.query('SELECT status FROM cases WHERE id = $1', [caseId]);
+            if (currentCase.rows[0]?.status === 'bugged') {
+                console.log(`[updateCaseStatus] Blocked status change to '${status}' for bugged case ${caseId}`);
+                return { rows: [currentCase.rows[0]] };
+            }
+        }
+
         if (typeof effectiveFields.substatus === 'string') {
             effectiveFields.substatus = effectiveFields.substatus.substring(0, 100);
         }
