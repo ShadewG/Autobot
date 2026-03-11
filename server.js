@@ -53,6 +53,22 @@ const dashboardPath = path.join(__dirname, 'dashboard', 'out');
 }
 app.use(express.static(dashboardPath));
 
+// Debug: check dashboard build output
+app.get('/api/debug/dashboard-status', (req, res) => {
+    const _fs = require('fs');
+    const exists = _fs.existsSync(dashboardPath);
+    let files = [];
+    if (exists) {
+        files = _fs.readdirSync(dashboardPath);
+    }
+    const queueExists = exists && _fs.existsSync(path.join(dashboardPath, 'queue'));
+    let queueFiles = [];
+    if (queueExists) {
+        queueFiles = _fs.readdirSync(path.join(dashboardPath, 'queue'));
+    }
+    res.json({ dashboardPath, exists, files, queueExists, queueFiles });
+});
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
     try {
