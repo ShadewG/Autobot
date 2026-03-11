@@ -71,7 +71,7 @@ function summarizeFreeText(value) {
 const REAL_CASES_WHERE = buildRealCaseWhereClause('c');
 const NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL = `
   NOT (
-    LOWER(COALESCE(m.from_email, '')) ~ '@(nextrequest\\.com|govqa\\.us|custhelp\\.com|mycusthelp\\.com|mycusthelp\\.net)$'
+    LOWER(COALESCE(m.from_email, '')) ~ '(nextrequest\\.com|govqa\\.us|custhelp\\.com|mycusthelp\\.com|mycusthelp\\.net|usnx\\.com)'
     AND (
       LOWER(COALESCE(m.subject, '')) LIKE '%password assistance%'
       OR LOWER(COALESCE(m.subject, '')) LIKE '%welcome to the records center%'
@@ -81,6 +81,21 @@ const NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL = `
       OR LOWER(COALESCE(m.subject, '')) LIKE '%has been submitted%'
       OR LOWER(COALESCE(m.subject, '')) LIKE '%submission confirmation%'
     )
+  )
+`;
+const CLEANUP_PROCESSING_ERROR_SQL = `
+  COALESCE(m.last_error, '') NOT ILIKE '%marked processed during cleanup%'
+`;
+const REQUEST_NUMBER_PORTAL_SQL = `
+  (
+    COALESCE(c.last_portal_engine, '') IN ('govqa', 'nextrequest', 'justfoia', 'mycusthelp', 'custhelp', 'publicrecordscenter')
+    OR LOWER(COALESCE(c.portal_url, '')) ~ '(govqa|nextrequest|justfoia|mycusthelp|custhelp|publicrecordscenter|requestlogin\\.aspx|webapp/_rs)'
+  )
+`;
+const BLOCKED_IMPORT_CASE_SQL = `
+  (
+    c.status = 'needs_contact_info'
+    OR COALESCE(jsonb_array_length(c.import_warnings), 0) > 0
   )
 `;
 
@@ -394,6 +409,7 @@ async function buildReconciliationReport() {
     runsWithoutTraces,
     attachmentGaps,
     deadEndCases,
+    blockedImportCases,
     inboundLinkageGaps,
     emptyNormalizedInbound,
     proposalMessageMismatches,
@@ -408,12 +424,23 @@ async function buildReconciliationReport() {
       SELECT la.case_id, la.suggested_action, la.created_at as analysis_at, c.status, c.agency_name
       FROM latest_analysis la
       JOIN cases c ON c.id = la.case_id
-      LEFT JOIN proposals p ON p.case_id = la.case_id
-        AND p.status IN ('PENDING_APPROVAL', 'BLOCKED')
       WHERE la.requires_action = true
-        AND p.id IS NULL
         AND ${REAL_CASES_WHERE}
         AND c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled', 'records_received', 'case_completed')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM proposals p
+          WHERE p.case_id = la.case_id
+            AND p.created_at >= la.created_at
+            AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'EXECUTED', 'DECISION_RECEIVED')
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM agent_runs ar
+          WHERE ar.case_id = la.case_id
+            AND ar.started_at >= la.created_at
+            AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting', 'completed')
+        )
       ORDER BY la.created_at DESC
       LIMIT 20
     `),
@@ -422,7 +449,7 @@ async function buildReconciliationReport() {
       FROM messages m
       LEFT JOIN cases c ON c.id = m.case_id
       WHERE m.last_error IS NOT NULL AND m.last_error != ''
-        AND COALESCE(m.last_error, '') <> 'test data - marked processed during cleanup'
+        AND ${CLEANUP_PROCESSING_ERROR_SQL}
         AND (c.id IS NULL OR ${REAL_CASES_WHERE})
         AND (c.status IS NULL OR c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled'))
       ORDER BY m.created_at DESC
@@ -455,6 +482,13 @@ async function buildReconciliationReport() {
         AND m.processed_at IS NULL
         AND ra.id IS NULL
         AND ${REAL_CASES_WHERE}
+        AND c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled', 'records_received', 'case_completed')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM response_analysis ra2
+          WHERE ra2.case_id = m.case_id
+            AND ra2.created_at > COALESCE(m.received_at, m.created_at)
+        )
         AND ${NON_SUBSTANTIVE_PORTAL_MESSAGE_SQL}
       ORDER BY m.created_at DESC
       LIMIT 20
@@ -466,8 +500,25 @@ async function buildReconciliationReport() {
       WHERE c.portal_url IS NOT NULL
         AND c.portal_url != ''
         AND ${REAL_CASES_WHERE}
+        AND ${REQUEST_NUMBER_PORTAL_SQL}
         AND (c.portal_request_number IS NULL OR c.portal_request_number = '')
         AND c.status IN ('sent', 'awaiting_response', 'portal_in_progress')
+        AND COALESCE(c.last_portal_status, '') NOT ILIKE '%fallback email sent%'
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM portal_tasks pt
+            WHERE pt.case_id = c.id
+              AND pt.status = 'COMPLETED'
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM portal_submissions ps
+            WHERE ps.case_id = c.id
+              AND ps.status = 'completed'
+          )
+          OR COALESCE(c.last_portal_status, '') ILIKE '%completed%'
+        )
       ORDER BY c.created_at DESC
       LIMIT 20
     `),
@@ -503,6 +554,34 @@ async function buildReconciliationReport() {
       FROM cases c
       WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
         AND ${REAL_CASES_WHERE}
+        AND NOT ${BLOCKED_IMPORT_CASE_SQL}
+        AND NOT EXISTS (
+            SELECT 1 FROM proposals p WHERE p.case_id = c.id
+            AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
+            AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+            AND pcq.status IN ('pending', 'claimed')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
+            AND pt.status IN ('PENDING', 'IN_PROGRESS')
+        )
+        AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+        AND c.agency_name NOT LIKE 'Synthetic %'
+      ORDER BY c.updated_at DESC
+      LIMIT 20
+    `),
+    db.query(`
+      SELECT c.id as case_id, c.agency_name, c.state, c.status, c.pause_reason, c.updated_at
+      FROM cases c
+      WHERE c.status IN ('needs_human_review', 'needs_contact_info')
+        AND ${REAL_CASES_WHERE}
+        AND ${BLOCKED_IMPORT_CASE_SQL}
         AND NOT EXISTS (
             SELECT 1 FROM proposals p WHERE p.case_id = c.id
             AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
@@ -666,6 +745,17 @@ async function buildReconciliationReport() {
     dead_end_cases: {
       count: deadEndCases.rows.length,
       cases: deadEndCases.rows.map(r => ({
+        case_id: r.case_id,
+        agency_name: r.agency_name,
+        state: r.state,
+        status: r.status,
+        pause_reason: r.pause_reason,
+        updated_at: r.updated_at,
+      })),
+    },
+    blocked_import_cases: {
+      count: blockedImportCases.rows.length,
+      cases: blockedImportCases.rows.map(r => ({
         case_id: r.case_id,
         agency_name: r.agency_name,
         state: r.state,

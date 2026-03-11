@@ -134,6 +134,7 @@ interface ReconciliationReport {
     extraction_rate: number | null;
   };
   dead_end_cases: { count: number; cases: DeadEndCase[] };
+  blocked_import_cases: { count: number; cases: DeadEndCase[] };
   inbound_linkage_gaps: { count: number; messages: InboundLinkageGap[] };
   empty_normalized_inbound: { count: number; messages: EmptyNormalizedInbound[] };
   proposal_message_mismatches: { count: number; proposals: ProposalMessageMismatch[] };
@@ -168,6 +169,13 @@ const SECTIONS: SectionConfig[] = [
     description: "Stuck in human review with no active proposal or run",
     icon: <ShieldAlert className="h-4 w-4" />,
     getCount: (r) => r.dead_end_cases.count,
+  },
+  {
+    key: "blocked_import_cases",
+    title: "Blocked Import Cases",
+    description: "Intentionally parked intake cases awaiting contact info or human review",
+    icon: <ShieldAlert className="h-4 w-4" />,
+    getCount: (r) => r.blocked_import_cases.count,
   },
   {
     key: "unanalyzed_inbound",
@@ -349,6 +357,8 @@ function SectionDetail({
       return <DroppedActionsDetail items={report.dropped_actions.cases} />;
     case "dead_end_cases":
       return <DeadEndCasesDetail items={report.dead_end_cases.cases} />;
+    case "blocked_import_cases":
+      return <DeadEndCasesDetail items={report.blocked_import_cases.cases} />;
     case "unanalyzed_inbound":
       return (
         <UnanalyzedInboundDetail items={report.unanalyzed_inbound.messages} />

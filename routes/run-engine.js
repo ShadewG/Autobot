@@ -1398,8 +1398,8 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       });
     }
 
-    const selectedCaseAgencyId = Number.isFinite(Number(case_agency_id)) ? Number(case_agency_id) : null;
-    const selectedCaseAgency = selectedCaseAgencyId
+    let selectedCaseAgencyId = Number.isFinite(Number(case_agency_id)) ? Number(case_agency_id) : null;
+    let selectedCaseAgency = selectedCaseAgencyId
       ? await db.getCaseAgencyById(selectedCaseAgencyId)
       : null;
     if (selectedCaseAgency && Number(selectedCaseAgency.case_id) !== Number(caseId)) {
@@ -1407,6 +1407,13 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         success: false,
         error: 'Selected case_agency_id does not belong to this case',
       });
+    }
+    if (!selectedCaseAgencyId) {
+      const primaryCaseAgency = await db.getPrimaryCaseAgency(caseId).catch(() => null);
+      if (primaryCaseAgency && Number(primaryCaseAgency.case_id) === Number(caseId)) {
+        selectedCaseAgencyId = Number(primaryCaseAgency.id);
+        selectedCaseAgency = primaryCaseAgency;
+      }
     }
 
     const selectedPortalUrl = selectedCaseAgency?.portal_url || caseData.portal_url;

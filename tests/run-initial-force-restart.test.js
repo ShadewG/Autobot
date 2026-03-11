@@ -26,6 +26,7 @@ describe("run-initial explicit contact restart", function () {
       portal_url: "https://www.southstpaulmn.gov/FormCenter/Police-8/Request-for-Police-Data-67",
       agency_email: "ssppdclerical@southstpaul.org",
     });
+    sinon.stub(db, "getPrimaryCaseAgency").resolves(null);
     sinon.stub(db, "getActiveRunForCase").resolves({
       id: 2765,
       status: "waiting",
@@ -111,5 +112,26 @@ describe("run-initial explicit contact restart", function () {
     assert.strictEqual(response.status, 400);
     assert.match(response.body.error, /does not have a portal url/i);
     sinon.assert.notCalled(triggerDispatch.triggerTask);
+  });
+
+  it("defaults to the primary case agency when no case_agency_id is provided", async function () {
+    db.getPrimaryCaseAgency.resolves({
+      id: 243,
+      case_id: 25150,
+      portal_url: "https://www.southstpaulmn.gov/FormCenter/Police-8/Request-for-Police-Data-67",
+      agency_email: null,
+    });
+
+    const response = await supertest(app)
+      .post("/cases/25150/run-initial")
+      .send({
+        autopilotMode: "SUPERVISED",
+        route_mode: "portal",
+        force_restart: true,
+      });
+
+    assert.strictEqual(response.status, 202);
+    const payload = triggerDispatch.triggerTask.firstCall.args[1];
+    assert.strictEqual(payload.caseAgencyId, 243);
   });
 });
