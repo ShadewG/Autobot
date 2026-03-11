@@ -106,6 +106,18 @@ export async function createProposalAndGate(
   let effectiveDecisionRequiresHuman = decisionRequiresHuman;
   let effectivePauseReason = pauseReason;
   let effectiveSafety = { ...safety };
+  let effectiveCaseAgencyId = Number.isInteger(caseAgencyId) && Number(caseAgencyId) > 0
+    ? Number(caseAgencyId)
+    : null;
+
+  if (caseId) {
+    const resolvedCaseAgency = await db.resolveProposalCaseAgency(caseId, {
+      caseAgencyId: effectiveCaseAgencyId,
+    }).catch(() => null);
+    if (resolvedCaseAgency?.id) {
+      effectiveCaseAgencyId = Number(resolvedCaseAgency.id);
+    }
+  }
 
   // Research-only steps are safe operational actions and should not block
   // human queues. Any true ambiguity/failure is handled inside execute-action
@@ -164,7 +176,7 @@ export async function createProposalAndGate(
     messageId,
     actionType,
     adjustmentCount,
-    caseAgencyId,
+    effectiveCaseAgencyId,
     runId
   );
 
@@ -197,6 +209,7 @@ export async function createProposalAndGate(
     canAutoExecute,
     requiresHuman,
     status: canAutoExecute ? "APPROVED" : "PENDING_APPROVAL",
+    caseAgencyId: effectiveCaseAgencyId || null,
     adjustmentCount: adjustmentCount || 0,
     lessonsApplied: lessonsApplied || null,
     gateOptions: gateOptions || ["APPROVE", "ADJUST", "DISMISS", "WITHDRAW"],
@@ -204,8 +217,8 @@ export async function createProposalAndGate(
     chainId,
     chainStep: hasChain ? 0 : null,
   });
-  if (caseAgencyId && proposal?.id) {
-    await db.updateProposal(proposal.id, { case_agency_id: caseAgencyId });
+  if (effectiveCaseAgencyId && proposal?.id) {
+    await db.updateProposal(proposal.id, { case_agency_id: effectiveCaseAgencyId });
   }
 
   // Create follow-up chain proposals (CHAIN_PENDING status — wait for primary approval)
@@ -213,7 +226,7 @@ export async function createProposalAndGate(
     for (let step = 1; step < chainActions.length; step++) {
       const chainAction = chainActions[step];
       const chainProposalKey = generateProposalKey(
-        caseId, messageId, chainAction.actionType, adjustmentCount, caseAgencyId, runId
+        caseId, messageId, chainAction.actionType, adjustmentCount, effectiveCaseAgencyId, runId
       ) + `:chain-${step}`;
 
       const chainProposal = await db.upsertProposal({
@@ -236,14 +249,15 @@ export async function createProposalAndGate(
         canAutoExecute: false,
         requiresHuman: true,
         status: "CHAIN_PENDING",
+        caseAgencyId: effectiveCaseAgencyId || null,
         adjustmentCount: adjustmentCount || 0,
         lessonsApplied: null,
         gateOptions: null,
         chainId,
         chainStep: step,
       });
-      if (caseAgencyId && chainProposal?.id) {
-        await db.updateProposal(chainProposal.id, { case_agency_id: caseAgencyId });
+      if (effectiveCaseAgencyId && chainProposal?.id) {
+        await db.updateProposal(chainProposal.id, { case_agency_id: effectiveCaseAgencyId });
       }
     }
 

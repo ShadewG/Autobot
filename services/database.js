@@ -10,6 +10,11 @@ const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
 const canonicalAgency = require('./canonical-agency');
 const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 const {
+    evaluateImportAutoDispatchSafety,
+    hasCompoundAgencyIdentity,
+    isGenericAgencyLabel,
+} = require('../utils/request-normalization');
+const {
     normalizeMessageBody,
     isSubstantiveMessage,
 } = require('../lib/message-normalization');
@@ -2481,9 +2486,23 @@ class DatabaseService {
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
         }
 
+        let caseRow = null;
+        let resolvedProposalCaseAgency = null;
+        if (proposalData.caseId) {
+            caseRow = await this.getCaseById(proposalData.caseId);
+            resolvedProposalCaseAgency = await this.resolveProposalCaseAgency(proposalData.caseId, {
+                caseAgencyId: proposalData.caseAgencyId,
+                agencyName: proposalData.agencyName || caseRow?.agency_name || null,
+                agencyEmail: proposalData.agencyEmail || caseRow?.agency_email || null,
+                portalUrl: proposalData.portalUrl || caseRow?.portal_url || null,
+            });
+            if (resolvedProposalCaseAgency?.id && !proposalData.caseAgencyId) {
+                proposalData.caseAgencyId = resolvedProposalCaseAgency.id;
+            }
+        }
+
         // Guardrail: do not create queue-active proposals for cases that are already advanced/closed.
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
-            const caseRow = await this.getCaseById(proposalData.caseId);
             const isResearchAction = proposalData.actionType === 'RESEARCH_AGENCY';
             let hasActivePhoneFallback = false;
             if (isResearchAction) {
@@ -2556,6 +2575,55 @@ class DatabaseService {
                     `auto_dismissed_case_status_${caseRow.status}`
                 ];
                 incomingStatus = 'DISMISSED';
+            }
+        }
+
+        const isInitialDispatchProposal =
+            !proposalData.triggerMessageId &&
+            ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_PDF_EMAIL'].includes(proposalData.actionType);
+        if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL' && isInitialDispatchProposal) {
+            const effectiveAgencyName = resolvedProposalCaseAgency?.agency_name || caseRow?.agency_name || '';
+            const dispatchSafety = evaluateImportAutoDispatchSafety({
+                caseName: caseRow?.case_name,
+                subjectName: caseRow?.subject_name,
+                agencyName: effectiveAgencyName,
+                state: caseRow?.state,
+                additionalDetails: caseRow?.additional_details,
+                importWarnings: caseRow?.import_warnings,
+                agencyEmail: resolvedProposalCaseAgency?.agency_email || caseRow?.agency_email,
+                portalUrl: resolvedProposalCaseAgency?.portal_url || caseRow?.portal_url,
+            });
+            const invalidAgencyIdentity =
+                dispatchSafety.shouldBlockAutoDispatch ||
+                isGenericAgencyLabel(effectiveAgencyName) ||
+                hasCompoundAgencyIdentity(effectiveAgencyName);
+            if (invalidAgencyIdentity) {
+                const reasonCode = dispatchSafety.reasonCode || 'UNRESOLVED_AGENCY_IDENTITY';
+                console.warn(
+                    `[DB] Auto-dismissing ${proposalData.actionType} proposal for case ${proposalData.caseId}: ${reasonCode}`
+                );
+                proposalData.status = 'DISMISSED';
+                proposalData.canAutoExecute = false;
+                proposalData.requiresHuman = false;
+                proposalData.warnings = [
+                    ...(proposalData.warnings || []),
+                    `auto_blocked_unresolved_agency_identity:${reasonCode}`
+                ];
+                incomingStatus = 'DISMISSED';
+                await this.query(
+                    `UPDATE cases
+                        SET status = 'needs_human_review',
+                            requires_human = true,
+                            pause_reason = 'IMPORT_REVIEW',
+                            substatus = $2,
+                            updated_at = CURRENT_TIMESTAMP
+                      WHERE id = $1
+                        AND status IN ('ready_to_send', 'id_ready_to_send')`,
+                    [
+                        proposalData.caseId,
+                        `Imported case needs agency review before sending (${reasonCode}).`
+                    ]
+                ).catch(() => null);
             }
         }
 
@@ -4079,6 +4147,93 @@ class DatabaseService {
             [caseAgencyId]
         );
         return result.rows[0] || null;
+    }
+
+    async ensurePrimaryCaseAgencyFromCaseRow(caseId) {
+        const currentCase = await this.getCaseById(caseId);
+        if (!currentCase) return null;
+
+        const agencyName = normalizeCaseAgencyName(currentCase.agency_name || '');
+        const agencyEmail = normalizeCaseAgencyEmail(currentCase.agency_email || null);
+        const portalUrl = normalizePortalUrl(currentCase.portal_url || null);
+
+        if (!agencyName && !agencyEmail && !portalUrl) return null;
+        if (!agencyName || isGenericAgencyLabel(agencyName) || hasCompoundAgencyIdentity(agencyName)) {
+            return null;
+        }
+
+        return this.addCaseAgency(caseId, {
+            agency_id: currentCase.agency_id || null,
+            agency_name: agencyName,
+            agency_email: agencyEmail || null,
+            portal_url: portalUrl || null,
+            portal_provider: currentCase.portal_provider || detectPortalProviderByUrl(portalUrl)?.name || null,
+            is_primary: true,
+            is_active: true,
+            added_source: 'proposal_scope_backfill',
+            status: 'active',
+            notes: 'Backfilled from case row for proposal scoping',
+            skip_case_row_backfill: true,
+        });
+    }
+
+    async resolveProposalCaseAgency(caseId, options = {}) {
+        const explicitCaseAgencyId = Number.isInteger(options.caseAgencyId) && Number(options.caseAgencyId) > 0
+            ? Number(options.caseAgencyId)
+            : null;
+        if (explicitCaseAgencyId) {
+            const explicitAgency = await this.getCaseAgencyById(explicitCaseAgencyId);
+            if (!explicitAgency || Number(explicitAgency.case_id) !== Number(caseId)) return null;
+            return explicitAgency;
+        }
+
+        let activeRows = await this.getCaseAgencies(caseId).catch(() => []);
+        if ((!activeRows || activeRows.length === 0) && options.allowCaseRowBackfill !== false) {
+            const backfilledPrimary = await this.ensurePrimaryCaseAgencyFromCaseRow(caseId).catch(() => null);
+            if (backfilledPrimary) {
+                activeRows = [backfilledPrimary];
+            }
+        }
+
+        if (!activeRows || activeRows.length === 0) return null;
+        if (activeRows.length === 1) return activeRows[0];
+
+        const currentCase = await this.getCaseById(caseId).catch(() => null);
+        const nameHints = [
+            options.agencyName,
+            currentCase?.agency_name,
+        ]
+            .map((value) => normalizeCaseAgencyComparable(value))
+            .filter((value) => Boolean(value) && !GENERIC_CASE_AGENCY_NAMES.has(value));
+        const emailHints = [
+            options.agencyEmail,
+            currentCase?.agency_email,
+        ]
+            .map((value) => normalizeCaseAgencyEmail(value))
+            .filter(Boolean);
+        const portalHints = [
+            options.portalUrl,
+            currentCase?.portal_url,
+        ]
+            .map((value) => normalizeCaseAgencyPortalKey(value))
+            .filter(Boolean);
+
+        const matches = activeRows.filter((row) => {
+            const identity = buildCaseAgencyIdentity(row);
+            if (identity.agencyEmail && emailHints.includes(identity.agencyEmail)) return true;
+            if (identity.portalKey && portalHints.includes(identity.portalKey)) return true;
+            if (identity.hasComparableName && nameHints.includes(identity.comparableName)) return true;
+            return false;
+        });
+
+        if (matches.length === 1) return matches[0];
+        const matchedPrimary = matches.find((row) => row.is_primary);
+        if (matchedPrimary) return matchedPrimary;
+
+        const primaryRow = activeRows.find((row) => row.is_primary);
+        if (primaryRow && options.allowPrimaryFallback !== false) return primaryRow;
+
+        return null;
     }
 
     async switchPrimaryAgency(caseId, newPrimaryCaseAgencyId) {
