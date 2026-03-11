@@ -29,6 +29,31 @@ function normalizePortalTimeoutError(rawError) {
 }
 
 class CronService {
+    // Stable lock IDs for each cron job (arbitrary offset to avoid collisions with app locks)
+    static LOCK_IDS = {
+        notionSync:              100001,
+        cleanup:                 100002,
+        screenshotCleanup:       100003,
+        healthCheck:             100004,
+        operationalAlerts:       100005,
+        weeklyQualityReport:     100006,
+        draftQualityEval:        100007,
+        dailyOperatorDigest:     100008,
+        priorityAutoEscalate:    100009,
+        stuckResponseCheck:      100010,
+        readyToSendSweep:        100011,
+        agencySync:              100012,
+        deadlineEscalationSweep: 100013,
+        stuckPortalSweep:        100014,
+        staleRunReaper:          100015,
+        loopBreaker:             100016,
+        proposalDispatchRecovery:100017,
+        triggerDispatchRecovery: 100018,
+        orphanReviewRecovery:    100019,
+        portalDispatch:          100020,
+        portalStatusMonitoring:  100021,
+    };
+
     constructor() {
         this.jobs = {};
         this.runningJobs = new Set();
@@ -39,6 +64,28 @@ class CronService {
             emptyNormalizedInbound: null,
             proposalMessageMismatch: null,
         };
+    }
+
+    /**
+     * Acquire a PostgreSQL advisory lock before running fn.
+     * If another instance already holds the lock, silently skip.
+     * Prevents duplicate cron execution across Railway replicas.
+     */
+    async runWithDbLock(lockId, fn) {
+        const client = await db.pool.connect();
+        try {
+            const { rows } = await client.query(
+                'SELECT pg_try_advisory_lock($1) AS acquired', [lockId]
+            );
+            if (!rows[0].acquired) return null;
+            try {
+                return await fn();
+            } finally {
+                await client.query('SELECT pg_advisory_unlock($1)', [lockId]);
+            }
+        } finally {
+            client.release();
+        }
     }
 
     async runWithoutOverlap(jobName, fn) {
@@ -64,22 +111,24 @@ class CronService {
         // Sync from Notion every 5 minutes
         // Notion sync still runs on cron (Notion has no webhooks), but generation
         // queuing is now reactive — db.createCase() and db.updateCaseStatus() auto-dispatch.
-        this.jobs.notionSync = new CronJob('*/5 * * * *', async () => {
-            try {
-                console.log('Running Notion sync...');
-                const cases = await notionService.syncCasesFromNotion('Ready To Send');
+        this.jobs.notionSync = new CronJob('*/5 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.notionSync, async () => {
+                try {
+                    console.log('Running Notion sync...');
+                    const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
-                if (cases.length > 0) {
-                    console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing)`);
-                    await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
+                    if (cases.length > 0) {
+                        console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing)`);
+                        await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
+                    }
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'notion_sync_cron',
+                    });
+                    console.error('Error in Notion sync cron:', error);
                 }
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'notion_sync_cron',
-                });
-                console.error('Error in Notion sync cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Start follow-up scheduler (Run Engine) unconditionally.
@@ -88,190 +137,212 @@ class CronService {
         console.log('✓ Follow-up scheduler (Run Engine): Every 15 minutes');
 
         // Clean up old activity logs every day at midnight
-        this.jobs.cleanup = new CronJob('0 0 * * *', async () => {
-            try {
-                console.log('Running cleanup job...');
-                // Keep only 90 days of activity logs
-                await db.query(`
-                    DELETE FROM activity_log
-                    WHERE created_at < NOW() - INTERVAL '90 days'
-                `);
-                console.log('Cleanup completed');
-            } catch (error) {
-                console.error('Error in cleanup cron:', error);
-            }
+        this.jobs.cleanup = new CronJob('0 0 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.cleanup, async () => {
+                try {
+                    console.log('Running cleanup job...');
+                    // Keep only 90 days of activity logs
+                    await db.query(`
+                        DELETE FROM activity_log
+                        WHERE created_at < NOW() - INTERVAL '90 days'
+                    `);
+                    console.log('Cleanup completed');
+                } catch (error) {
+                    console.error('Error in cleanup cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
         // Delete screenshot files older than 7 days — runs daily at 1 AM
-        this.jobs.screenshotCleanup = new CronJob('0 1 * * *', async () => {
-            try {
-                const fs = require('fs');
-                const path = require('path');
-                const screenshotDir = '/data/screenshots';
-                if (!fs.existsSync(screenshotDir)) return;
-                const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-                const caseDirs = fs.readdirSync(screenshotDir);
-                let deleted = 0;
-                for (const dir of caseDirs) {
-                    const dirPath = path.join(screenshotDir, dir);
-                    if (!fs.statSync(dirPath).isDirectory()) continue;
-                    const files = fs.readdirSync(dirPath);
-                    for (const file of files) {
-                        const filePath = path.join(dirPath, file);
-                        if (fs.statSync(filePath).mtimeMs < cutoff) {
-                            fs.unlinkSync(filePath);
-                            deleted++;
+        this.jobs.screenshotCleanup = new CronJob('0 1 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.screenshotCleanup, async () => {
+                try {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const screenshotDir = '/data/screenshots';
+                    if (!fs.existsSync(screenshotDir)) return;
+                    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                    const caseDirs = fs.readdirSync(screenshotDir);
+                    let deleted = 0;
+                    for (const dir of caseDirs) {
+                        const dirPath = path.join(screenshotDir, dir);
+                        if (!fs.statSync(dirPath).isDirectory()) continue;
+                        const files = fs.readdirSync(dirPath);
+                        for (const file of files) {
+                            const filePath = path.join(dirPath, file);
+                            if (fs.statSync(filePath).mtimeMs < cutoff) {
+                                fs.unlinkSync(filePath);
+                                deleted++;
+                            }
+                        }
+                        if (fs.readdirSync(dirPath).length === 0) {
+                            fs.rmdirSync(dirPath);
                         }
                     }
-                    if (fs.readdirSync(dirPath).length === 0) {
-                        fs.rmdirSync(dirPath);
-                    }
+                    if (deleted > 0) console.log(`Screenshot cleanup: deleted ${deleted} files`);
+                } catch (error) {
+                    console.error('Error in screenshot cleanup cron:', error);
                 }
-                if (deleted > 0) console.log(`Screenshot cleanup: deleted ${deleted} files`);
-            } catch (error) {
-                console.error('Error in screenshot cleanup cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Health check / keep-alive every 5 minutes
         // Staggered to minute 2,7,12,... to avoid pile-up with Notion sync
-        this.jobs.healthCheck = new CronJob('2,7,12,17,22,27,32,37,42,47,52,57 * * * *', async () => {
-            try {
-                const health = await db.healthCheck();
-                if (!health.healthy) {
-                    console.error('Database health check failed:', health.error);
+        this.jobs.healthCheck = new CronJob('2,7,12,17,22,27,32,37,42,47,52,57 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.healthCheck, async () => {
+                try {
+                    const health = await db.healthCheck();
+                    if (!health.healthy) {
+                        console.error('Database health check failed:', health.error);
+                    }
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'health_check_cron',
+                    });
+                    console.error('Error in health check cron:', error);
                 }
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'health_check_cron',
-                });
-                console.error('Error in health check cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Operational alerting: check key failure/supersede counters in a rolling 1h window.
         // Staggered to minute 6,21,36,51 to avoid collision with triggerDispatchRecovery
-        this.jobs.operationalAlerts = new CronJob('6,21,36,51 * * * *', async () => {
-            try {
-                await this.runWithoutOverlap('operational_alert_check', () => this.checkOperationalAlerts());
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'operational_alert_check',
-                });
-                console.error('Error in operational alert check:', error);
-            }
+        this.jobs.operationalAlerts = new CronJob('6,21,36,51 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.operationalAlerts, async () => {
+                try {
+                    await this.runWithoutOverlap('operational_alert_check', () => this.checkOperationalAlerts());
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'operational_alert_check',
+                    });
+                    console.error('Error in operational alert check:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
-        this.jobs.weeklyQualityReport = new CronJob('0 9 * * 1', async () => {
-            try {
-                console.log('Running weekly quality report...');
-                await this.sendWeeklyQualityReport();
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'weekly_quality_report_cron',
-                });
-                console.error('Error in weekly quality report cron:', error);
-            }
+        this.jobs.weeklyQualityReport = new CronJob('0 9 * * 1', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.weeklyQualityReport, async () => {
+                try {
+                    console.log('Running weekly quality report...');
+                    await this.sendWeeklyQualityReport();
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'weekly_quality_report_cron',
+                    });
+                    console.error('Error in weekly quality report cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
-        this.jobs.draftQualityEval = new CronJob('30 9 * * *', async () => {
-            try {
-                console.log('Running resolved draft quality eval sweep...');
-                await this.runResolvedDraftQualityEvalSweep();
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'draft_quality_eval_cron',
-                });
-                console.error('Error in resolved draft quality eval cron:', error);
-            }
+        this.jobs.draftQualityEval = new CronJob('30 9 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.draftQualityEval, async () => {
+                try {
+                    console.log('Running resolved draft quality eval sweep...');
+                    await this.runResolvedDraftQualityEvalSweep();
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'draft_quality_eval_cron',
+                    });
+                    console.error('Error in resolved draft quality eval cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
         // Daily operator digest — 8:00 AM ET
-        this.jobs.dailyOperatorDigest = new CronJob('0 8 * * *', async () => {
-            try {
-                console.log('Running daily operator digest...');
-                await this.runWithoutOverlap('daily_operator_digest_cron', () => this.sendDailyOperatorDigest());
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'daily_operator_digest_cron',
-                });
-                console.error('Error in daily operator digest cron:', error);
-            }
+        this.jobs.dailyOperatorDigest = new CronJob('0 8 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.dailyOperatorDigest, async () => {
+                try {
+                    console.log('Running daily operator digest...');
+                    await this.runWithoutOverlap('daily_operator_digest_cron', () => this.sendDailyOperatorDigest());
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'daily_operator_digest_cron',
+                    });
+                    console.error('Error in daily operator digest cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
         // Auto-escalate priority for cases approaching deadlines — runs at 7:00 AM ET
-        this.jobs.priorityAutoEscalate = new CronJob('0 7 * * *', async () => {
-            try {
-                const result = await this.runPriorityAutoEscalate();
-                if (result.escalated > 0) {
-                    console.log(`Auto-escalated ${result.escalated} case(s) to urgent (deadline within 3 days)`);
+        this.jobs.priorityAutoEscalate = new CronJob('0 7 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.priorityAutoEscalate, async () => {
+                try {
+                    const result = await this.runPriorityAutoEscalate();
+                    if (result.escalated > 0) {
+                        console.log(`Auto-escalated ${result.escalated} case(s) to urgent (deadline within 3 days)`);
+                    }
+                } catch (error) {
+                    console.error('Error in priority auto-escalate cron:', error);
                 }
-            } catch (error) {
-                console.error('Error in priority auto-escalate cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Check for stuck responses every 30 minutes
         // Staggered to minute 9 and 39 to avoid pile-up
-        this.jobs.stuckResponseCheck = new CronJob('9,39 * * * *', async () => {
-            try {
-                console.log('Checking for stuck responses...');
-                const result = await stuckResponseDetector.detectAndFlagStuckResponses();
-                if (result.flagged > 0) {
-                    console.log(`⚠️ Flagged ${result.flagged} stuck response(s) for human review`);
+        this.jobs.stuckResponseCheck = new CronJob('9,39 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.stuckResponseCheck, async () => {
+                try {
+                    console.log('Checking for stuck responses...');
+                    const result = await stuckResponseDetector.detectAndFlagStuckResponses();
+                    if (result.flagged > 0) {
+                        console.log(`⚠️ Flagged ${result.flagged} stuck response(s) for human review`);
+                    }
+                } catch (error) {
+                    console.error('Error in stuck response check cron:', error);
                 }
-            } catch (error) {
-                console.error('Error in stuck response check cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Safety net: dispatch any orphaned ready_to_send cases every 10 minutes via Run Engine
         // Catches cases that entered ready_to_send before reactive dispatch, or where dispatch failed
         // Staggered to 2,12,22,32,42,52 to avoid pile-up with */5 jobs
-        this.jobs.readyToSendSweep = new CronJob('2,12,22,32,42,52 * * * *', async () => {
-            try {
-                const readyCases = await db.getCasesByStatus('ready_to_send');
-                if (readyCases.length === 0) return;
-                const { dispatchReadyToSend } = require('./dispatch-helper');
-                let dispatched = 0;
-                for (const c of readyCases) {
-                    try {
-                        const result = await dispatchReadyToSend(c.id, { source: 'cron_sweep' });
-                        if (result.dispatched) dispatched++;
-                    } catch (e) {
-                        if (!(e.code === '23505' && String(e.constraint || '').includes('one_active_per_case'))) {
-                            console.error(`[sweep] Failed to dispatch case ${c.id}:`, e.message);
+        this.jobs.readyToSendSweep = new CronJob('2,12,22,32,42,52 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.readyToSendSweep, async () => {
+                try {
+                    const readyCases = await db.getCasesByStatus('ready_to_send');
+                    if (readyCases.length === 0) return;
+                    const { dispatchReadyToSend } = require('./dispatch-helper');
+                    let dispatched = 0;
+                    for (const c of readyCases) {
+                        try {
+                            const result = await dispatchReadyToSend(c.id, { source: 'cron_sweep' });
+                            if (result.dispatched) dispatched++;
+                        } catch (e) {
+                            if (!(e.code === '23505' && String(e.constraint || '').includes('one_active_per_case'))) {
+                                console.error(`[sweep] Failed to dispatch case ${c.id}:`, e.message);
+                            }
                         }
                     }
+                    if (dispatched > 0) {
+                        console.log(`[sweep] Dispatched ${dispatched} ready_to_send cases via Run Engine`);
+                    }
+                } catch (error) {
+                    console.error('Error in ready_to_send sweep:', error);
                 }
-                if (dispatched > 0) {
-                    console.log(`[sweep] Dispatched ${dispatched} ready_to_send cases via Run Engine`);
-                }
-            } catch (error) {
-                console.error('Error in ready_to_send sweep:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Sync agencies from Notion every hour
-        this.jobs.agencySync = new CronJob('0 * * * *', async () => {
-            try {
-                console.log('Running agency sync from Notion...');
-                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 1000 });
-                console.log(`Agency sync completed: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
-                if (result.errors.length > 0) {
-                    console.warn(`Agency sync had ${result.errors.length} errors`);
-                }
+        this.jobs.agencySync = new CronJob('0 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.agencySync, async () => {
+                try {
+                    console.log('Running agency sync from Notion...');
+                    const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 1000 });
+                    console.log(`Agency sync completed: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
+                    if (result.errors.length > 0) {
+                        console.warn(`Agency sync had ${result.errors.length} errors`);
+                    }
 
-                // Link any new cases to agencies
-                await this.linkCasesToAgencies();
-            } catch (error) {
-                console.error('Error in agency sync cron:', error);
-            }
+                    // Link any new cases to agencies
+                    await this.linkCasesToAgencies();
+                } catch (error) {
+                    console.error('Error in agency sync cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
         // Run initial agency sync on startup (delayed by 30 seconds to let DB connect)
@@ -291,292 +362,310 @@ class CronService {
         // Deadline escalation: sweep overdue cases continuously, research contacts,
         // and route to phone/proposals/human review.
         // Staggered to minute 7,22,37,52 to avoid pile-up with other periodic jobs
-        this.jobs.deadlineEscalationSweep = new CronJob('7,22,37,52 * * * *', async () => {
-            try {
-                console.log('Running deadline escalation sweep...');
-                const result = await this.runWithoutOverlap('deadline_escalation_sweep', () => this.sweepOverdueCases());
-                if (result) {
-                    console.log(`Deadline escalation sweep: ${result.phoneCalls} phone calls, ${result.humanReviews} human reviews, ${result.contactUpdates} contact updates, ${result.skipped} skipped`);
+        this.jobs.deadlineEscalationSweep = new CronJob('7,22,37,52 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.deadlineEscalationSweep, async () => {
+                try {
+                    console.log('Running deadline escalation sweep...');
+                    const result = await this.runWithoutOverlap('deadline_escalation_sweep', () => this.sweepOverdueCases());
+                    if (result) {
+                        console.log(`Deadline escalation sweep: ${result.phoneCalls} phone calls, ${result.humanReviews} human reviews, ${result.contactUpdates} contact updates, ${result.skipped} skipped`);
+                    }
+                } catch (error) {
+                    console.error('Error in deadline escalation sweep cron:', error);
                 }
-            } catch (error) {
-                console.error('Error in deadline escalation sweep cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Stuck portal & orphaned review sweep (every 30 minutes)
         // Staggered to minute 12 and 42 to avoid pile-up
-        this.jobs.stuckPortalSweep = new CronJob('12,42 * * * *', async () => {
-            try {
-                console.log('Running stuck portal & orphaned review sweep...');
-                const result = await this.sweepStuckPortalCases();
-                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.feeProposalsCreated || 0} fee proposals, ${result.followUpFixed} follow-up fixes, ${result.staleHumanFlagsCleared || 0} stale flags cleared`);
-            } catch (error) {
-                console.error('Error in stuck portal sweep cron:', error);
-            }
+        this.jobs.stuckPortalSweep = new CronJob('12,42 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.stuckPortalSweep, async () => {
+                try {
+                    console.log('Running stuck portal & orphaned review sweep...');
+                    const result = await this.sweepStuckPortalCases();
+                    console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.feeProposalsCreated || 0} fee proposals, ${result.followUpFixed} follow-up fixes, ${result.staleHumanFlagsCleared || 0} stale flags cleared`);
+                } catch (error) {
+                    console.error('Error in stuck portal sweep cron:', error);
+                }
+            });
         }, null, true, 'America/New_York');
 
         // Stale run reaper: clean up stuck agent_runs every 15 minutes
         // Staggered to minute 5,20,35,50 to avoid pile-up
-        this.jobs.staleRunReaper = new CronJob('5,20,35,50 * * * *', async () => {
-            try {
-                // Mark runs stuck in created/queued/running for >2 hours as failed
-                // NOTE: 'waiting' is excluded — it's the normal state while paused for human input
-                // 'paused' is also excluded — it indicates a human gate in progress
-                const result = await db.query(`
-                    UPDATE agent_runs
-                    SET status = 'failed',
-                        error = 'Reaped: stuck in ' || status || ' for >2 hours',
-                        ended_at = NOW()
-                    WHERE status IN ('created', 'queued', 'running')
-                      AND started_at < NOW() - INTERVAL '2 hours'
-                    RETURNING id, case_id, status
-                `);
-                if (result.rowCount > 0) {
-                    console.log(`[reaper] Cleaned ${result.rowCount} stuck agent runs`);
-                    await db.logActivity('stale_run_reaped', `Cleaned ${result.rowCount} stuck agent runs`, {
-                        run_ids: result.rows.map(r => r.id)
-                    });
+        this.jobs.staleRunReaper = new CronJob('5,20,35,50 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.staleRunReaper, async () => {
+                try {
+                    // Mark runs stuck in created/queued/running for >2 hours as failed
+                    // NOTE: 'waiting' is excluded — it's the normal state while paused for human input
+                    // 'paused' is also excluded — it indicates a human gate in progress
+                    const result = await db.query(`
+                        UPDATE agent_runs
+                        SET status = 'failed',
+                            error = 'Reaped: stuck in ' || status || ' for >2 hours',
+                            ended_at = NOW()
+                        WHERE status IN ('created', 'queued', 'running')
+                          AND started_at < NOW() - INTERVAL '2 hours'
+                        RETURNING id, case_id, status
+                    `);
+                    if (result.rowCount > 0) {
+                        console.log(`[reaper] Cleaned ${result.rowCount} stuck agent runs`);
+                        await db.logActivity('stale_run_reaped', `Cleaned ${result.rowCount} stuck agent runs`, {
+                            run_ids: result.rows.map(r => r.id)
+                        });
 
-                    // Cancel corresponding Trigger.dev runs to release per-case queue locks
-                    const { runs } = require('@trigger.dev/sdk');
-                    for (const row of result.rows) {
-                        try {
-                            const meta = await db.query(
-                                `SELECT metadata->>'triggerRunId' as trigger_run_id FROM agent_runs WHERE id = $1`,
-                                [row.id]
-                            );
-                            const triggerRunId = meta.rows[0]?.trigger_run_id;
-                            if (triggerRunId) {
-                                await runs.cancel(triggerRunId);
-                                console.log(`[reaper] Cancelled Trigger.dev run ${triggerRunId} for agent_run ${row.id}`);
-                            }
-                        } catch (e) { /* best-effort */ }
+                        // Cancel corresponding Trigger.dev runs to release per-case queue locks
+                        const { runs } = require('@trigger.dev/sdk');
+                        for (const row of result.rows) {
+                            try {
+                                const meta = await db.query(
+                                    `SELECT metadata->>'triggerRunId' as trigger_run_id FROM agent_runs WHERE id = $1`,
+                                    [row.id]
+                                );
+                                const triggerRunId = meta.rows[0]?.trigger_run_id;
+                                if (triggerRunId) {
+                                    await runs.cancel(triggerRunId);
+                                    console.log(`[reaper] Cancelled Trigger.dev run ${triggerRunId} for agent_run ${row.id}`);
+                                }
+                            } catch (e) { /* best-effort */ }
+                        }
                     }
+                } catch (error) {
+                    console.error('Error in stale run reaper:', error);
                 }
-            } catch (error) {
-                console.error('Error in stale run reaper:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Loop breaker: detect cases with excessive failed runs (circuit breaker)
         // Staggered to minute 17 and 47 to avoid pile-up
-        this.jobs.loopBreaker = new CronJob('17,47 * * * *', async () => {
-            try {
-                // Find cases with 10+ failed runs in the last 24 hours
-                const result = await db.query(`
-                    SELECT case_id, COUNT(*) as fail_count
-                    FROM agent_runs
-                    WHERE status = 'failed'
-                      AND started_at > NOW() - INTERVAL '24 hours'
-                    GROUP BY case_id
-                    HAVING COUNT(*) >= 10
-                `);
-                for (const row of result.rows) {
-                    // Check if already flagged
-                    const caseData = await db.getCaseById(row.case_id);
-                    if (!caseData || caseData.pause_reason === 'LOOP_DETECTED') continue;
+        this.jobs.loopBreaker = new CronJob('17,47 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.loopBreaker, async () => {
+                try {
+                    // Find cases with 10+ failed runs in the last 24 hours
+                    const result = await db.query(`
+                        SELECT case_id, COUNT(*) as fail_count
+                        FROM agent_runs
+                        WHERE status = 'failed'
+                          AND started_at > NOW() - INTERVAL '24 hours'
+                        GROUP BY case_id
+                        HAVING COUNT(*) >= 10
+                    `);
+                    for (const row of result.rows) {
+                        // Check if already flagged
+                        const caseData = await db.getCaseById(row.case_id);
+                        if (!caseData || caseData.pause_reason === 'LOOP_DETECTED') continue;
 
-                    try {
-                        await transitionCaseRuntime(row.case_id, 'CASE_ESCALATED', {
-                            substatus: `Circuit breaker: ${row.fail_count} failed runs in 24h`,
-                            pauseReason: 'LOOP_DETECTED',
-                        });
-                    } catch (err) {
-                        if (err.name === 'CaseLockContention') {
-                            console.warn(`[loop-breaker] Case ${row.case_id} locked — skipping`);
+                        try {
+                            await transitionCaseRuntime(row.case_id, 'CASE_ESCALATED', {
+                                substatus: `Circuit breaker: ${row.fail_count} failed runs in 24h`,
+                                pauseReason: 'LOOP_DETECTED',
+                            });
+                        } catch (err) {
+                            if (err.name === 'CaseLockContention') {
+                                console.warn(`[loop-breaker] Case ${row.case_id} locked — skipping`);
+                                continue;
+                            }
+                            console.error(`[loop-breaker] Error flagging case ${row.case_id}:`, err.message);
                             continue;
                         }
-                        console.error(`[loop-breaker] Error flagging case ${row.case_id}:`, err.message);
-                        continue;
+                        console.log(`[loop-breaker] Case ${row.case_id} flagged: ${row.fail_count} failed runs in 24h`);
+                        await db.logActivity('loop_detected', `Circuit breaker tripped: ${row.fail_count} failed runs in 24h`, {
+                            case_id: row.case_id, fail_count: row.fail_count
+                        });
                     }
-                    console.log(`[loop-breaker] Case ${row.case_id} flagged: ${row.fail_count} failed runs in 24h`);
-                    await db.logActivity('loop_detected', `Circuit breaker tripped: ${row.fail_count} failed runs in 24h`, {
-                        case_id: row.case_id, fail_count: row.fail_count
-                    });
+                } catch (error) {
+                    console.error('Error in loop breaker:', error);
                 }
-            } catch (error) {
-                console.error('Error in loop breaker:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Proposal recovery watchdog: unstick decisions that were accepted but never dispatched.
         // Staggered to minute 1,6,11,... to avoid pile-up with other */5 jobs
-        this.jobs.proposalDispatchRecovery = new CronJob('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', async () => {
-            try {
-                const result = await db.query(`
-                    UPDATE proposals p
-                    SET status = 'PENDING_APPROVAL',
-                        human_decision = NULL,
-                        updated_at = NOW()
-                    WHERE p.status = 'DECISION_RECEIVED'
-                      AND p.waitpoint_token IS NULL
-                      AND p.updated_at < NOW() - INTERVAL '5 minutes'
-                      AND NOT EXISTS (
-                          SELECT 1 FROM agent_runs ar
-                          WHERE ar.case_id = p.case_id
-                            AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
-                      )
-                    RETURNING p.id, p.case_id, p.action_type
-                `);
+        this.jobs.proposalDispatchRecovery = new CronJob('1,6,11,16,21,26,31,36,41,46,51,56 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.proposalDispatchRecovery, async () => {
+                try {
+                    const result = await db.query(`
+                        UPDATE proposals p
+                        SET status = 'PENDING_APPROVAL',
+                            human_decision = NULL,
+                            updated_at = NOW()
+                        WHERE p.status = 'DECISION_RECEIVED'
+                          AND p.waitpoint_token IS NULL
+                          AND p.updated_at < NOW() - INTERVAL '5 minutes'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM agent_runs ar
+                              WHERE ar.case_id = p.case_id
+                                AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+                          )
+                        RETURNING p.id, p.case_id, p.action_type
+                    `);
 
-                if (result.rowCount > 0) {
-                    for (const row of result.rows) {
-                        await db.logActivity('proposal_recovered', `Recovered stuck proposal #${row.id} (${row.action_type}) back to PENDING_APPROVAL`, {
-                            case_id: row.case_id,
-                            proposal_id: row.id,
-                            action_type: row.action_type
-                        });
+                    if (result.rowCount > 0) {
+                        for (const row of result.rows) {
+                            await db.logActivity('proposal_recovered', `Recovered stuck proposal #${row.id} (${row.action_type}) back to PENDING_APPROVAL`, {
+                                case_id: row.case_id,
+                                proposal_id: row.id,
+                                action_type: row.action_type
+                            });
+                        }
+                        console.log(`[proposal-recovery] Recovered ${result.rowCount} stuck proposals`);
                     }
-                    console.log(`[proposal-recovery] Recovered ${result.rowCount} stuck proposals`);
+                } catch (error) {
+                    console.error('Error in proposal dispatch recovery watchdog:', error);
                 }
-            } catch (error) {
-                console.error('Error in proposal dispatch recovery watchdog:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Trigger dispatch recovery: re-dispatch runs stuck in queued + pending-version/no-machine states.
         // Staggered to minute 3,8,13,... to avoid pile-up
-        this.jobs.triggerDispatchRecovery = new CronJob('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', async () => {
-            try {
-                const result = await triggerDispatch.recoverStaleQueuedRuns({
-                    maxAgeMinutes: 6,
-                    limit: 20,
-                    maxAttempts: 3
-                });
-                if ((result.recovered || 0) > 0 || (result.failed || 0) > 0) {
-                    console.log(`[trigger-recovery] scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed}`);
-                    await db.logActivity('trigger_dispatch_recovery',
-                        `Trigger dispatch recovery scanned ${result.scanned}, recovered ${result.recovered}, failed ${result.failed}`,
-                        result
-                    );
+        this.jobs.triggerDispatchRecovery = new CronJob('3,8,13,18,23,28,33,38,43,48,53,58 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.triggerDispatchRecovery, async () => {
+                try {
+                    const result = await triggerDispatch.recoverStaleQueuedRuns({
+                        maxAgeMinutes: 6,
+                        limit: 20,
+                        maxAttempts: 3
+                    });
+                    if ((result.recovered || 0) > 0 || (result.failed || 0) > 0) {
+                        console.log(`[trigger-recovery] scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed}`);
+                        await db.logActivity('trigger_dispatch_recovery',
+                            `Trigger dispatch recovery scanned ${result.scanned}, recovered ${result.recovered}, failed ${result.failed}`,
+                            result
+                        );
+                    }
+                } catch (error) {
+                    console.error('Error in trigger dispatch recovery watchdog:', error);
                 }
-            } catch (error) {
-                console.error('Error in trigger dispatch recovery watchdog:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Orphaned human-review recovery: case says "decision required" but has no actionable proposal.
         // Auto-reprocesses from latest inbound up to 2 times/day before leaving it for human triage.
         // Staggered to minute 4,9,14,... to avoid pile-up
-        this.jobs.orphanReviewRecovery = new CronJob('4,9,14,19,24,29,34,39,44,49,54,59 * * * *', async () => {
-            try {
-                const candidates = await db.query(`
-                    SELECT c.id AS case_id, c.case_name, c.autopilot_mode,
-                           lm.id AS message_id
-                    FROM cases c
-                    LEFT JOIN LATERAL (
-                      SELECT m.id
-                      FROM messages m
-                      WHERE m.case_id = c.id AND m.direction = 'inbound'
-                      ORDER BY m.created_at DESC
-                      LIMIT 1
-                    ) lm ON TRUE
-                    WHERE c.status = 'needs_human_review'
-                      AND c.requires_human = true
-                      AND c.pause_reason = 'PENDING_APPROVAL'
-                      AND lm.id IS NOT NULL
-                      AND NOT EXISTS (
-                        SELECT 1 FROM proposals p
-                        WHERE p.case_id = c.id
-                          AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
-                      )
-                      AND NOT EXISTS (
-                        SELECT 1 FROM agent_runs ar
-                        WHERE ar.case_id = c.id
-                          AND ar.status IN ('created', 'queued', 'running', 'waiting', 'processing')
-                      )
-                      AND (
-                        SELECT COUNT(*)
-                        FROM activity_log al
-                        WHERE al.case_id = c.id
-                          AND al.event_type = 'orphan_review_auto_reprocess'
-                          AND al.created_at > NOW() - INTERVAL '24 hours'
-                      ) < 2
-                    ORDER BY c.updated_at ASC
-                    LIMIT 10
-                `);
+        this.jobs.orphanReviewRecovery = new CronJob('4,9,14,19,24,29,34,39,44,49,54,59 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.orphanReviewRecovery, async () => {
+                try {
+                    const candidates = await db.query(`
+                        SELECT c.id AS case_id, c.case_name, c.autopilot_mode,
+                               lm.id AS message_id
+                        FROM cases c
+                        LEFT JOIN LATERAL (
+                          SELECT m.id
+                          FROM messages m
+                          WHERE m.case_id = c.id AND m.direction = 'inbound'
+                          ORDER BY m.created_at DESC
+                          LIMIT 1
+                        ) lm ON TRUE
+                        WHERE c.status = 'needs_human_review'
+                          AND c.requires_human = true
+                          AND c.pause_reason = 'PENDING_APPROVAL'
+                          AND lm.id IS NOT NULL
+                          AND NOT EXISTS (
+                            SELECT 1 FROM proposals p
+                            WHERE p.case_id = c.id
+                              AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                          )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM agent_runs ar
+                            WHERE ar.case_id = c.id
+                              AND ar.status IN ('created', 'queued', 'running', 'waiting', 'processing')
+                          )
+                          AND (
+                            SELECT COUNT(*)
+                            FROM activity_log al
+                            WHERE al.case_id = c.id
+                              AND al.event_type = 'orphan_review_auto_reprocess'
+                              AND al.created_at > NOW() - INTERVAL '24 hours'
+                          ) < 2
+                        ORDER BY c.updated_at ASC
+                        LIMIT 10
+                    `);
 
-                let recovered = 0;
-                for (const row of candidates.rows) {
-                    try {
-                        const run = await db.createAgentRunFull({
-                            case_id: row.case_id,
-                            trigger_type: 'orphan_review_reprocess',
-                            message_id: row.message_id,
-                            status: 'queued',
-                            autopilot_mode: row.autopilot_mode || 'SUPERVISED',
-                            langgraph_thread_id: `orphan-review:${row.case_id}:msg-${row.message_id}:${Date.now()}`,
-                            metadata: { source: 'orphan_review_recovery' }
-                        });
+                    let recovered = 0;
+                    for (const row of candidates.rows) {
+                        try {
+                            const run = await db.createAgentRunFull({
+                                case_id: row.case_id,
+                                trigger_type: 'orphan_review_reprocess',
+                                message_id: row.message_id,
+                                status: 'queued',
+                                autopilot_mode: row.autopilot_mode || 'SUPERVISED',
+                                langgraph_thread_id: `orphan-review:${row.case_id}:msg-${row.message_id}:${Date.now()}`,
+                                metadata: { source: 'orphan_review_recovery' }
+                            });
 
-                        await triggerDispatch.triggerTask('process-inbound', {
-                            runId: run.id,
-                            caseId: row.case_id,
-                            messageId: row.message_id,
-                            autopilotMode: row.autopilot_mode || 'SUPERVISED',
-                            triggerType: 'ORPHAN_REVIEW_RECOVERY',
-                        }, {
-                            queue: `case-${row.case_id}`,
-                            idempotencyKey: `orphan-review-reprocess:${row.case_id}:${run.id}`,
-                            idempotencyKeyTTL: '1h',
-                        }, {
-                            runId: run.id,
-                            caseId: row.case_id,
-                            triggerType: 'orphan_review_reprocess',
-                            source: 'orphan_review_recovery',
-                            verifyMs: 8000,
-                            pollMs: 1200,
-                        });
+                            await triggerDispatch.triggerTask('process-inbound', {
+                                runId: run.id,
+                                caseId: row.case_id,
+                                messageId: row.message_id,
+                                autopilotMode: row.autopilot_mode || 'SUPERVISED',
+                                triggerType: 'ORPHAN_REVIEW_RECOVERY',
+                            }, {
+                                queue: `case-${row.case_id}`,
+                                idempotencyKey: `orphan-review-reprocess:${row.case_id}:${run.id}`,
+                                idempotencyKeyTTL: '1h',
+                            }, {
+                                runId: run.id,
+                                caseId: row.case_id,
+                                triggerType: 'orphan_review_reprocess',
+                                source: 'orphan_review_recovery',
+                                verifyMs: 8000,
+                                pollMs: 1200,
+                            });
 
-                        await db.logActivity('orphan_review_auto_reprocess',
-                            `Auto-reprocessed orphaned decision-required case from inbound #${row.message_id}`,
-                            { case_id: row.case_id, message_id: row.message_id, run_id: run.id }
-                        );
-                        recovered++;
-                    } catch (err) {
-                        await db.logActivity('orphan_review_reprocess_failed',
-                            `Auto-reprocess failed for orphaned decision-required case: ${err.message}`,
-                            { case_id: row.case_id, message_id: row.message_id, error: err.message }
-                        );
+                            await db.logActivity('orphan_review_auto_reprocess',
+                                `Auto-reprocessed orphaned decision-required case from inbound #${row.message_id}`,
+                                { case_id: row.case_id, message_id: row.message_id, run_id: run.id }
+                            );
+                            recovered++;
+                        } catch (err) {
+                            await db.logActivity('orphan_review_reprocess_failed',
+                                `Auto-reprocess failed for orphaned decision-required case: ${err.message}`,
+                                { case_id: row.case_id, message_id: row.message_id, error: err.message }
+                            );
+                        }
                     }
-                }
 
-                if (recovered > 0) {
-                    console.log(`[orphan-review-recovery] Auto-reprocessed ${recovered} orphaned review case(s)`);
+                    if (recovered > 0) {
+                        console.log(`[orphan-review-recovery] Auto-reprocessed ${recovered} orphaned review case(s)`);
+                    }
+                } catch (error) {
+                    console.error('Error in orphaned review recovery:', error);
                 }
-            } catch (error) {
-                console.error('Error in orphaned review recovery:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         // Portal submission dispatch (every 3 minutes)
         // submit-portal is dispatched from Railway (top-level) instead of from within
         // Trigger.dev tasks to avoid child-task PENDING_VERSION during deploys.
         // Runs at minute 1,4,7,10,... to avoid pile-up with */5 jobs
-        this.jobs.portalDispatch = new CronJob('1-59/3 * * * *', async () => {
-            try {
-                const dispatched = await this.dispatchPendingPortalTasks();
-                if (dispatched > 0) {
-                    console.log(`Portal dispatch: triggered ${dispatched} submit-portal task(s)`);
+        this.jobs.portalDispatch = new CronJob('1-59/3 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.portalDispatch, async () => {
+                try {
+                    const dispatched = await this.dispatchPendingPortalTasks();
+                    if (dispatched > 0) {
+                        console.log(`Portal dispatch: triggered ${dispatched} submit-portal task(s)`);
+                    }
+                } catch (error) {
+                    console.error('Error in portal dispatch cron:', error);
                 }
-            } catch (error) {
-                console.error('Error in portal dispatch cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
-        this.jobs.portalStatusMonitoring = new CronJob('13 */6 * * *', async () => {
-            try {
-                const result = await portalStatusMonitorService.monitorSubmittedPortalCases({ limit: 5 });
-                if (result.checked > 0 || result.failures > 0) {
-                    console.log(`Portal status monitoring: checked ${result.checked}, records_ready ${result.recordsReady}, alerts ${result.alerts}, failures ${result.failures}`);
+        this.jobs.portalStatusMonitoring = new CronJob('13 */6 * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.portalStatusMonitoring, async () => {
+                try {
+                    const result = await portalStatusMonitorService.monitorSubmittedPortalCases({ limit: 5 });
+                    if (result.checked > 0 || result.failures > 0) {
+                        console.log(`Portal status monitoring: checked ${result.checked}, records_ready ${result.recordsReady}, alerts ${result.alerts}, failures ${result.failures}`);
+                    }
+                } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'cron_service',
+                        operation: 'portal_status_monitor_cron',
+                    });
+                    console.error('Error in portal status monitoring cron:', error);
                 }
-            } catch (error) {
-                await errorTrackingService.captureException(error, {
-                    sourceService: 'cron_service',
-                    operation: 'portal_status_monitor_cron',
-                });
-                console.error('Error in portal status monitoring cron:', error);
-            }
+            });
         }, null, true, 'America/New_York');
 
         console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
