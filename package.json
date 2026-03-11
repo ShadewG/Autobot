@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "build": "cd dashboard && npm install && npm run build",
     "dev": "nodemon server.js",
     "migrate": "node database/migrate.js",
     "test-setup": "node test-setup.js",

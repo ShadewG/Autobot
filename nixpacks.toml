@@ -2,7 +2,4 @@
 aptPkgs = ["poppler-utils"]
 
 [phases.install]
-cmd = "npm install && cd dashboard && npm install"
-
-[phases.build]
-cmd = "cd dashboard && NODE_ENV=production npm run build"
+cmd = "npm install"
