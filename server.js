@@ -66,7 +66,12 @@ app.get('/api/debug/dashboard-status', (req, res) => {
     if (queueExists) {
         queueFiles = _fs.readdirSync(path.join(dashboardPath, 'queue'));
     }
-    res.json({ dashboardPath, exists, files, queueExists, queueFiles });
+    let chunkFiles = [];
+    const chunkDir = path.join(dashboardPath, '_next', 'static', 'chunks', 'app', 'queue');
+    if (_fs.existsSync(chunkDir)) {
+        chunkFiles = _fs.readdirSync(chunkDir);
+    }
+    res.json({ dashboardPath, exists, files, queueExists, queueFiles, chunkDir, chunkFiles });
 });
 
 // Health check endpoint
