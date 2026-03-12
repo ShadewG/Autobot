@@ -37,13 +37,13 @@ async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, optio
 async function getActivePortalDispatch(caseId) {
     const [activeRunResult, activeSubmissionResult, activeTaskResult] = await Promise.all([
         db.query(
-            `SELECT id, status, created_at,
+            `SELECT id, status, started_at, updated_at,
                     metadata->>'portal_task_id' AS portal_task_id
              FROM agent_runs
              WHERE case_id = $1
                AND trigger_type IN ('submit_portal', 'portal_submit')
                AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting')
-             ORDER BY created_at DESC
+             ORDER BY COALESCE(started_at, updated_at) DESC, id DESC
              LIMIT 1`,
             [caseId]
         ),
