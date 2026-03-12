@@ -5,7 +5,12 @@ const crypto = require('crypto');
 const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
-const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const {
+    normalizePortalUrl,
+    detectPortalProviderByUrl,
+    buildPortalFingerprint,
+    evaluatePortalAutomationDecision,
+} = require('../utils/portal-utils');
 const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
 const canonicalAgency = require('./canonical-agency');
 const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
@@ -1991,6 +1996,235 @@ class DatabaseService {
             [id, ...entries.map(([, v]) => v)]
         );
         return result.rows[0];
+    }
+
+    async getPortalAutomationPolicy(portalUrl, provider = null, { allowHistoricalBackfill = true } = {}) {
+        const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
+        if (!fingerprintInfo?.fingerprint) return null;
+
+        let result = await this.query(
+            `SELECT *
+               FROM portal_automation_policies
+              WHERE portal_fingerprint = $1
+              LIMIT 1`,
+            [fingerprintInfo.fingerprint]
+        );
+
+        if (result.rows[0] || !allowHistoricalBackfill) {
+            return result.rows[0] || null;
+        }
+
+        return this.backfillPortalAutomationPolicyFromHistory(fingerprintInfo);
+    }
+
+    async backfillPortalAutomationPolicyFromHistory(fingerprintInfo) {
+        if (!fingerprintInfo?.fingerprint) return null;
+
+        const params = [];
+        let providerWhere = '';
+        if (fingerprintInfo.provider && fingerprintInfo.provider !== 'unknown') {
+            params.push(fingerprintInfo.provider);
+            providerWhere = `AND LOWER(COALESCE(pca.portal_provider, c.portal_provider, '')) = LOWER($${params.length})`;
+        }
+
+        params.push(250);
+        const candidateResult = await this.query(
+            `SELECT
+                ps.id AS submission_id,
+                ps.case_id,
+                ps.started_at,
+                COALESCE(pca.portal_url, c.portal_url) AS portal_url,
+                COALESCE(pca.portal_provider, c.portal_provider) AS portal_provider
+             FROM portal_submissions ps
+             JOIN cases c ON c.id = ps.case_id
+             LEFT JOIN LATERAL (
+                SELECT portal_url, portal_provider
+                  FROM case_agencies ca
+                 WHERE ca.case_id = ps.case_id
+                   AND ca.is_primary = true
+                   AND ca.is_active = true
+                 ORDER BY ca.updated_at DESC NULLS LAST, ca.created_at DESC NULLS LAST, ca.id DESC
+                 LIMIT 1
+             ) pca ON TRUE
+             WHERE ps.status = 'completed'
+               ${providerWhere}
+             ORDER BY ps.started_at DESC
+             LIMIT $${params.length}`,
+            params
+        );
+
+        const matches = candidateResult.rows.filter((row) => {
+            const candidateFingerprint = buildPortalFingerprint(
+                row.portal_url,
+                row.portal_provider || fingerprintInfo.provider || null
+            );
+            return candidateFingerprint?.fingerprint === fingerprintInfo.fingerprint;
+        });
+
+        if (matches.length === 0) {
+            return null;
+        }
+
+        const latest = matches[0];
+        return this.upsertPortalAutomationPolicy({
+            portalUrl: latest.portal_url,
+            provider: latest.portal_provider || fingerprintInfo.provider || null,
+            policyStatus: 'trusted',
+            decisionSource: 'historical_success',
+            decisionReason: 'historical_completed_submission',
+            caseId: latest.case_id || null,
+            submissionId: latest.submission_id || null,
+            successDelta: matches.length,
+            failureDelta: 0,
+        });
+    }
+
+    async upsertPortalAutomationPolicy({
+        portalUrl,
+        provider = null,
+        policyStatus = null,
+        decisionSource = null,
+        decisionReason = null,
+        caseId = null,
+        submissionId = null,
+        successDelta = 0,
+        failureDelta = 0,
+    }) {
+        const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
+        if (!fingerprintInfo?.fingerprint) {
+            throw new Error('Cannot persist portal automation policy without a valid portal URL');
+        }
+
+        const result = await this.query(
+            `INSERT INTO portal_automation_policies (
+                portal_fingerprint,
+                host,
+                provider,
+                path_class,
+                path_hint,
+                sample_portal_url,
+                policy_status,
+                decision_source,
+                decision_reason,
+                success_count,
+                failure_count,
+                last_case_id,
+                last_submission_id,
+                decided_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                $10, $11, $12, $13,
+                CASE WHEN $7 IS NOT NULL THEN NOW() ELSE NULL END,
+                NOW(), NOW()
+            )
+            ON CONFLICT (portal_fingerprint) DO UPDATE
+            SET host = EXCLUDED.host,
+                provider = EXCLUDED.provider,
+                path_class = EXCLUDED.path_class,
+                path_hint = EXCLUDED.path_hint,
+                sample_portal_url = EXCLUDED.sample_portal_url,
+                policy_status = COALESCE(EXCLUDED.policy_status, portal_automation_policies.policy_status),
+                decision_source = COALESCE(EXCLUDED.decision_source, portal_automation_policies.decision_source),
+                decision_reason = COALESCE(EXCLUDED.decision_reason, portal_automation_policies.decision_reason),
+                success_count = COALESCE(portal_automation_policies.success_count, 0) + EXCLUDED.success_count,
+                failure_count = COALESCE(portal_automation_policies.failure_count, 0) + EXCLUDED.failure_count,
+                last_case_id = COALESCE(EXCLUDED.last_case_id, portal_automation_policies.last_case_id),
+                last_submission_id = COALESCE(EXCLUDED.last_submission_id, portal_automation_policies.last_submission_id),
+                decided_at = CASE
+                    WHEN EXCLUDED.policy_status IS NOT NULL THEN NOW()
+                    ELSE portal_automation_policies.decided_at
+                END,
+                updated_at = NOW()
+            RETURNING *`,
+            [
+                fingerprintInfo.fingerprint,
+                fingerprintInfo.host,
+                fingerprintInfo.provider,
+                fingerprintInfo.pathClass,
+                fingerprintInfo.pathHint,
+                fingerprintInfo.normalizedUrl,
+                policyStatus,
+                decisionSource,
+                decisionReason,
+                Number(successDelta) || 0,
+                Number(failureDelta) || 0,
+                caseId,
+                submissionId,
+            ]
+        );
+
+        return result.rows[0] || null;
+    }
+
+    async getPortalAutomationDecision(portalUrl, provider = null, lastPortalStatus = null) {
+        const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
+        const policy = await this.getPortalAutomationPolicy(portalUrl, provider);
+        const evaluated = evaluatePortalAutomationDecision({
+            portalUrl,
+            provider: provider || fingerprintInfo?.provider || null,
+            lastPortalStatus,
+            policyStatus: policy?.policy_status || null,
+            policyReason: policy?.decision_reason || null,
+        });
+
+        return {
+            ...evaluated,
+            policy: policy || null,
+        };
+    }
+
+    async enrichCaseAgenciesWithPortalAutomationPolicies(caseAgencies = []) {
+        const cache = new Map();
+        const enriched = [];
+
+        for (const agency of caseAgencies) {
+            if (!agency?.portal_url) {
+                enriched.push({
+                    ...agency,
+                    portal_automation_decision: null,
+                    portal_automation_status: null,
+                    portal_automation_reason: null,
+                    portal_automation_source: null,
+                    portal_automation_policy_status: null,
+                    portal_automation_fingerprint: null,
+                    portal_automation_decided_at: null,
+                    portal_automation_success_count: 0,
+                    portal_automation_failure_count: 0,
+                });
+                continue;
+            }
+
+            const fingerprintInfo = buildPortalFingerprint(agency.portal_url, agency.portal_provider || null);
+            const cacheKey = fingerprintInfo?.fingerprint || `raw:${agency.portal_url}`;
+            if (!cache.has(cacheKey)) {
+                cache.set(
+                    cacheKey,
+                    this.getPortalAutomationDecision(
+                        agency.portal_url,
+                        agency.portal_provider || null,
+                        agency.last_portal_status || null
+                    )
+                );
+            }
+
+            const decision = await cache.get(cacheKey);
+            enriched.push({
+                ...agency,
+                portal_automation_decision: decision?.decision || null,
+                portal_automation_status: decision?.status || null,
+                portal_automation_reason: decision?.reason || null,
+                portal_automation_source: decision?.policy?.decision_source || (decision?.status === 'auto_supported' ? 'provider_heuristic' : null),
+                portal_automation_policy_status: decision?.policy?.policy_status || null,
+                portal_automation_fingerprint: decision?.portalFingerprint || null,
+                portal_automation_decided_at: decision?.policy?.decided_at || null,
+                portal_automation_success_count: Number(decision?.policy?.success_count || 0),
+                portal_automation_failure_count: Number(decision?.policy?.failure_count || 0),
+            });
+        }
+
+        return enriched;
     }
 
     async getPortalSubmissions(caseId, { limit = 20 } = {}) {

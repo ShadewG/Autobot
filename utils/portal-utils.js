@@ -56,6 +56,26 @@ const TRACKING_URL_PATTERNS = [
     /trk\.klclick/i,
 ];
 
+const PORTAL_ENTRY_MARKERS = [
+    '/portal',
+    '/request',
+    '/requests',
+    '/publicrecords',
+    '/public-records',
+    '/recordrequest',
+    '/record-request',
+    '/foia',
+    '/formcenter',
+    '/forms',
+    '/openrecords',
+    '/open-records',
+];
+
+const CONTACT_MARKERS = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
+const DOCUMENTATION_MARKERS = ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge'];
+const DOWNLOAD_EXTENSION_PATTERN = /\.(pdf|doc|docx|xls|xlsx|rtf|odt|zip|jpg|jpeg|png)$/i;
+const KNOWN_AUTOMATABLE_PROVIDERS = new Set(['govqa', 'nextrequest', 'justfoia', 'civicplus']);
+
 function normalizePortalUrl(url) {
     if (!url) return null;
     const trimmed = url.trim();
@@ -166,18 +186,196 @@ function isNonAutomatablePortalStatus(status) {
 function isLikelyContactInfoUrl(url) {
     if (!url) return false;
     const value = String(url).toLowerCase();
-    const contactLike = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
-    const portalLike = ['/portal', '/request', '/requests', 'nextrequest', 'publicrecords', 'recordrequest', 'foia'];
-    const hasContactMarker = contactLike.some((needle) => value.includes(needle));
-    const hasPortalMarker = portalLike.some((needle) => value.includes(needle));
-    return hasContactMarker && !hasPortalMarker;
+    let firstPathSegment = '';
+    try {
+        const pathname = new URL(normalizePortalUrl(url)).pathname || '/';
+        firstPathSegment = pathname.toLowerCase().split('/').filter(Boolean)[0] || '';
+    } catch (error) {}
+    const hasContactMarker = CONTACT_MARKERS.some((needle) => value.includes(needle));
+    const hasPortalMarker = PORTAL_ENTRY_MARKERS.some((needle) => value.includes(needle))
+        || value.includes('nextrequest');
+    const startsWithContactRoot = ['contact', 'contacts', 'staff', 'directory', 'about', 'pio'].includes(firstPathSegment);
+    return startsWithContactRoot || (hasContactMarker && !hasPortalMarker);
 }
 
 function isLikelyDocumentationPortalUrl(url) {
     if (!url) return false;
     const value = String(url).toLowerCase();
-    return ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge']
-        .some((needle) => value.includes(needle));
+    return DOCUMENTATION_MARKERS.some((needle) => value.includes(needle));
+}
+
+function getPortalPathClass(url, provider = null) {
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) return 'invalid';
+
+    try {
+        const urlObj = new URL(normalized);
+        const pathname = (urlObj.pathname || '/').toLowerCase();
+        const hostname = urlObj.hostname.toLowerCase();
+        const providerName = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase();
+
+        if (TRACKING_URL_PATTERNS.some((pattern) => pattern.test(normalized))) return 'tracking';
+        if (DOWNLOAD_EXTENSION_PATTERN.test(pathname)) return 'download';
+        if (isLikelyDocumentationPortalUrl(normalized)) return 'documentation';
+        if (isLikelyContactInfoUrl(normalized)) return 'contact';
+        if (pathname.includes('/login') || pathname.includes('/signin') || pathname.includes('/requestlogin.aspx')) {
+            return 'portal_entry';
+        }
+        if (PORTAL_ENTRY_MARKERS.some((needle) => pathname.includes(needle))) return 'portal_entry';
+        if (KNOWN_AUTOMATABLE_PROVIDERS.has(providerName)) return 'portal_entry';
+        if (hostname.includes('nextrequest.com') || hostname.includes('govqa.us') || hostname.includes('justfoia.com')) {
+            return 'portal_entry';
+        }
+        if (pathname === '/' || pathname === '') return 'unknown_root';
+        return 'unknown_candidate';
+    } catch (error) {
+        return 'invalid';
+    }
+}
+
+function buildPortalPathHint(url) {
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) return 'invalid';
+
+    try {
+        const { pathname } = new URL(normalized);
+        const segments = String(pathname || '/')
+            .toLowerCase()
+            .split('/')
+            .filter(Boolean)
+            .slice(0, 2);
+        return segments.length > 0 ? `/${segments.join('/')}` : '/';
+    } catch (error) {
+        return 'invalid';
+    }
+}
+
+function buildPortalFingerprint(url, provider = null) {
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) return null;
+
+    try {
+        const normalizedUrl = new URL(normalized);
+        const detectedProvider = provider || detectPortalProviderByUrl(normalized)?.name || 'unknown';
+        const pathClass = getPortalPathClass(normalized, detectedProvider);
+        const pathHint = buildPortalPathHint(normalized);
+        return {
+            normalizedUrl: normalizedUrl.toString(),
+            host: normalizedUrl.hostname.toLowerCase(),
+            provider: String(detectedProvider || 'unknown').toLowerCase(),
+            pathClass,
+            pathHint,
+            fingerprint: `${String(detectedProvider || 'unknown').toLowerCase()}|${normalizedUrl.hostname.toLowerCase()}|${pathClass}|${pathHint}`,
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function evaluatePortalAutomationDecision({
+    portalUrl,
+    provider = null,
+    lastPortalStatus = null,
+    policyStatus = null,
+    policyReason = null,
+} = {}) {
+    const fingerprint = buildPortalFingerprint(portalUrl, provider);
+    if (!fingerprint) {
+        return {
+            decision: 'block',
+            status: 'invalid',
+            reason: 'missing_portal_url',
+            portalFingerprint: null,
+            normalizedUrl: null,
+            provider: provider || null,
+            pathClass: 'invalid',
+        };
+    }
+
+    const normalizedProvider = String(provider || fingerprint.provider || '').toLowerCase();
+    const normalizedPolicyStatus = String(policyStatus || '').toLowerCase() || null;
+
+    if (isNonAutomatablePortalProvider(provider)) {
+        return {
+            decision: 'block',
+            status: 'blocked',
+            reason: 'non_automatable_provider',
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    if (isNonAutomatablePortalStatus(lastPortalStatus)) {
+        return {
+            decision: 'block',
+            status: 'blocked',
+            reason: 'non_automatable_status',
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    if (['tracking', 'download', 'documentation', 'contact', 'invalid'].includes(fingerprint.pathClass)) {
+        return {
+            decision: 'block',
+            status: 'blocked',
+            reason: fingerprint.pathClass,
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    if (normalizedPolicyStatus === 'blocked') {
+        return {
+            decision: 'block',
+            status: 'blocked',
+            reason: policyReason || 'manual_only_policy',
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    if (normalizedPolicyStatus === 'trusted') {
+        return {
+            decision: 'allow',
+            status: 'trusted',
+            reason: policyReason || 'trusted_policy',
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    if (KNOWN_AUTOMATABLE_PROVIDERS.has(normalizedProvider) && fingerprint.pathClass === 'portal_entry') {
+        return {
+            decision: 'allow',
+            status: 'auto_supported',
+            reason: 'known_provider_portal',
+            portalFingerprint: fingerprint.fingerprint,
+            normalizedUrl: fingerprint.normalizedUrl,
+            provider: normalizedProvider || null,
+            pathClass: fingerprint.pathClass,
+        };
+    }
+
+    return {
+        decision: 'review',
+        status: 'needs_confirmation',
+        reason: 'operator_confirmation_required',
+        portalFingerprint: fingerprint.fingerprint,
+        normalizedUrl: fingerprint.normalizedUrl,
+        provider: normalizedProvider || null,
+        pathClass: fingerprint.pathClass,
+    };
 }
 
 function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
@@ -195,7 +393,7 @@ function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
         const pathname = urlObj.pathname.toLowerCase();
 
         // Reject document file URLs — these are downloads, not portals
-        if (/\.(pdf|doc|docx|xls|xlsx|rtf|odt)$/i.test(pathname)) {
+        if (DOWNLOAD_EXTENSION_PATTERN.test(pathname)) {
             return false;
         }
 
@@ -215,5 +413,8 @@ module.exports = {
     detectPortalSystemEmail,
     isSupportedPortalUrl,
     isNonAutomatablePortalProvider,
-    isNonAutomatablePortalStatus
+    isNonAutomatablePortalStatus,
+    getPortalPathClass,
+    buildPortalFingerprint,
+    evaluatePortalAutomationDecision,
 };

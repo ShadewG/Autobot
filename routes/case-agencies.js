@@ -337,12 +337,15 @@ router.get('/:id/agencies', async (req, res) => {
         ]);
         const importBlockedAgencyDisplay = buildImportBlockedAgencyDisplay(caseData, agencies);
         if (importBlockedAgencyDisplay) {
-            return res.json({ success: true, agencies: [importBlockedAgencyDisplay] });
+            const enrichedImportBlocked = await db.enrichCaseAgenciesWithPortalAutomationPolicies([importBlockedAgencyDisplay]);
+            return res.json({ success: true, agencies: enrichedImportBlocked });
         }
         const canonicalAgencies = await Promise.all(
             agencies.map((agency) => canonicalizeCaseAgency(agency, caseData))
         );
-        res.json({ success: true, agencies: dedupeCanonicalCaseAgencies(canonicalAgencies) });
+        const dedupedAgencies = dedupeCanonicalCaseAgencies(canonicalAgencies);
+        const enrichedAgencies = await db.enrichCaseAgenciesWithPortalAutomationPolicies(dedupedAgencies);
+        res.json({ success: true, agencies: enrichedAgencies });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -622,6 +625,107 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
         );
 
         res.json({ success: true, case_agency: updated, research: lookup });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/cases/:id/agencies/:caId/portal/confirm
+ * Trust a portal fingerprint for future automation.
+ */
+router.post('/:id/agencies/:caId/portal/confirm', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseAgencyId = parseInt(req.params.caId, 10);
+        if (!caseId || !caseAgencyId) return res.status(400).json({ success: false, error: 'Invalid ids' });
+
+        const caseAgency = await db.getCaseAgencyById(caseAgencyId);
+        if (!caseAgency || Number(caseAgency.case_id) !== Number(caseId)) {
+            return res.status(404).json({ success: false, error: 'Case agency not found' });
+        }
+
+        const normalizedPortalUrl = normalizePortalUrl(caseAgency.portal_url || null);
+        if (!normalizedPortalUrl) {
+            return res.status(400).json({ success: false, error: 'Agency does not have a portal URL to confirm' });
+        }
+
+        const provider = caseAgency.portal_provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || null;
+        const policy = await db.upsertPortalAutomationPolicy({
+            portalUrl: normalizedPortalUrl,
+            provider,
+            policyStatus: 'trusted',
+            decisionSource: 'operator_confirmed',
+            decisionReason: 'confirmed_real_portal',
+            caseId,
+        });
+
+        await db.logActivity('portal_policy_confirmed', `Confirmed portal automation for \"${caseAgency.agency_name}\"`, {
+            case_id: caseId,
+            case_agency_id: caseAgencyId,
+            portal_url: normalizedPortalUrl,
+            portal_provider: provider,
+            portal_fingerprint: policy?.portal_fingerprint || null,
+        });
+
+        const [enrichedAgency] = await db.enrichCaseAgenciesWithPortalAutomationPolicies([{ ...caseAgency, portal_url: normalizedPortalUrl, portal_provider: provider }]);
+        res.json({ success: true, case_agency: enrichedAgency, policy });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/cases/:id/agencies/:caId/portal/block
+ * Mark a portal as manual-only so automation will not dispatch it in the future.
+ */
+router.post('/:id/agencies/:caId/portal/block', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseAgencyId = parseInt(req.params.caId, 10);
+        if (!caseId || !caseAgencyId) return res.status(400).json({ success: false, error: 'Invalid ids' });
+
+        const caseAgency = await db.getCaseAgencyById(caseAgencyId);
+        if (!caseAgency || Number(caseAgency.case_id) !== Number(caseId)) {
+            return res.status(404).json({ success: false, error: 'Case agency not found' });
+        }
+
+        const normalizedPortalUrl = normalizePortalUrl(caseAgency.portal_url || null);
+        if (!normalizedPortalUrl) {
+            return res.status(400).json({ success: false, error: 'Agency does not have a portal URL to block' });
+        }
+
+        const provider = caseAgency.portal_provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || null;
+        const policy = await db.upsertPortalAutomationPolicy({
+            portalUrl: normalizedPortalUrl,
+            provider,
+            policyStatus: 'blocked',
+            decisionSource: 'operator_blocked',
+            decisionReason: 'manual_only',
+            caseId,
+        });
+
+        await db.query(
+            `UPDATE portal_tasks
+                SET status = 'CANCELLED',
+                    updated_at = NOW(),
+                    completion_notes = COALESCE(completion_notes, 'Portal marked manual-only by operator')
+              WHERE case_id = $1
+                AND portal_url = $2
+                AND status IN ('PENDING', 'IN_PROGRESS')`,
+            [caseId, normalizedPortalUrl]
+        ).catch(() => {});
+
+        await db.logActivity('portal_policy_blocked', `Marked portal for \"${caseAgency.agency_name}\" as manual-only`, {
+            case_id: caseId,
+            case_agency_id: caseAgencyId,
+            portal_url: normalizedPortalUrl,
+            portal_provider: provider,
+            portal_fingerprint: policy?.portal_fingerprint || null,
+        });
+
+        const [enrichedAgency] = await db.enrichCaseAgenciesWithPortalAutomationPolicies([{ ...caseAgency, portal_url: normalizedPortalUrl, portal_provider: provider }]);
+        res.json({ success: true, case_agency: enrichedAgency, policy });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

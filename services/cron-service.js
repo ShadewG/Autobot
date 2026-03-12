@@ -2000,13 +2000,20 @@ class CronService {
                     continue;
                 }
 
-                const blockReason = getPortalDispatchBlockReason(
+                const portalDecision = await db.getPortalAutomationDecision(
                     pt.portal_url,
                     pt.portal_provider,
                     pt.last_portal_status
                 );
-                if (blockReason) {
-                    const completionNotes = `Skipped automatic portal dispatch: ${blockReason}`;
+                if (portalDecision?.decision !== 'allow') {
+                    const blockReason = portalDecision?.reason || getPortalDispatchBlockReason(
+                        pt.portal_url,
+                        pt.portal_provider,
+                        pt.last_portal_status
+                    ) || 'portal_confirmation_required';
+                    const completionNotes = portalDecision?.decision === 'review'
+                        ? 'Skipped automatic portal dispatch: operator confirmation required for this portal'
+                        : `Skipped automatic portal dispatch: ${blockReason}`;
                     await db.query(
                         `UPDATE portal_tasks
                          SET status = 'CANCELLED',
@@ -2036,6 +2043,7 @@ class CronService {
                                 portal_provider: pt.portal_provider || null,
                                 last_portal_status: pt.last_portal_status || null,
                                 block_reason: blockReason,
+                                portal_policy_status: portalDecision?.policy?.policy_status || null,
                                 source_service: 'cron_service',
                             }
                         );

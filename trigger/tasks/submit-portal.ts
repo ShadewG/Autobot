@@ -23,6 +23,7 @@ function lazy<T>(loader: () => T): () => T {
 const getDb = lazy(() => require("../../services/database"));
 const getCaseRuntime = lazy(() => require("../../services/case-runtime"));
 const getSkyvern = lazy(() => require("../../services/portal-agent-service-skyvern"));
+const getPlaywright = lazy(() => require("../../services/portal-agent-service-playwright"));
 const getNotion = lazy(() => require("../../services/notion-service"));
 const getDiscord = lazy(() => require("../../services/discord-service"));
 const getDecisionMemory = lazy(() => require("../../services/decision-memory-service"));
@@ -33,6 +34,32 @@ const FAILURE_WINDOW_HOURS = 24;
 const MAX_PORTAL_RUNS_PER_DAY = 2;
 const MAX_PORTAL_RUNS_TOTAL = 2;
 const STALE_CREDENTIAL_DAYS = 30;
+
+function parsePortalPrepAllowlist(rawValue: any): Set<string> {
+  return new Set(
+    String(rawValue || "")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function shouldUsePlaywrightPrep(provider: any, portalUrl: any): boolean {
+  if (String(process.env.PLAYWRIGHT_PORTAL_PREP_ENABLED || "").toLowerCase() !== "true") {
+    return false;
+  }
+
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const allowlist = parsePortalPrepAllowlist(
+    process.env.PLAYWRIGHT_PORTAL_PREP_PROVIDERS || "nextrequest"
+  );
+  if (normalizedProvider && allowlist.has(normalizedProvider)) {
+    return true;
+  }
+
+  const normalizedUrl = String(portalUrl || "").toLowerCase();
+  return Array.from(allowlist).some((value) => normalizedUrl.includes(value));
+}
 
 function inferAgencyType(agencyName: any): string {
   const text = String(agencyName || "").toLowerCase();
@@ -616,10 +643,23 @@ export const submitPortal = task({
 
     // ── Pre-flight: check if portal account is locked (don't waste Skyvern credits) ──
     // Note: document URLs are NOT blocked here — Skyvern service handles fallback to PDF/research
-    const portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
+    const shouldRunPlaywrightPrep = shouldUsePlaywrightPrep(
+      provider || caseData.portal_provider || null,
+      targetUrl
+    );
+    let portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
     if (portalAccount) {
       const blockedStatuses = new Set(["locked", "inactive"]);
       if (blockedStatuses.has(portalAccount.account_status)) {
+        if (shouldRunPlaywrightPrep) {
+          logger.info("Playwright prep enabled — attempting account recovery before blocking on account status", {
+            caseId,
+            targetUrl,
+            accountId: portalAccount.id,
+            accountStatus: portalAccount.account_status,
+            accountEmail: portalAccount.email,
+          });
+        } else {
         trace.setGateDecision({
           reason: `portal_account_${portalAccount.account_status}`,
           accountStatus: portalAccount.account_status,
@@ -641,6 +681,7 @@ export const submitPortal = task({
         });
         await closeAgentRun("failed", `Portal account ${portalAccount.account_status}`);
         return { success: false, skipped: true, reason: `portal_account_${portalAccount.account_status}` };
+        }
       }
 
       if (portalAccount.last_used_at) {
@@ -655,6 +696,52 @@ export const submitPortal = task({
       logger.info("No portal credentials found — will use default login-first workflow", {
         caseId, targetUrl, userId: caseData.user_id || null,
       });
+    }
+
+    if (shouldRunPlaywrightPrep) {
+      try {
+        recordNode("playwright_prep_started", {
+          provider: provider || caseData.portal_provider || null,
+          portalUrl: targetUrl,
+        });
+        const playwright = getPlaywright();
+        const prepResult = await playwright.preparePortalSession(caseData, targetUrl, {
+          trackInAutobot: true,
+          ensureAccount: true,
+          forceAccountSetup: true,
+        });
+        recordNode("playwright_prep_completed", {
+          success: prepResult?.success === true,
+          status: prepResult?.status || null,
+          accountEmail: prepResult?.accountEmail || null,
+        });
+
+        if (prepResult?.success) {
+          portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
+          logger.info("Playwright prep completed before Skyvern submission", {
+            caseId,
+            portalUrl: targetUrl,
+            status: prepResult?.status || null,
+            accountEmail: prepResult?.accountEmail || portalAccount?.email || null,
+          });
+        } else {
+          logger.warn("Playwright prep did not complete cleanly; continuing with Skyvern fallback", {
+            caseId,
+            portalUrl: targetUrl,
+            status: prepResult?.status || null,
+            blockers: prepResult?.blockers || [],
+          });
+        }
+      } catch (prepError: any) {
+        recordNode("playwright_prep_failed", {
+          error: prepError?.message || String(prepError),
+        });
+        logger.warn("Playwright prep failed; continuing with Skyvern fallback", {
+          caseId,
+          portalUrl: targetUrl,
+          error: prepError?.message || String(prepError),
+        });
+      }
     }
 
     let bypassApprovalGate = false;
@@ -846,6 +933,20 @@ export const submitPortal = task({
           await finalizePortalSubmissionSuccess(db, submissionRow.id, result, taskUrl);
         } catch {}
       }
+      try {
+        await db.upsertPortalAutomationPolicy({
+          portalUrl: targetUrl,
+          provider: provider || caseData.portal_provider || null,
+          policyStatus: 'trusted',
+          decisionSource: 'automation_success',
+          decisionReason: 'successful_portal_submission',
+          caseId,
+          submissionId: submissionRow?.id || null,
+          successDelta: 1,
+        });
+      } catch (policyErr: any) {
+        logger.warn('Failed to persist portal automation success policy', { error: policyErr?.message });
+      }
 
       // Update the linked execution record from PENDING_HUMAN → SENT
       if (linkedExecutionKey) {
@@ -922,6 +1023,19 @@ export const submitPortal = task({
         try {
           await finalizePortalSubmissionFailure(db, submissionRow.id, error);
         } catch {}
+      }
+      try {
+        await db.upsertPortalAutomationPolicy({
+          portalUrl: targetUrl,
+          provider: provider || caseData.portal_provider || null,
+          decisionSource: 'automation_failure',
+          decisionReason: getPortalFailureSignature(error.message),
+          caseId,
+          submissionId: submissionRow?.id || null,
+          failureDelta: 1,
+        });
+      } catch (policyErr: any) {
+        logger.warn('Failed to persist portal automation failure telemetry', { error: policyErr?.message });
       }
 
       // Update the linked execution record from PENDING_HUMAN → FAILED

@@ -1588,6 +1588,7 @@ router.get('/:id/workspace', async (req, res) => {
                 }];
             }
         }
+        sortedCaseAgencies = await db.enrichCaseAgenciesWithPortalAutomationPolicies(sortedCaseAgencies);
         const agencyCandidates = filterExistingAgencyCandidates(
             extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes),
             sortedCaseAgencies,

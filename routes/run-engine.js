@@ -2382,6 +2382,23 @@ router.post('/proposals/:id/decision', async (req, res) => {
         if (!isSupportedPortalUrl(portalUrl, caseData?.portal_provider || null, caseData?.last_portal_status || null)) {
           throw new Error(`Portal URL on case ${caseId} is not automatable`);
         }
+        const portalDecision = await db.getPortalAutomationDecision(
+          portalUrl,
+          caseData?.portal_provider || null,
+          caseData?.last_portal_status || null
+        );
+        if (portalDecision?.decision === 'review') {
+          return res.status(409).json(buildOperatorActionErrorResponse(
+            new Error('Portal needs operator confirmation before automation. Confirm it on the case detail page or mark it manual-only.'),
+            'PORTAL_CONFIRMATION_REQUIRED'
+          ));
+        }
+        if (portalDecision?.decision === 'block') {
+          return res.status(409).json(buildOperatorActionErrorResponse(
+            new Error(`Portal is blocked for automation (${portalDecision.reason || 'manual-only'})`),
+            'PORTAL_MANUAL_ONLY'
+          ));
+        }
         const priorPortalAttempts = await db.getAutomatedPortalAttemptCount(caseId);
         if (priorPortalAttempts >= 2) {
           return res.status(409).json(buildOperatorActionErrorResponse(
