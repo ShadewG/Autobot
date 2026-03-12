@@ -29,6 +29,12 @@ const MORE_INFO_PATTERNS = [
   /\bmissing information\b/i,
 ];
 
+const AUTH_FAILURE_PATTERNS = [
+  { kind: 'totp_missing', pattern: /no totp verification code found/i },
+  { kind: 'login_failure', pattern: /invalid login attempt|password incorrect|unable to log in|unable to login|couldn't find your account|could not find your account|email address .* not found/i },
+  { kind: 'reset_flow', pattern: /password reset|reset email has been sent|sign in help|confirmation for a password reset|dead end.*password reset/i },
+];
+
 function collapseWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -42,6 +48,19 @@ function buildStatusSummary(result = {}) {
     .map(collapseWhitespace)
     .filter(Boolean);
   return pieces.join(' | ').slice(0, 255) || 'Portal status check completed';
+}
+
+function classifyPortalCheckFailure(rawError) {
+  const text = collapseWhitespace(rawError).toLowerCase();
+  if (!text) return null;
+
+  for (const entry of AUTH_FAILURE_PATTERNS) {
+    if (entry.pattern.test(text)) {
+      return entry.kind;
+    }
+  }
+
+  return null;
 }
 
 function classifyPortalStatus(result = {}) {
@@ -165,29 +184,61 @@ async function checkCasePortalStatus(caseData, deps = {}) {
     return { success: false, skipped: true, reason: 'missing_case_or_portal' };
   }
 
+  const releasePortalMonitorLock = typeof database.acquireAdvisoryLock === 'function'
+    ? await database.acquireAdvisoryLock(`portal-status-monitor:${caseData.id}`)
+    : async () => {};
+
+  if (!releasePortalMonitorLock) {
+    return { success: false, skipped: true, reason: 'status_check_locked' };
+  }
+
   try {
     const result = await portalAgent.checkPortalStatus(caseData, caseData.portal_url, { maxSteps: 15 });
     if (!result?.success) {
       const failureSummary = collapseWhitespace(result?.error || 'Portal status check failed');
+      const failureKind = classifyPortalCheckFailure(failureSummary);
+      const shouldPauseMonitoring = ['totp_missing', 'login_failure', 'reset_flow'].includes(failureKind);
+      let portalAccount = null;
+
+      if (shouldPauseMonitoring && typeof database.getPortalAccountByUrl === 'function') {
+        try {
+          portalAccount = await database.getPortalAccountByUrl(caseData.portal_url, caseData.user_id || null, { includeInactive: true });
+        } catch (_) {}
+      }
+
+      const updatedStatus = shouldPauseMonitoring
+        ? `Status monitoring paused: ${failureSummary}`.slice(0, 255)
+        : `Status check failed: ${failureSummary}`.slice(0, 255);
       await database.updateCasePortalStatus(caseData.id, {
-        last_portal_status: `Status check failed: ${failureSummary}`.slice(0, 255),
+        last_portal_status: updatedStatus,
         last_portal_status_at: new Date(),
         last_portal_engine: 'skyvern',
         last_portal_run_id: result?.taskId || null,
         last_portal_details: result?.extracted_data || null,
         last_portal_recording_url: result?.recording_url || undefined,
       });
+
+      if (shouldPauseMonitoring && portalAccount?.id && portalAccount.account_status === 'active' && typeof database.updatePortalAccountStatus === 'function') {
+        try {
+          await database.updatePortalAccountStatus(portalAccount.id, 'locked');
+        } catch (_) {}
+      }
+
       await database.logActivity(
-        'portal_status_check_failed',
-        `Portal status check failed for ${caseData.case_name}: ${failureSummary}`,
+        shouldPauseMonitoring ? 'portal_status_monitor_paused' : 'portal_status_check_failed',
+        shouldPauseMonitoring
+          ? `Portal status monitoring paused for ${caseData.case_name}: ${failureSummary}`
+          : `Portal status check failed for ${caseData.case_name}: ${failureSummary}`,
         {
           case_id: caseData.id,
           actor_type: 'system',
           source_service: 'portal_status_monitor',
           portal_task_id: result?.taskId || null,
+          portal_status_failure_kind: failureKind || null,
+          portal_account_id: portalAccount?.id || null,
         }
       );
-      return { success: false, error: failureSummary };
+      return { success: false, error: failureSummary, paused: shouldPauseMonitoring, reason: failureKind || 'status_check_failed' };
     }
 
     const classification = await applyPortalStatusOutcome(caseData, result, { db: database });
@@ -210,6 +261,10 @@ async function checkCasePortalStatus(caseData, deps = {}) {
       metadata: { portalUrl: caseData.portal_url },
     });
     throw error;
+  } finally {
+    try {
+      await releasePortalMonitorLock();
+    } catch (_) {}
   }
 }
 
@@ -218,18 +273,19 @@ async function monitorSubmittedPortalCases({ limit = 5, db: database = db, skyve
     `SELECT c.id, c.case_name, c.portal_url, c.portal_provider, c.user_id, c.status
        FROM cases c
       WHERE c.portal_url IS NOT NULL
-        AND c.status IN ('awaiting_response', 'responded', 'portal_in_progress')
+        AND c.status IN ('awaiting_response', 'portal_in_progress')
         AND EXISTS (
           SELECT 1
             FROM portal_submissions ps
            WHERE ps.case_id = c.id
         )
+        AND COALESCE(c.last_portal_status, '') NOT ILIKE 'Status monitoring paused:%'
         AND NOT EXISTS (
           SELECT 1
             FROM activity_log al
            WHERE al.case_id = c.id
-             AND al.event_type = 'portal_status_checked'
-             AND al.created_at >= NOW() - INTERVAL '6 hours'
+             AND al.event_type IN ('portal_status_checked', 'portal_status_check_failed', 'portal_status_monitor_paused')
+             AND al.created_at >= NOW() - INTERVAL '24 hours'
         )
       ORDER BY COALESCE(c.last_portal_status_at, c.updated_at, c.created_at) ASC
       LIMIT $1`,

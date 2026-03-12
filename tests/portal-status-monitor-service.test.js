@@ -3,6 +3,7 @@ const assert = require('assert');
 const {
   classifyPortalStatus,
   applyPortalStatusOutcome,
+  checkCasePortalStatus,
   monitorSubmittedPortalCases,
 } = require('../services/portal-status-monitor-service');
 
@@ -114,10 +115,13 @@ describe('portal status monitor service', function () {
     const fakeDb = {
       query: async (sql) => {
         assert.match(sql, /FROM cases c/);
+        assert.match(sql, /c.status IN \('awaiting_response', 'portal_in_progress'\)/);
+        assert.match(sql, /portal_status_check_failed/);
+        assert.match(sql, /portal_status_monitor_paused/);
         return {
           rows: [
             { id: 201, case_name: 'Ready Case', portal_url: 'https://portal.example/1', status: 'awaiting_response' },
-            { id: 202, case_name: 'Denied Case', portal_url: 'https://portal.example/2', status: 'responded' },
+            { id: 202, case_name: 'Denied Case', portal_url: 'https://portal.example/2', status: 'portal_in_progress' },
           ],
         };
       },
@@ -146,5 +150,56 @@ describe('portal status monitor service', function () {
       candidateCount: 2,
     });
     assert.ok(activity.some((entry) => entry[0] === 'upsertProposal'));
+  });
+
+  it('pauses monitoring and locks the account on auth-related status check failures', async function () {
+    const calls = [];
+    const fakeDb = {
+      acquireAdvisoryLock: async () => async () => {},
+      getPortalAccountByUrl: async () => ({ id: 44, account_status: 'active' }),
+      updatePortalAccountStatus: async (id, status) => {
+        calls.push(['updatePortalAccountStatus', id, status]);
+      },
+      updateCasePortalStatus: async (caseId, payload) => {
+        calls.push(['updateCasePortalStatus', caseId, payload]);
+      },
+      logActivity: async (type, description, metadata) => {
+        calls.push(['logActivity', type, description, metadata]);
+      },
+    };
+    const fakeSkyvern = {
+      checkPortalStatus: async () => ({
+        success: false,
+        error: 'No TOTP verification code found. Going to terminate.',
+        taskId: 'tsk_123',
+      }),
+    };
+
+    const outcome = await checkCasePortalStatus(
+      {
+        id: 301,
+        case_name: 'Portal Status Auth Failure',
+        portal_url: 'https://example.nextrequest.com/requests/new',
+        user_id: 7,
+      },
+      { db: fakeDb, skyvern: fakeSkyvern }
+    );
+
+    assert.strictEqual(outcome.success, false);
+    assert.strictEqual(outcome.paused, true);
+    assert.strictEqual(outcome.reason, 'totp_missing');
+    assert.ok(
+      calls.some((entry) => entry[0] === 'updatePortalAccountStatus' && entry[1] === 44 && entry[2] === 'locked')
+    );
+    assert.ok(
+      calls.some((entry) => entry[0] === 'logActivity' && entry[1] === 'portal_status_monitor_paused')
+    );
+    assert.ok(
+      calls.some(
+        (entry) =>
+          entry[0] === 'updateCasePortalStatus' &&
+          String(entry[2].last_portal_status || '').startsWith('Status monitoring paused:')
+      )
+    );
   });
 });
