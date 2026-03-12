@@ -105,6 +105,123 @@ describe('Request alignment regressions', function () {
     assert.strictEqual(item.requires_human, true);
   });
 
+  it('toRequestListItem recovers zero-correspondence waiting cases with a real delivery path to ready-to-send', function () {
+    const item = requestHelpers.toRequestListItem({
+      id: 26703,
+      subject_name: 'Evansville case',
+      requested_records: ['Body camera'],
+      agency_name: 'Evansville Police Department, Indiana',
+      agency_email: 'publicaccess@evansvillepolice.com',
+      portal_url: 'https://evansvillepolice.com/public-information-request-forms/',
+      import_warnings: null,
+      state: 'IN',
+      status: 'awaiting_response',
+      substatus: null,
+      updated_at: '2026-03-10T00:00:00.000Z',
+      created_at: '2026-03-09T00:00:00.000Z',
+      requires_human: false,
+      active_run_status: null,
+      active_proposal_status: null,
+      active_portal_task_status: null,
+      active_portal_task_type: null,
+      pause_reason: null,
+      autopilot_mode: 'SUPERVISED',
+      due_info_jsonb: null,
+      fee_quote_jsonb: null,
+      last_fee_quote_amount: null,
+      last_response_date: null,
+      next_due_at: null,
+      message_count: 0,
+      outbound_count: 0,
+      thread_count: 0,
+      portal_submission_count: 0,
+      send_date: null,
+    });
+
+    assert.strictEqual(item.status, 'READY_TO_SEND');
+    assert.strictEqual(item.review_state, 'IDLE');
+    assert.strictEqual(item.control_state, 'BLOCKED');
+    assert.strictEqual(item.substatus, 'No correspondence exists yet. Ready to draft the initial request.');
+  });
+
+  it('toRequestListItem renders first-send pending approvals as ready-to-send while keeping the decision gate', function () {
+    const item = requestHelpers.toRequestListItem({
+      id: 26665,
+      subject_name: 'Samuel Honey case',
+      requested_records: ['Dispatch audio'],
+      agency_name: 'Lee County Sheriff’s Office, Georgia',
+      agency_email: 'openrecords@lee.ga.us',
+      portal_url: null,
+      import_warnings: null,
+      state: 'GA',
+      status: 'needs_human_review',
+      substatus: 'Proposal #1970 pending review',
+      updated_at: '2026-03-10T00:00:00.000Z',
+      created_at: '2026-03-09T00:00:00.000Z',
+      requires_human: true,
+      active_run_status: null,
+      active_proposal_status: 'PENDING_APPROVAL',
+      active_portal_task_status: null,
+      active_portal_task_type: null,
+      pause_reason: 'INITIAL_REQUEST',
+      autopilot_mode: 'SUPERVISED',
+      due_info_jsonb: null,
+      fee_quote_jsonb: null,
+      last_fee_quote_amount: null,
+      last_response_date: null,
+      next_due_at: null,
+      message_count: 0,
+      outbound_count: 0,
+      thread_count: 0,
+      portal_submission_count: 0,
+      send_date: null,
+    });
+
+    assert.strictEqual(item.status, 'READY_TO_SEND');
+    assert.strictEqual(item.review_state, 'DECISION_REQUIRED');
+    assert.strictEqual(item.control_state, 'NEEDS_DECISION');
+    assert.strictEqual(item.requires_human, true);
+  });
+
+  it('toRequestListItem ignores stale waiting runs when no proposal or correspondence exists', function () {
+    const item = requestHelpers.toRequestListItem({
+      id: 26703,
+      subject_name: 'Evansville case',
+      requested_records: ['Body camera'],
+      agency_name: 'Evansville Police Department, Indiana',
+      agency_email: 'publicaccess@evansvillepolice.com',
+      portal_url: 'https://evansvillepolice.com/public-information-request-forms/',
+      import_warnings: null,
+      state: 'IN',
+      status: 'needs_human_review',
+      substatus: 'Proposal #2047 pending review',
+      updated_at: '2026-03-10T00:00:00.000Z',
+      created_at: '2026-03-09T00:00:00.000Z',
+      requires_human: true,
+      active_run_status: 'waiting',
+      active_proposal_status: null,
+      active_portal_task_status: null,
+      active_portal_task_type: null,
+      pause_reason: 'PENDING_APPROVAL',
+      autopilot_mode: 'SUPERVISED',
+      due_info_jsonb: null,
+      fee_quote_jsonb: null,
+      last_fee_quote_amount: null,
+      last_response_date: null,
+      next_due_at: null,
+      message_count: 0,
+      outbound_count: 0,
+      thread_count: 0,
+      portal_submission_count: 0,
+      send_date: null,
+    });
+
+    assert.strictEqual(item.status, 'READY_TO_SEND');
+    assert.strictEqual(item.review_state, 'IDLE');
+    assert.strictEqual(item.control_state, 'BLOCKED');
+    assert.strictEqual(item.substatus, 'No correspondence exists yet. Ready to draft the initial request.');
+  });
+
   it('extractAgencyCandidatesFromResearchNotes falls back to execution suggested agency', function () {
     const candidates = requestHelpers.extractAgencyCandidatesFromResearchNotes(JSON.stringify({
       brief: {
@@ -2468,6 +2585,118 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests/:id/workspace keeps imported proposals visible when city metadata differs but the narrative names the routed agency', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 26671,
+      notion_page_id: '21387c20-070a-81cf-9d2a-f7488bc4de9f',
+      subject_name: 'Jasmine Pace',
+      case_name: 'Jason Chen',
+      agency_id: 1541,
+      agency_name: 'Chattanooga Police Department, Tennessee',
+      agency_email: null,
+      portal_url: 'https://chattanoogatn.mycusthelp.com/public-records',
+      portal_provider: 'govqa',
+      state: 'TN',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'INITIAL_REQUEST',
+      substatus: 'Proposal #1975 pending review',
+      contact_research_notes: null,
+      additional_details: [
+        'City : Nolensville',
+        '',
+        '### Police Departments Involved',
+        '- **Chattanooga Police Department:** Handled the initial investigation and arrest.',
+      ].join('\n'),
+      requested_records: ['Body camera footage'],
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: null,
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 233,
+      case_id: 26671,
+      agency_id: 1541,
+      agency_name: 'Chattanooga Police Department, Tennessee',
+      agency_email: null,
+      portal_url: 'https://chattanoogatn.mycusthelp.com/public-records',
+      portal_provider: 'govqa',
+      is_primary: true,
+      is_active: true,
+      added_source: 'case_row_backfill',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) {
+        return {
+          rows: [{
+            id: 1975,
+            action_type: 'SUBMIT_PORTAL',
+            status: 'PENDING_APPROVAL',
+            draft_subject: 'Public Records Request - Jasmine Pace',
+            draft_body_text: 'Draft body',
+            reasoning: ['Generated initial request'],
+            confidence: '0.81',
+            gate_options: ['APPROVE', 'ADJUST', 'DISMISS'],
+          }],
+        };
+      }
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in city mismatch visibility test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/26671/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal.id, 1975);
+      assert.strictEqual(response.body.pending_proposal.action_type, 'SUBMIT_PORTAL');
+      assert.strictEqual(response.body.request.substatus, 'Proposal #1975 pending review');
+      assert.strictEqual(response.body.request.agency_name, 'Chattanooga Police Department, Tennessee');
+      assert.strictEqual(response.body.request.portal_url, 'https://chattanoogatn.mycusthelp.com/public-records');
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
   it('GET /api/requests/:id/workspace keeps placeholder intake imports blocked until a real delivery path exists', async function () {
     const originalDbMethods = {
       getCaseById: db.getCaseById,
@@ -2570,6 +2799,252 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests/:id/workspace recovers stale waiting review runs with no correspondence back to ready to send', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      completeAgentRun: db.completeAgentRun,
+      logActivity: db.logActivity,
+      query: db.query,
+    };
+
+    const completedRuns = [];
+    const activityEvents = [];
+    const caseUpdates = [];
+
+    db.getCaseById = async () => ({
+      id: 26703,
+      subject_name: 'Charles E. Miles',
+      case_name: 'Charles E. Miles',
+      agency_id: null,
+      agency_name: 'Evansville Police Department, Indiana',
+      agency_email: 'publicaccess@evansvillepolice.com',
+      portal_url: 'https://evansvillepolice.com/public-information-request-forms/',
+      portal_provider: null,
+      state: 'IN',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'PENDING_APPROVAL',
+      substatus: 'Proposal #2047 pending review',
+      contact_research_notes: null,
+      requested_records: ['Body camera footage'],
+      additional_details: 'Initial request only',
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-12T00:00:00.000Z',
+      updated_at: '2026-03-12T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: null,
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 280,
+      case_id: 26703,
+      agency_id: 999,
+      agency_name: 'Evansville Police Department, Indiana',
+      agency_email: 'publicaccess@evansvillepolice.com',
+      portal_url: 'https://evansvillepolice.com/public-information-request-forms/',
+      portal_provider: null,
+      is_primary: true,
+      is_active: true,
+      added_source: 'notion_relation',
+      status: 'active',
+      created_at: '2026-03-12T00:00:00.000Z',
+      updated_at: '2026-03-12T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.completeAgentRun = async (runId, proposalId, error) => {
+      completedRuns.push({ runId, proposalId, error });
+      return { id: runId, status: 'failed' };
+    };
+    db.logActivity = async (eventType, description, metadata) => {
+      activityEvents.push({ eventType, description, metadata });
+      return { id: 1 };
+    };
+    db.query = async (sql, params = []) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) {
+        return {
+          rows: [{
+            id: 2843,
+            status: 'waiting',
+            trigger_type: 'initial_request',
+            started_at: '2026-03-12T14:34:17.473Z',
+            trigger_run_id: null,
+            trigger_run_id_legacy: null,
+            current_node: 'wait_human_decision',
+            skyvern_task_url: null,
+          }],
+        };
+      }
+      if (sql.includes('FROM proposals')) return { rows: [] };
+      if (sql.includes('UPDATE cases')) {
+        caseUpdates.push(params);
+        return { rows: [] };
+      }
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in stale no-correspondence recovery test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/26703/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal, null);
+      assert.strictEqual(response.body.request.status, 'READY_TO_SEND');
+      assert.strictEqual(response.body.request.review_state, 'IDLE');
+      assert.strictEqual(response.body.request.control_state, 'BLOCKED');
+      assert.strictEqual(response.body.request.pause_reason, 'INITIAL_REQUEST');
+      assert.match(response.body.request.substatus, /ready to draft the initial request/i);
+      assert.strictEqual(caseUpdates.length, 1);
+      assert.strictEqual(caseUpdates[0][0], 26703);
+      assert.strictEqual(caseUpdates[0][1], 'ready_to_send');
+      assert.strictEqual(completedRuns.length, 1);
+      assert.strictEqual(completedRuns[0].runId, 2843);
+      assert.match(completedRuns[0].error, /Recovered stale waiting run without proposal/i);
+      assert.strictEqual(activityEvents.length, 1);
+      assert.strictEqual(activityEvents[0].eventType, 'stale_no_correspondence_recovered');
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.completeAgentRun = originalDbMethods.completeAgentRun;
+      db.logActivity = originalDbMethods.logActivity;
+      db.query = originalDbMethods.query;
+    }
+  });
+
+  it('GET /api/requests/:id/workspace renders first-send pending approvals as ready-to-send while preserving the approval gate', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 26665,
+      subject_name: 'Samuel Honey case',
+      case_name: 'Samuel Honey case',
+      agency_id: 999,
+      agency_name: 'Lee County Sheriff’s Office, Georgia',
+      agency_email: 'openrecords@lee.ga.us',
+      portal_url: null,
+      portal_provider: null,
+      state: 'GA',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'INITIAL_REQUEST',
+      substatus: 'Proposal #1970 pending review',
+      contact_research_notes: null,
+      requested_records: ['Dispatch audio'],
+      additional_details: 'Test details',
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-10T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: null,
+      message_count: 0,
+      outbound_count: 0,
+      thread_count: 0,
+      portal_submission_count: 0,
+      send_date: null,
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 901,
+      case_id: 26665,
+      agency_id: 999,
+      agency_name: 'Lee County Sheriff’s Office, Georgia',
+      agency_email: 'openrecords@lee.ga.us',
+      portal_url: null,
+      portal_provider: null,
+      is_primary: true,
+      is_active: true,
+      added_source: 'directory',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-10T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) {
+        return {
+          rows: [{
+            id: 1970,
+            action_type: 'SEND_INITIAL_REQUEST',
+            status: 'PENDING_APPROVAL',
+            draft_subject: 'Public Records Request - Samuel Honey',
+            draft_body_text: 'Hello Lee County Sheriff’s Office Open Records,',
+            reasoning: ['Initial request ready to send'],
+            confidence: '0.82',
+            gate_options: ['APPROVE', 'ADJUST', 'DISMISS'],
+          }],
+        };
+      }
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in first-send pending review test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/26665/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal.id, 1970);
+      assert.strictEqual(response.body.request.status, 'READY_TO_SEND');
+      assert.strictEqual(response.body.request.review_state, 'DECISION_REQUIRED');
+      assert.strictEqual(response.body.request.control_state, 'NEEDS_DECISION');
+      assert.strictEqual(response.body.request.substatus, 'Proposal #1970 pending review');
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
   it('GET /api/requests/:id/workspace keeps import-review cases blocked when the agency is not in directory and no real delivery path exists', async function () {
     const originalDbMethods = {
       getCaseById: db.getCaseById,
@@ -2647,6 +3122,118 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.request.agency_email, null);
       assert.strictEqual(response.body.request.portal_url, null);
       assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
+  it('GET /api/requests/:id/workspace normalizes stale resolving substatus once a fresh proposal exists', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 25159,
+      subject_name: 'Paula Plemmons Garrett',
+      case_name: 'Paula Plemmons Garrett',
+      agency_id: 5215,
+      agency_name: "Madison County Sheriff's Office, North Carolina",
+      agency_email: 'mcsopublicrecordsrequest@madisoncountync.gov',
+      portal_url: 'https://www.madisoncountync.gov/public-records-request.html',
+      portal_provider: 'govqa',
+      state: 'NC',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: null,
+      substatus: 'Resolving: send_via_email',
+      contact_research_notes: null,
+      requested_records: ['Body camera footage'],
+      additional_details: 'Imported case for Madison County Sheriff records',
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-10T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: [],
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 251,
+      case_id: 25159,
+      agency_id: 5215,
+      agency_name: "Madison County Sheriff's Office, North Carolina",
+      agency_email: 'mcsopublicrecordsrequest@madisoncountync.gov',
+      portal_url: 'https://www.madisoncountync.gov/public-records-request.html',
+      portal_provider: 'govqa',
+      is_primary: true,
+      is_active: true,
+      status: 'active',
+      created_at: '2026-03-10T00:00:00.000Z',
+      updated_at: '2026-03-10T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) {
+        return {
+          rows: [{
+            id: 1980,
+            action_type: 'SEND_INITIAL_REQUEST',
+            status: 'PENDING_APPROVAL',
+            draft_subject: 'Public Records Request - Paula Plemmons Garrett',
+            draft_body_text: 'Hello Records Custodian, ...',
+            reasoning: ['Human review resolution: action=send_via_email'],
+            waitpoint_token: 'waitpoint_test_25159',
+            pause_reason: null,
+            confidence: '1.00',
+            gate_options: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+            action_chain: null,
+            chain_id: null,
+            human_decided_by: null,
+            human_decided_at: null,
+            original_draft_subject: 'Public Records Request - Paula Plemmons Garrett',
+            original_draft_body_text: 'Hello Records Custodian, ...',
+            human_edited: false,
+          }],
+        };
+      }
+      if (sql.includes('UPDATE cases')) return { rows: [] };
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in stale resolving normalization test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/25159/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal.id, 1980);
+      assert.strictEqual(response.body.request.substatus, 'Proposal #1980 pending review');
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;

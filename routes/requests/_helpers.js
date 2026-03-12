@@ -5,7 +5,7 @@ const logger = require('../../services/logger');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { getCanonicalMessageText } = require('../../lib/message-normalization');
-const { resolveReviewState } = require('../../lib/resolve-review-state');
+const { resolveReviewState, isStaleWaitingRunWithoutProposal, getCaseProgressEvidence } = require('../../lib/resolve-review-state');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const {
     normalizePortalTimeoutSubstatus,
@@ -16,6 +16,8 @@ const {
     isNotionReferenceList,
     isPlaceholderAgencyEmail,
 } = require('../../utils/request-normalization');
+
+const NO_CORRESPONDENCE_RECOVERY_STATUSES = new Set(['sent', 'awaiting_response', 'portal_in_progress', 'responded']);
 
 function isSingleNotionReference(value = '') {
     const normalized = String(value || '').trim().replace(/-/g, '').toLowerCase();
@@ -80,6 +82,79 @@ function hasMissingImportDeliveryPath(caseData) {
     );
 }
 
+function hasRealDeliveryPath(caseData) {
+    const importWarnings = Array.isArray(caseData?.import_warnings) ? caseData.import_warnings : [];
+    const warningTypes = new Set(
+        importWarnings
+            .map((warning) => String(warning?.type || '').trim().toUpperCase())
+            .filter(Boolean)
+    );
+    const agencyEmail = String(caseData?.agency_email || '').trim().toLowerCase();
+    const portalUrl = normalizePortalUrl(caseData?.portal_url);
+    const portalProvider = caseData?.portal_provider || detectPortalProviderByUrl(portalUrl);
+    const hasSupportedPortal = Boolean(
+        portalUrl &&
+        isSupportedPortalUrl(portalUrl) &&
+        (!warningTypes.has('NO_MX_RECORD') || portalProvider)
+    );
+    const hasReachableEmail = Boolean(
+        agencyEmail &&
+        !isPlaceholderAgencyEmail(agencyEmail) &&
+        !warningTypes.has('NO_MX_RECORD')
+    );
+
+    return Boolean(hasSupportedPortal || hasReachableEmail);
+}
+
+function getNoCorrespondenceRecovery(caseData, { activeProposal = null, activeRun = null } = {}) {
+    const caseStatus = String(caseData?.status || '').toLowerCase();
+    const staleProposalPendingReviewStatus = (
+        caseStatus === 'needs_human_review' &&
+        !activeProposal &&
+        /proposal #\d+ pending review/i.test(String(caseData?.substatus || ''))
+    );
+    if (!NO_CORRESPONDENCE_RECOVERY_STATUSES.has(caseStatus) && !staleProposalPendingReviewStatus) return null;
+    const shouldIgnoreActiveRun = isStaleWaitingRunWithoutProposal({ caseData, activeProposal, activeRun });
+    if (activeProposal || (activeRun && !shouldIgnoreActiveRun)) return null;
+
+    const messageCount = Number(caseData?.message_count || 0);
+    const outboundCount = Number(caseData?.outbound_count || 0);
+    const threadCount = Number(caseData?.thread_count || 0);
+    const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+
+    if (hasAnyCorrespondence || hasDispatchEvidence) return null;
+
+    if (!hasRealDeliveryPath(caseData) || hasMissingImportDeliveryPath(caseData)) {
+        return {
+            mode: 'BLOCKED_IMPORT',
+            substatus: 'No correspondence exists and the case is missing a real delivery path. Add the correct agency email or portal before sending.',
+        };
+    }
+
+    return {
+        mode: 'READY_TO_SEND',
+        substatus: 'No correspondence exists yet. Ready to draft the initial request.',
+    };
+}
+
+function shouldDisplayAsReadyToSendPendingReview(caseData, activeProposal = null) {
+    if (!activeProposal) return false;
+
+    const proposalStatus = String(activeProposal.status || '').toUpperCase();
+    const actionType = String(activeProposal.action_type || '').toUpperCase();
+    if (!PROPOSAL_PENDING_STATUSES.has(proposalStatus)) return false;
+    if (actionType && !FIRST_SEND_PENDING_ACTIONS.has(actionType)) return false;
+
+    const progressEvidence = getCaseProgressEvidence(caseData);
+    if (progressEvidence.hasAnyCorrespondence || progressEvidence.hasDispatchEvidence) return false;
+    if (hasMissingImportDeliveryPath(caseData)) return false;
+    if (!hasRealDeliveryPath(caseData) && actionType !== 'SEND_CLARIFICATION') return false;
+
+    return true;
+}
+
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
  */
@@ -109,6 +184,13 @@ const REVIEW_DB_STATUSES = new Set([
     'needs_phone_call',
     'needs_rebuttal',
     'pending_fee_decision',
+]);
+const PROPOSAL_PENDING_STATUSES = new Set(['PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL']);
+const FIRST_SEND_PENDING_ACTIONS = new Set([
+    'SEND_INITIAL_REQUEST',
+    'SUBMIT_PORTAL',
+    'SEND_PDF_EMAIL',
+    'SEND_CLARIFICATION',
 ]);
 
 /**
@@ -733,11 +815,23 @@ function isAtRisk(nextDueAt) {
  */
 function resolveControlState({ caseData, reviewState, pendingProposal, activeRun, activePortalTaskStatus }) {
     const caseStatus = String(caseData?.status || '').toLowerCase();
-    const runStatus = String(activeRun?.status || '').toLowerCase();
+    const staleWaitingRunWithoutProposal = isStaleWaitingRunWithoutProposal({
+        caseData,
+        activeProposal: pendingProposal,
+        activeRun,
+    });
+    const effectiveActiveRun = staleWaitingRunWithoutProposal ? null : activeRun;
+    const runStatus = String(effectiveActiveRun?.status || '').toLowerCase();
     const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
     const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'].includes(String(pendingProposal.status || '').toUpperCase()));
+    const hasProgressEvidence =
+        Number(caseData?.outbound_count || 0) > 0 ||
+        Number(caseData?.portal_submission_count || 0) > 0 ||
+        Number(caseData?.message_count || 0) > 0 ||
+        Number(caseData?.thread_count || 0) > 0 ||
+        Boolean(caseData?.send_date);
     const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
     const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
@@ -773,7 +867,7 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
 
     if (reviewState === 'DECISION_REQUIRED') return 'NEEDS_DECISION';
     if (reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING' || hasActiveRun || portalActive) return 'WORKING';
-    if (reviewState === 'WAITING_AGENCY' || ['sent', 'awaiting_response', 'responded'].includes(caseStatus)) return 'WAITING_AGENCY';
+    if (reviewState === 'WAITING_AGENCY' || (['sent', 'awaiting_response', 'responded'].includes(caseStatus) && hasProgressEvidence)) return 'WAITING_AGENCY';
     if (caseStatus === 'error') return 'BLOCKED';
     return 'BLOCKED';
 }
@@ -781,7 +875,13 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
 function detectControlMismatches({ caseData, reviewState, pendingProposal, activeRun, activePortalTaskStatus }) {
     const issues = [];
     const caseStatus = String(caseData?.status || '').toLowerCase();
-    const runStatus = String(activeRun?.status || '').toLowerCase();
+    const staleWaitingRunWithoutProposal = isStaleWaitingRunWithoutProposal({
+        caseData,
+        activeProposal: pendingProposal,
+        activeRun,
+    });
+    const effectiveActiveRun = staleWaitingRunWithoutProposal ? null : activeRun;
+    const runStatus = String(effectiveActiveRun?.status || '').toLowerCase();
     const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
@@ -838,7 +938,7 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
  * Transform case data to RequestListItem format
  */
 function toRequestListItem(caseData) {
-    const normalizedSubstatus = normalizePortalTimeoutSubstatus(caseData.substatus || null);
+    let normalizedSubstatus = normalizePortalTimeoutSubstatus(caseData.substatus || null);
     const displayAgencyName = resolveDisplayAgencyName(caseData);
     const displayState = deriveDisplayState(caseData.state, displayAgencyName);
     const subject = caseData.subject_name
@@ -849,22 +949,25 @@ function toRequestListItem(caseData) {
     const feeQuote = parseFeeQuote(caseData);
 
     // Derive review_state from available lateral join data
-    let review_state = resolveReviewState({
-        caseData,
-        activeProposal: caseData.active_proposal_status
-            ? { status: caseData.active_proposal_status }
-            : null,
-        activeRun: caseData.active_run_status
-            ? { status: caseData.active_run_status }
-            : null,
-    });
-
-    const activeRun = caseData.active_run_status
+    const rawActiveRun = caseData.active_run_status
         ? { status: caseData.active_run_status }
         : null;
     const activeProposal = caseData.active_proposal_status
         ? { status: caseData.active_proposal_status }
         : null;
+    const activeRun = isStaleWaitingRunWithoutProposal({
+        caseData,
+        activeProposal,
+        activeRun: rawActiveRun,
+    })
+        ? null
+        : rawActiveRun;
+
+    let review_state = resolveReviewState({
+        caseData,
+        activeProposal,
+        activeRun,
+    });
 
     let control_state = resolveControlState({
         caseData,
@@ -880,6 +983,11 @@ function toRequestListItem(caseData) {
         activeRun,
         activePortalTaskStatus: caseData.active_portal_task_status || null,
     });
+    const noCorrespondenceRecovery = getNoCorrespondenceRecovery(caseData, {
+        activeProposal,
+        activeRun,
+    });
+    const firstSendPendingReview = shouldDisplayAsReadyToSendPendingReview(caseData, activeProposal);
 
     let effectiveDbStatus = String(caseData.status || '').toLowerCase();
     const missingImportDeliveryPath = hasMissingImportDeliveryPath(caseData) && !activeProposal && !activeRun;
@@ -899,6 +1007,21 @@ function toRequestListItem(caseData) {
         review_state = 'IDLE';
         control_state = 'BLOCKED';
         control_mismatches = [];
+    }
+    if (noCorrespondenceRecovery?.mode === 'BLOCKED_IMPORT') {
+        effectiveDbStatus = 'needs_human_review';
+        normalizedSubstatus = noCorrespondenceRecovery.substatus;
+        review_state = 'IDLE';
+        control_state = 'BLOCKED';
+        control_mismatches = [];
+    } else if (noCorrespondenceRecovery?.mode === 'READY_TO_SEND') {
+        effectiveDbStatus = 'ready_to_send';
+        normalizedSubstatus = noCorrespondenceRecovery.substatus;
+        review_state = 'IDLE';
+        control_state = 'BLOCKED';
+        control_mismatches = [];
+    } else if (firstSendPendingReview) {
+        effectiveDbStatus = 'ready_to_send';
     }
     // Use derived review/control state as the UI source of truth so stale
     // requires_human flags in DB don't hide blocked manual work.
@@ -1158,6 +1281,181 @@ function toThreadMessage(message, attachments = [], caseData = null) {
         call_phone: isCallMessage ? callPhone : null,
         attachments: attachments
     };
+}
+
+function humanizePortalSubmissionStatus(status) {
+    return String(status || 'attempt')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function guessPortalAttachmentName(url, fallback = 'Portal screenshot') {
+    const pathname = String(url || '').split('?')[0];
+    const lastSegment = pathname.split('/').filter(Boolean).pop() || '';
+    if (lastSegment) {
+        return decodeURIComponent(lastSegment);
+    }
+    return fallback;
+}
+
+function collectPortalScreenshots(activityRows = []) {
+    const screenshotsByRunId = new Map();
+    const taskUrlByRunId = new Map();
+
+    for (const row of activityRows) {
+        const metadata = row.metadata || {};
+        const runId = metadata.run_id || metadata.runId || null;
+
+        if (row.event_type === 'portal_workflow_triggered' && runId && metadata.task_url) {
+            taskUrlByRunId.set(String(runId), metadata.task_url);
+        }
+
+        if (row.event_type !== 'portal_screenshot' || !runId) continue;
+
+        const persistentUrl = metadata.persistent_url || metadata.url || null;
+        if (!persistentUrl) continue;
+
+        const normalizedRunId = String(runId);
+        const existing = screenshotsByRunId.get(normalizedRunId) || [];
+        existing.push({
+            id: `portal-screenshot:${row.id}`,
+            filename: guessPortalAttachmentName(persistentUrl, `portal-screenshot-${metadata.sequence_index ?? existing.length + 1}.png`),
+            content_type: 'image/png',
+            size_bytes: 0,
+            url: persistentUrl,
+            extracted_text: null,
+            has_extracted_text: false,
+            _created_at: row.created_at || null,
+        });
+        screenshotsByRunId.set(normalizedRunId, existing);
+    }
+
+    return { screenshotsByRunId, taskUrlByRunId };
+}
+
+function resolvePortalSubmissionAgency(portalUrl, caseAgencies = [], caseData = null) {
+    const normalizedPortalUrl = normalizePortalUrl(portalUrl || caseData?.portal_url);
+    if (normalizedPortalUrl) {
+        const exactPortalAgency = caseAgencies.find((agency) => normalizePortalUrl(agency.portal_url) === normalizedPortalUrl);
+        if (exactPortalAgency) return exactPortalAgency;
+    }
+
+    return caseAgencies.find((agency) => agency.is_primary)
+        || caseAgencies[0]
+        || null;
+}
+
+function buildPortalSubmissionThreadMessages({
+    portalSubmissions = [],
+    activityRows = [],
+    caseData = null,
+    caseAgencies = [],
+} = {}) {
+    if (!Array.isArray(portalSubmissions) || portalSubmissions.length === 0) return [];
+
+    const { screenshotsByRunId, taskUrlByRunId } = collectPortalScreenshots(activityRows);
+
+    return portalSubmissions
+        .map((submission) => {
+            const runId = submission.skyvern_task_id ? String(submission.skyvern_task_id) : null;
+            const screenshotCandidates = [];
+
+            if (submission.screenshot_url) {
+                screenshotCandidates.push({
+                    id: `portal-submission:${submission.id}:screenshot`,
+                    filename: guessPortalAttachmentName(submission.screenshot_url),
+                    content_type: 'image/png',
+                    size_bytes: 0,
+                    url: submission.screenshot_url,
+                    extracted_text: null,
+                    has_extracted_text: false,
+                    _created_at: submission.completed_at || submission.started_at || null,
+                });
+            }
+
+            if (runId && screenshotsByRunId.has(runId)) {
+                screenshotCandidates.push(...screenshotsByRunId.get(runId));
+            }
+
+            const seenScreenshotUrls = new Set();
+            const screenshotAttachments = screenshotCandidates
+                .filter((attachment) => {
+                    const key = String(attachment.url || '').trim();
+                    if (!key || seenScreenshotUrls.has(key)) return false;
+                    seenScreenshotUrls.add(key);
+                    return true;
+                })
+                .sort((a, b) => new Date(a._created_at || 0).getTime() - new Date(b._created_at || 0).getTime())
+                .slice(-4)
+                .map(({ _created_at, ...attachment }) => attachment);
+
+            const resolvedAgency = resolvePortalSubmissionAgency(submission.portal_url, caseAgencies, caseData);
+            const portalUrl = normalizePortalUrl(submission.portal_url || caseData?.portal_url);
+            const taskUrl = (runId && taskUrlByRunId.get(runId)) || caseData?.last_portal_task_url || null;
+            const extracted = submission.extracted_data && typeof submission.extracted_data === 'object'
+                ? submission.extracted_data
+                : {};
+            const confirmationNumber =
+                extracted.confirmation_number ||
+                extracted.confirmationNumber ||
+                extracted.request_number ||
+                extracted.requestNumber ||
+                null;
+            const requestNumber = confirmationNumber || caseData?.portal_request_number || null;
+            const timestamp = submission.completed_at || submission.started_at || new Date().toISOString();
+            const statusLabel = humanizePortalSubmissionStatus(submission.status);
+            const engineLabel = submission.engine
+                ? String(submission.engine).replace(/[_-]+/g, ' ')
+                : (caseData?.portal_provider || 'portal automation');
+            const bodyLines = [
+                `Portal submission ${String(statusLabel).toLowerCase()} at ${timestamp}.`,
+                engineLabel ? `Engine: ${engineLabel}.` : null,
+                portalUrl ? `Portal URL: ${portalUrl}` : null,
+                taskUrl ? `Automation run: ${taskUrl}` : null,
+                submission.account_email ? `Account email: ${submission.account_email}` : null,
+                requestNumber ? `Request number: ${requestNumber}` : null,
+                submission.error_message ? `Error: ${submission.error_message}` : null,
+                screenshotAttachments.length > 0 ? `Screenshots captured: ${screenshotAttachments.length}` : null,
+            ].filter(Boolean);
+
+            const syntheticMessage = {
+                id: -(1000000 + Number(submission.id || 0)),
+                thread_id: null,
+                case_id: caseData?.id || null,
+                direction: 'outbound',
+                from_email: 'AUTOBOT Portal Automation',
+                to_email: resolvedAgency?.agency_name || caseData?.agency_name || 'Agency Portal',
+                subject: `Portal submission — ${statusLabel}`,
+                body_text: bodyLines.join('\n\n'),
+                body_html: null,
+                message_type: 'portal_submission',
+                portal_notification: true,
+                portal_notification_type: 'status_update',
+                sent_at: timestamp,
+                received_at: null,
+                processed_at: submission.completed_at || null,
+                summary: submission.error_message
+                    ? `Portal attempt failed: ${submission.error_message}`
+                    : `Portal attempt ${String(statusLabel).toLowerCase()}`,
+                metadata: {
+                    source: 'portal_submissions',
+                    portal_submission_id: submission.id,
+                    case_agency_id: resolvedAgency?.id || null,
+                    portal_url: portalUrl,
+                    portal_task_url: taskUrl,
+                    portal_request_number: requestNumber,
+                    skyvern_task_id: submission.skyvern_task_id || null,
+                    engine: submission.engine || null,
+                    status: submission.status || null,
+                    screenshot_count: screenshotAttachments.length,
+                },
+            };
+
+            return toThreadMessage(syntheticMessage, screenshotAttachments, caseData);
+        })
+        .sort((a, b) => new Date(a.sent_at || a.timestamp || 0).getTime() - new Date(b.sent_at || b.timestamp || 0).getTime());
 }
 
 /**
@@ -1523,5 +1821,7 @@ module.exports = {
     extractLatestSupportedPortalUrl, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
     detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
-    toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones, hasMissingImportDeliveryPath
+    toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones, hasMissingImportDeliveryPath,
+    getNoCorrespondenceRecovery, isStaleWaitingRunWithoutProposal, shouldDisplayAsReadyToSendPendingReview
 };
+module.exports.buildPortalSubmissionThreadMessages = buildPortalSubmissionThreadMessages;

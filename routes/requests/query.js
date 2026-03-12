@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, isStaleWaitingRunWithoutProposal, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
+const { buildPortalSubmissionThreadMessages } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = require('../../services/canonical-agency');
@@ -373,7 +374,11 @@ router.get('/', async (req, res) => {
                 ar.trigger_run_id AS active_run_trigger_run_id,
                 pt.status AS active_portal_task_status,
                 pt.action_type AS active_portal_task_type,
-                pp.status AS active_proposal_status
+                pp.status AS active_proposal_status,
+                mc.message_count,
+                mc.outbound_count,
+                tc.thread_count,
+                psc.portal_submission_count
             FROM cases c
             LEFT JOIN LATERAL (
                 SELECT
@@ -403,6 +408,23 @@ router.get('/', async (req, res) => {
                 ORDER BY created_at DESC
                 LIMIT 1
             ) pp ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*)::int AS message_count,
+                    COUNT(*) FILTER (WHERE direction = 'outbound')::int AS outbound_count
+                FROM messages
+                WHERE case_id = c.id
+            ) mc ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS thread_count
+                FROM email_threads
+                WHERE case_id = c.id
+            ) tc ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::int AS portal_submission_count
+                FROM portal_submissions
+                WHERE case_id = c.id
+            ) psc ON TRUE
             WHERE ${buildRealCaseWhereClause('c', 'm_filter')}
         `;
         const params = [];
@@ -1086,9 +1108,31 @@ router.get('/:id/workspace', async (req, res) => {
                 return tm;
             });
         }
+        let portalSubmissionCount = 0;
+        try {
+            const portalSubmissionCountResult = await db.query(
+                `SELECT COUNT(*)::int AS count
+                 FROM portal_submissions
+                 WHERE case_id = $1`,
+                [requestId]
+            );
+            portalSubmissionCount = Number(portalSubmissionCountResult.rows[0]?.count || 0);
+        } catch (error) {
+            logger.warn('[workspace] failed to load portal submission count', {
+                case_id: requestId,
+                error: error.message,
+            });
+        }
+        caseData = {
+            ...caseData,
+            message_count: threadMessages.length,
+            outbound_count: threadMessages.filter((message) => message.direction === 'OUTBOUND').length,
+            thread_count: threads.length,
+            portal_submission_count: portalSubmissionCount,
+        };
 
         // Fetch activity log for timeline events
-        const [activityResult, constraintHistoryResult] = await Promise.all([
+        const [activityResult, constraintHistoryResult, portalSubmissionRows] = await Promise.all([
             db.query(
                 `SELECT * FROM activity_log
                  WHERE case_id = $1
@@ -1107,8 +1151,16 @@ router.get('/:id/workspace', async (req, res) => {
                  ORDER BY created_at ASC`,
                 [requestId]
             ),
+            db.getPortalSubmissions(requestId, { limit: 20 }).catch((error) => {
+                logger.warn('[workspace] failed to load portal submissions', {
+                    case_id: requestId,
+                    error: error.message,
+                });
+                return [];
+            }),
         ]);
         const activityRows = activityResult.rows || [];
+        const portalSubmissions = Array.isArray(portalSubmissionRows) ? portalSubmissionRows : [];
         const timelineEvents = dedupeTimelineEvents(activityRows.map(a => toTimelineEvent(a, analysisMap, caseData)));
 
         // Build constraint history from dedicated query
@@ -1432,21 +1484,6 @@ router.get('/:id/workspace', async (req, res) => {
             resolvedAgencyName = resolvedAgencyName || canonicalAgencyName.rows[0]?.name || null;
         }
 
-        if (threadMessages.length > 0) {
-            const threadNormalizationContext = {
-                agency_name: resolvedAgencyName || caseData.agency_name || null,
-                portal_url: resolvedPortalUrl || caseData.portal_url || null,
-                last_portal_task_url: caseData.last_portal_task_url || null,
-            };
-            threadMessages = threadMessages.map((message) => ({
-                ...message,
-                body: normalizeThreadBody(message.body, threadNormalizationContext),
-                raw_body: message.raw_body
-                    ? normalizeThreadBody(message.raw_body, threadNormalizationContext)
-                    : message.raw_body,
-            }));
-        }
-
         const agencySummary = {
             id: resolvedAgencyId != null ? String(resolvedAgencyId) : '',
             name: resolvedAgencyName || caseData.agency_name || '—',
@@ -1593,7 +1630,62 @@ router.get('/:id/workspace', async (req, res) => {
                 }];
             }
         }
-        sortedCaseAgencies = await db.enrichCaseAgenciesWithPortalAutomationPolicies(sortedCaseAgencies);
+        try {
+            sortedCaseAgencies = await db.enrichCaseAgenciesWithPortalAutomationPolicies(sortedCaseAgencies);
+        } catch (error) {
+            logger.warn('[workspace] failed to enrich case agencies with portal automation policies', {
+                case_id: requestId,
+                error: error.message,
+            });
+        }
+        const portalThreadMessages = buildPortalSubmissionThreadMessages({
+            portalSubmissions,
+            activityRows,
+            caseData,
+            caseAgencies: sortedCaseAgencies,
+        });
+        if (portalThreadMessages.length > 0) {
+            const existingIds = new Set(threadMessages.map((message) => Number(message.id)));
+            const freshPortalMessages = portalThreadMessages.filter((message) => {
+                if (existingIds.has(Number(message.id))) return false;
+                const body = String(message.body || '');
+                const subject = String(message.subject || '').toLowerCase();
+                const runMatch = body.match(/Automation run:\s*(\S+)/);
+                const runUrl = runMatch?.[1] || null;
+                const existingPortalMessage = threadMessages.some((existing) => {
+                    if (String(existing.message_type || '').toLowerCase() !== 'portal_submission') return false;
+                    const existingBody = String(existing.body || '');
+                    const existingSubject = String(existing.subject || '').toLowerCase();
+                    return (
+                        (subject.includes('completed') && existingSubject.includes('completed'))
+                        || (runUrl && existingBody.includes(runUrl))
+                    );
+                });
+                return !existingPortalMessage;
+            });
+            if (freshPortalMessages.length > 0) {
+                threadMessages = [...threadMessages, ...freshPortalMessages].sort((a, b) => {
+                    const aTime = new Date(a.sent_at || a.timestamp || 0).getTime();
+                    const bTime = new Date(b.sent_at || b.timestamp || 0).getTime();
+                    if (aTime !== bTime) return aTime - bTime;
+                    return Number(a.id || 0) - Number(b.id || 0);
+                });
+            }
+        }
+        if (threadMessages.length > 0) {
+            const threadNormalizationContext = {
+                agency_name: resolvedAgencyName || caseData.agency_name || null,
+                portal_url: resolvedPortalUrl || caseData.portal_url || null,
+                last_portal_task_url: caseData.last_portal_task_url || null,
+            };
+            threadMessages = threadMessages.map((message) => ({
+                ...message,
+                body: normalizeThreadBody(message.body, threadNormalizationContext),
+                raw_body: message.raw_body
+                    ? normalizeThreadBody(message.raw_body, threadNormalizationContext)
+                    : message.raw_body,
+            }));
+        }
         const agencyCandidates = filterExistingAgencyCandidates(
             extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes),
             sortedCaseAgencies,
@@ -1723,6 +1815,12 @@ router.get('/:id/workspace', async (req, res) => {
                 trigger_run_id: activeRunResult.rows[0].trigger_run_id || activeRunResult.rows[0].trigger_run_id_legacy || null
             }
             : null;
+        const staleWaitingRunWithoutProposal = isStaleWaitingRunWithoutProposal({
+            caseData,
+            activeProposal: pendingProposal,
+            activeRun,
+        });
+        const effectiveActiveRun = staleWaitingRunWithoutProposal ? null : activeRun;
         const importSafetyReasonDetail = importSafety.metadataMismatch?.expectedAgencyName
             ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
             : importSafety.agencyStateMismatch
@@ -1892,20 +1990,20 @@ router.get('/:id/workspace', async (req, res) => {
         let review_state = resolveReviewState({
             caseData: reviewStateCaseData,
             activeProposal: pendingProposal,
-            activeRun,
+            activeRun: effectiveActiveRun,
         });
         let control_mismatches = detectControlMismatches({
             caseData: reviewStateCaseData,
             reviewState: review_state,
             pendingProposal,
-            activeRun,
+            activeRun: effectiveActiveRun,
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
         let control_state = resolveControlState({
             caseData: reviewStateCaseData,
             reviewState: review_state,
             pendingProposal,
-            activeRun,
+            activeRun: effectiveActiveRun,
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
         if (manualPasteMismatch.mismatch) {
@@ -2033,7 +2131,22 @@ router.get('/:id/workspace', async (req, res) => {
                 import_warnings: requestDetail.import_warnings,
             }) &&
             !pendingProposal &&
-            !activeRun;
+            !effectiveActiveRun;
+        const noCorrespondenceRecovery = getNoCorrespondenceRecovery({
+            ...caseData,
+            agency_email: requestDetail.agency_email || caseData.agency_email,
+            portal_url: requestDetail.portal_url || caseData.portal_url,
+            import_warnings: requestDetail.import_warnings,
+        }, {
+            activeProposal: pendingProposal,
+            activeRun: effectiveActiveRun,
+        });
+        const firstSendPendingReview = shouldDisplayAsReadyToSendPendingReview({
+            ...caseData,
+            agency_email: requestDetail.agency_email || caseData.agency_email,
+            portal_url: requestDetail.portal_url || caseData.portal_url,
+            import_warnings: requestDetail.import_warnings,
+        }, pendingProposal);
 
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
@@ -2065,6 +2178,26 @@ router.get('/:id/workspace', async (req, res) => {
             requestDetail.control_mismatches = [];
             effectiveRequiresHuman = true;
         }
+        if (noCorrespondenceRecovery?.mode === 'BLOCKED_IMPORT') {
+            requestDetail.status = 'NEEDS_HUMAN_REVIEW';
+            requestDetail.substatus = noCorrespondenceRecovery.substatus;
+            requestDetail.pause_reason = 'IMPORT_REVIEW';
+            requestDetail.review_state = 'IDLE';
+            requestDetail.control_state = 'BLOCKED';
+            requestDetail.control_mismatches = [];
+            effectiveRequiresHuman = true;
+        } else if (noCorrespondenceRecovery?.mode === 'READY_TO_SEND') {
+            requestDetail.status = 'READY_TO_SEND';
+            requestDetail.substatus = noCorrespondenceRecovery.substatus;
+            requestDetail.pause_reason = 'INITIAL_REQUEST';
+            requestDetail.review_state = 'IDLE';
+            requestDetail.control_state = 'BLOCKED';
+            requestDetail.control_mismatches = [];
+            effectiveRequiresHuman = false;
+        } else if (firstSendPendingReview) {
+            requestDetail.status = 'READY_TO_SEND';
+            requestDetail.pause_reason = requestDetail.pause_reason || 'INITIAL_REQUEST';
+        }
         if (blockedImportReview) {
             requestDetail.status = 'NEEDS_HUMAN_REVIEW';
             requestDetail.substatus = importSafetyReasonDetail;
@@ -2091,6 +2224,57 @@ router.get('/:id/workspace', async (req, res) => {
         }
         if (missingImportDeliveryPath) {
             requestDetail.pause_reason = 'IMPORT_REVIEW';
+        }
+        if (staleWaitingRunWithoutProposal && noCorrespondenceRecovery && activeRun?.id) {
+            const recoveredStatus = noCorrespondenceRecovery.mode === 'READY_TO_SEND'
+                ? 'ready_to_send'
+                : 'needs_human_review';
+            const recoveredPauseReason = noCorrespondenceRecovery.mode === 'READY_TO_SEND'
+                ? 'INITIAL_REQUEST'
+                : 'IMPORT_REVIEW';
+            const recoveredRequiresHuman = noCorrespondenceRecovery.mode !== 'READY_TO_SEND';
+            db.query(
+                `UPDATE cases
+                 SET status = $2,
+                     substatus = $3,
+                     pause_reason = $4,
+                     requires_human = $5,
+                     updated_at = NOW()
+                 WHERE id = $1`,
+                [requestId, recoveredStatus, noCorrespondenceRecovery.substatus, recoveredPauseReason, recoveredRequiresHuman]
+            ).catch((err) => {
+                logger.warn('[workspace] failed to reconcile stale no-correspondence case status', {
+                    case_id: requestId,
+                    run_id: activeRun.id,
+                    error: err.message,
+                });
+            });
+            db.completeAgentRun(
+                activeRun.id,
+                null,
+                `Recovered stale waiting run without proposal (${noCorrespondenceRecovery.mode})`
+            ).catch((err) => {
+                logger.warn('[workspace] failed to close stale waiting run', {
+                    case_id: requestId,
+                    run_id: activeRun.id,
+                    error: err.message,
+                });
+            });
+            db.logActivity(
+                'stale_no_correspondence_recovered',
+                `Recovered stale no-correspondence case as ${recoveredStatus}`,
+                {
+                    case_id: requestId,
+                    run_id: activeRun.id,
+                    recovery_mode: noCorrespondenceRecovery.mode,
+                }
+            ).catch((err) => {
+                logger.warn('[workspace] failed to log stale no-correspondence recovery', {
+                    case_id: requestId,
+                    run_id: activeRun.id,
+                    error: err.message,
+                });
+            });
         }
         const runStatus = String(activeRun?.status || '').toLowerCase();
         const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
@@ -2156,7 +2340,7 @@ router.get('/:id/workspace', async (req, res) => {
             review_state: requestDetail.review_state,
             control_state: requestDetail.control_state,
             control_mismatches: requestDetail.control_mismatches,
-            active_run: activeRun,
+            active_run: effectiveActiveRun,
             agent_decisions: agentDecisions,
             constraint_history: constraintHistory,
         });
