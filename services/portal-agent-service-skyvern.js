@@ -1391,8 +1391,8 @@ class PortalAgentServiceSkyvern {
         const userId = caseData.user_id || null;
 
         // Kill switch
-        if (process.env.PORTAL_SCOUT_DISABLED === 'true') {
-            console.log('🔇 Portal scout disabled via PORTAL_SCOUT_DISABLED — falling back to DB lookup');
+        if (process.env.ENABLE_SKYVERN_PORTAL_SCOUT !== 'true') {
+            console.log('🔇 Portal scout disabled — falling back to DB lookup');
             const existing = await database.getPortalAccountByUrl(portalUrl, userId);
             if (existing?.account_status === 'no_account_needed') return null;
             if (existing) await database.updatePortalAccountLastUsed(existing.id);

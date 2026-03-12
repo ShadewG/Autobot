@@ -774,6 +774,22 @@ async function runPortalStatusJob({ job, caseId, portalUrl, provider, messageId,
     console.log(`Processing portal status job: ${job.id}`, job.data);
 
     try {
+        if (process.env.ENABLE_PORTAL_STATUS_MONITORING !== 'true') {
+            await db.logActivity('portal_status_skipped', 'Skipping portal status check (portal status monitoring disabled)', {
+                case_id: caseId,
+                portal_url: portalUrl || null,
+                portal_provider: provider || null,
+                notification_type: notificationType,
+                message_id: messageId,
+                reason: 'portal_status_monitoring_disabled'
+            });
+            return {
+                success: false,
+                skipped: true,
+                reason: 'portal_status_monitoring_disabled'
+            };
+        }
+
         const caseData = await db.getCaseById(caseId);
         if (!caseData) {
             throw new Error(`Case ${caseId} not found`);

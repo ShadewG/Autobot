@@ -736,22 +736,24 @@ class CronService {
             });
         }, null, true, 'America/New_York');
 
-        this.jobs.portalStatusMonitoring = new CronJob('13 */6 * * *', () => {
-            this.runWithDbLock(CronService.LOCK_IDS.portalStatusMonitoring, async () => {
-                try {
-                    const result = await portalStatusMonitorService.monitorSubmittedPortalCases({ limit: 5 });
-                    if (result.checked > 0 || result.failures > 0) {
-                        console.log(`Portal status monitoring: checked ${result.checked}, records_ready ${result.recordsReady}, alerts ${result.alerts}, failures ${result.failures}`);
+        if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
+            this.jobs.portalStatusMonitoring = new CronJob('13 */6 * * *', () => {
+                this.runWithDbLock(CronService.LOCK_IDS.portalStatusMonitoring, async () => {
+                    try {
+                        const result = await portalStatusMonitorService.monitorSubmittedPortalCases({ limit: 5 });
+                        if (result.checked > 0 || result.failures > 0) {
+                            console.log(`Portal status monitoring: checked ${result.checked}, records_ready ${result.recordsReady}, alerts ${result.alerts}, failures ${result.failures}`);
+                        }
+                    } catch (error) {
+                        await errorTrackingService.captureException(error, {
+                            sourceService: 'cron_service',
+                            operation: 'portal_status_monitor_cron',
+                        });
+                        console.error('Error in portal status monitoring cron:', error);
                     }
-                } catch (error) {
-                    await errorTrackingService.captureException(error, {
-                        sourceService: 'cron_service',
-                        operation: 'portal_status_monitor_cron',
-                    });
-                    console.error('Error in portal status monitoring cron:', error);
-                }
-            });
-        }, null, true, 'America/New_York');
+                });
+            }, null, true, 'America/New_York');
+        }
 
         console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
         console.log('✓ Cleanup: Daily at midnight');
@@ -767,7 +769,11 @@ class CronService {
         console.log('✓ Trigger dispatch recovery: ~5 min (:03,:08,:13,...)');
         console.log('✓ Orphan review recovery: ~5 min (:04,:09,:14,...)');
         console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
-        console.log('✓ Portal status monitoring: Every 6 hours');
+        if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
+            console.log('✓ Portal status monitoring: Every 6 hours');
+        } else {
+            console.log('✓ Portal status monitoring: disabled');
+        }
     }
 
     /**
