@@ -37,7 +37,7 @@ async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, optio
 async function getActivePortalDispatch(caseId) {
     const [activeRunResult, activeSubmissionResult, activeTaskResult] = await Promise.all([
         db.query(
-            `SELECT id, status, trigger_run_id, created_at,
+            `SELECT id, status, created_at,
                     metadata->>'portal_task_id' AS portal_task_id
              FROM agent_runs
              WHERE case_id = $1
