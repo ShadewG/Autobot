@@ -1,10 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
-const reviewStateLib = require('../../lib/resolve-review-state');
-const isStaleWaitingRunWithoutProposal = typeof reviewStateLib.isStaleWaitingRunWithoutProposal === 'function'
-    ? reviewStateLib.isStaleWaitingRunWithoutProposal
-    : () => false;
 const { buildPortalSubmissionThreadMessages } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
@@ -26,6 +22,29 @@ const {
     filterStaleImportWarnings,
 } = require('../../utils/request-normalization');
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
+
+function getWorkspaceProgressEvidence(caseData = {}) {
+    const messageCount = Number(caseData?.message_count || 0);
+    const outboundCount = Number(caseData?.outbound_count || 0);
+    const threadCount = Number(caseData?.thread_count || 0);
+    const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+
+    return {
+        hasAnyCorrespondence,
+        hasDispatchEvidence,
+    };
+}
+
+function isWorkspaceStaleWaitingRunWithoutProposal({ caseData, activeProposal, activeRun }) {
+    const runStatus = String(activeRun?.status || '').toLowerCase();
+    if (!activeRun || activeProposal) return false;
+    if (!['waiting', 'paused', 'gated'].includes(runStatus)) return false;
+
+    const progressEvidence = getWorkspaceProgressEvidence(caseData);
+    return !progressEvidence.hasAnyCorrespondence && !progressEvidence.hasDispatchEvidence;
+}
 
 function shouldPreferResearchAgencyDisplay({ researchSuggestedAgency, agencyEmail, portalUrl, addedSource }) {
     return Boolean(
@@ -1819,7 +1838,7 @@ router.get('/:id/workspace', async (req, res) => {
                 trigger_run_id: activeRunResult.rows[0].trigger_run_id || activeRunResult.rows[0].trigger_run_id_legacy || null
             }
             : null;
-        const staleWaitingRunWithoutProposal = isStaleWaitingRunWithoutProposal({
+        const staleWaitingRunWithoutProposal = isWorkspaceStaleWaitingRunWithoutProposal({
             caseData,
             activeProposal: pendingProposal,
             activeRun,
