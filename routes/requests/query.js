@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, isStaleWaitingRunWithoutProposal, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
+const { isStaleWaitingRunWithoutProposal } = require('../../lib/resolve-review-state');
 const { buildPortalSubmissionThreadMessages } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
