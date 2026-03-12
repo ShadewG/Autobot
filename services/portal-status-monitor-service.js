@@ -194,6 +194,9 @@ async function checkCasePortalStatus(caseData, deps = {}) {
 
   try {
     const result = await portalAgent.checkPortalStatus(caseData, caseData.portal_url, { maxSteps: 15 });
+    if (result?.skipped) {
+      return { success: false, skipped: true, reason: result.reason || 'status_check_skipped' };
+    }
     if (!result?.success) {
       const failureSummary = collapseWhitespace(result?.error || 'Portal status check failed');
       const failureKind = classifyPortalCheckFailure(failureSummary);
@@ -300,6 +303,9 @@ async function monitorSubmittedPortalCases({ limit = 5, db: database = db, skyve
   for (const caseData of candidateResult.rows) {
     try {
       const outcome = await checkCasePortalStatus(caseData, { db: database, skyvern: portalAgent });
+      if (outcome?.skipped) {
+        continue;
+      }
       checked += 1;
       if (outcome.classification?.category === 'records_ready') recordsReady += 1;
       if (['denied', 'more_info_needed'].includes(outcome.classification?.category)) alerts += 1;

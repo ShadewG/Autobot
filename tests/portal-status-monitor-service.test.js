@@ -202,4 +202,31 @@ describe('portal status monitor service', function () {
       )
     );
   });
+
+  it('skips disabled task-mode status checks without counting them as failures', async function () {
+    const fakeDb = {
+      query: async () => ({
+        rows: [
+          { id: 401, case_name: 'Skipped Portal Case', portal_url: 'https://portal.example/skip', status: 'awaiting_response' },
+        ],
+      }),
+    };
+    const fakeSkyvern = {
+      checkPortalStatus: async () => ({
+        success: false,
+        skipped: true,
+        reason: 'task_mode_status_checks_disabled',
+      }),
+    };
+
+    const result = await monitorSubmittedPortalCases({ db: fakeDb, skyvern: fakeSkyvern, limit: 5 });
+
+    assert.deepStrictEqual(result, {
+      checked: 0,
+      recordsReady: 0,
+      alerts: 0,
+      failures: 0,
+      candidateCount: 1,
+    });
+  });
 });

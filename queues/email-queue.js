@@ -805,6 +805,22 @@ async function runPortalStatusJob({ job, caseId, portalUrl, provider, messageId,
             provider
         });
 
+        if (result?.skipped) {
+            await db.logActivity('portal_status_skipped', `Skipping portal status check (${result.reason || 'status_check_skipped'})`, {
+                case_id: caseId,
+                portal_url: targetUrl,
+                portal_provider: provider,
+                notification_type: notificationType,
+                message_id: messageId,
+                reason: result.reason || 'status_check_skipped'
+            });
+            return {
+                success: false,
+                skipped: true,
+                reason: result.reason || 'status_check_skipped'
+            };
+        }
+
         if (!result.success) {
             throw new Error(result.error || 'Portal status check failed');
         }

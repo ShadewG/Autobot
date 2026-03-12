@@ -3057,6 +3057,15 @@ SUBMISSION STAGE OBJECTIVE:
     async checkPortalStatus(caseData, portalUrl, options = {}) {
         const { maxSteps = 20 } = options;
 
+        if (process.env.ENABLE_SKYVERN_TASK_STATUS_CHECKS !== 'true' && options.allowTaskMode !== true) {
+            return {
+                success: false,
+                skipped: true,
+                reason: 'task_mode_status_checks_disabled',
+                error: 'Skyvern task-mode status checks are disabled'
+            };
+        }
+
         if (!this.apiKey) {
             throw new Error('SKYVERN_API_KEY not set! Get your key from https://app.skyvern.com');
         }
