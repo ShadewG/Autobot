@@ -78,6 +78,26 @@ function getPortalDispatchBlockReason(portalUrl, provider, lastPortalStatus) {
     return null;
 }
 
+function isLikelyNonSubstantiveInboundNotice(row = {}) {
+    const subject = String(row.subject || '').toLowerCase();
+    const fromEmail = String(row.from_email || '').toLowerCase();
+    const bodyPreview = String(row.body_preview || '').toLowerCase();
+    const providerLike = /(nextrequest\.com|govqa\.us|custhelp\.com|mycusthelp\.com|mycusthelp\.net|usnx\.com)/.test(fromEmail);
+    if (!providerLike) return false;
+
+    const combined = `${subject} ${bodyPreview}`;
+    return (
+        combined.includes('password assistance') ||
+        combined.includes('welcome to the records center') ||
+        combined.includes('portal account') ||
+        combined.includes('unlock your') ||
+        combined.includes('unrecognized email') ||
+        combined.includes('has been submitted') ||
+        combined.includes('submission confirmation') ||
+        combined.includes('request received')
+    );
+}
+
 class CronService {
     // Stable lock IDs for each cron job (arbitrary offset to avoid collisions with app locks)
     static LOCK_IDS = {
@@ -103,6 +123,7 @@ class CronService {
         orphanReviewRecovery:    100019,
         portalDispatch:          100020,
         portalStatusMonitoring:  100021,
+        staleInboundRecovery:    100023,
     };
 
     constructor() {
@@ -755,6 +776,19 @@ class CronService {
             }, null, true, 'America/New_York');
         }
 
+        this.jobs.staleInboundRecovery = new CronJob('2,12,22,32,42,52 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.staleInboundRecovery, async () => {
+                try {
+                    const result = await this.runWithoutOverlap('stale_inbound_recovery', () => this.runStaleInboundRecoverySweep());
+                    if (result && (result.markedProcessed > 0 || result.retried > 0 || result.failed > 0)) {
+                        console.log(`[stale-inbound-recovery] scanned=${result.scanned} marked=${result.markedProcessed} retried=${result.retried} failed=${result.failed}`);
+                    }
+                } catch (error) {
+                    console.error('Error in stale inbound recovery cron:', error);
+                }
+            });
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 min (:00,:05,:10,...)');
@@ -769,6 +803,7 @@ class CronService {
         console.log('✓ Trigger dispatch recovery: ~5 min (:03,:08,:13,...)');
         console.log('✓ Orphan review recovery: ~5 min (:04,:09,:14,...)');
         console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
+        console.log('✓ Stale inbound recovery: ~10 min (:02,:12,:22,...)');
         if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
             console.log('✓ Portal status monitoring: Every 6 hours');
         } else {
@@ -2337,6 +2372,213 @@ class CronService {
             escalated: rows.length,
             caseIds: rows.map((row) => row.id),
         };
+    }
+
+    async runStaleInboundRecoverySweep({ maxAgeMinutes = 15, limit = 25 } = {}) {
+        const result = await db.query(`
+            SELECT
+                m.id AS message_id,
+                m.case_id,
+                m.thread_id,
+                m.subject,
+                m.from_email,
+                LEFT(COALESCE(m.normalized_body_text, m.body_text, ''), 500) AS body_preview,
+                COALESCE(m.received_at, m.created_at) AS message_created_at,
+                m.last_error,
+                c.status AS case_status,
+                c.pause_reason AS case_pause_reason,
+                c.autopilot_mode,
+                c.case_name,
+                (
+                    SELECT COUNT(*)::int
+                    FROM proposals p
+                    WHERE p.case_id = c.id
+                      AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                ) AS active_proposal_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM proposals p
+                    WHERE p.case_id = c.id
+                      AND p.trigger_message_id = m.id
+                ) AS message_proposal_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM messages m2
+                    WHERE m2.case_id = c.id
+                      AND m2.direction = 'outbound'
+                      AND COALESCE(m2.sent_at, m2.created_at) > COALESCE(m.received_at, m.created_at)
+                ) AS later_outbound_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM portal_submissions ps
+                    WHERE ps.case_id = c.id
+                ) AS portal_submission_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM messages m2
+                    WHERE m2.case_id = c.id
+                      AND m2.direction = 'inbound'
+                      AND m2.id <> m.id
+                      AND m2.processed_at IS NOT NULL
+                      AND LOWER(COALESCE(m2.from_email, '')) = LOWER(COALESCE(m.from_email, ''))
+                      AND COALESCE(m2.subject, '') = COALESCE(m.subject, '')
+                      AND ABS(EXTRACT(EPOCH FROM (
+                        COALESCE(m2.received_at, m2.created_at) - COALESCE(m.received_at, m.created_at)
+                      ))) <= 1800
+                ) AS processed_duplicate_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM agent_runs ar
+                    WHERE ar.case_id = c.id
+                      AND ar.message_id = m.id
+                ) AS run_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM agent_runs ar
+                    WHERE ar.case_id = c.id
+                      AND ar.message_id = m.id
+                      AND ar.status = 'failed'
+                ) AS failed_run_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM agent_runs ar
+                    WHERE ar.case_id = c.id
+                      AND ar.status IN ('created', 'queued', 'running', 'waiting', 'processing')
+                ) AS active_run_count,
+                (
+                    SELECT ar.id
+                    FROM agent_runs ar
+                    WHERE ar.case_id = c.id
+                      AND ar.message_id = m.id
+                    ORDER BY COALESCE(ar.started_at, ar.updated_at) DESC NULLS LAST, ar.id DESC
+                    LIMIT 1
+                ) AS last_run_id,
+                (
+                    SELECT ar.status
+                    FROM agent_runs ar
+                    WHERE ar.case_id = c.id
+                      AND ar.message_id = m.id
+                    ORDER BY COALESCE(ar.started_at, ar.updated_at) DESC NULLS LAST, ar.id DESC
+                    LIMIT 1
+                ) AS last_run_status
+            FROM messages m
+            JOIN cases c ON c.id = m.case_id
+            WHERE m.direction = 'inbound'
+              AND m.case_id IS NOT NULL
+              AND m.thread_id IS NOT NULL
+              AND m.processed_at IS NULL
+              AND COALESCE(m.received_at, m.created_at) < NOW() - ($1::text || ' minutes')::interval
+            ORDER BY COALESCE(m.received_at, m.created_at) ASC
+            LIMIT $2
+        `, [String(maxAgeMinutes), limit]);
+
+        const summary = {
+            scanned: result.rows.length,
+            markedProcessed: 0,
+            retried: 0,
+            failed: 0,
+            skippedActive: 0,
+            details: [],
+        };
+
+        for (const row of result.rows) {
+            const handledReasons = [];
+            if (Number(row.active_proposal_count || 0) > 0) handledReasons.push('active_proposal');
+            if (Number(row.message_proposal_count || 0) > 0) handledReasons.push('message_proposal');
+            if (Number(row.later_outbound_count || 0) > 0) handledReasons.push('later_outbound');
+            if (Number(row.portal_submission_count || 0) > 0) handledReasons.push('portal_submission');
+            if (Number(row.processed_duplicate_count || 0) > 0) handledReasons.push('duplicate_inbound_burst');
+            if (['responded', 'completed', 'cancelled'].includes(String(row.case_status || '').toLowerCase())) handledReasons.push('terminal_case_status');
+            if (String(row.last_run_status || '').toLowerCase() === 'completed') handledReasons.push('completed_run');
+            if (isLikelyNonSubstantiveInboundNotice(row)) handledReasons.push('non_substantive_notice');
+
+            if (handledReasons.length > 0) {
+                const cleanupReason = `marked processed during cleanup: ${handledReasons.join(',')}`;
+                await db.markMessageProcessed(row.message_id, row.last_run_id || null, cleanupReason);
+                await db.logActivity(
+                    'stale_inbound_marked_processed',
+                    `Marked stale inbound #${row.message_id} processed during cleanup (${handledReasons.join(', ')})`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        run_id: row.last_run_id || null,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                        cleanup_reasons: handledReasons,
+                    }
+                );
+                summary.markedProcessed += 1;
+                summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'marked_processed', reasons: handledReasons });
+                continue;
+            }
+
+            if (Number(row.active_run_count || 0) > 0) {
+                summary.skippedActive += 1;
+                summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'skipped_active_run' });
+                continue;
+            }
+
+            try {
+                const run = await db.createAgentRunFull({
+                    case_id: row.case_id,
+                    trigger_type: 'stale_inbound_recovery',
+                    message_id: row.message_id,
+                    status: 'queued',
+                    autopilot_mode: row.autopilot_mode || 'SUPERVISED',
+                    langgraph_thread_id: `stale-inbound:${row.case_id}:msg-${row.message_id}:${Date.now()}`,
+                    metadata: { source: 'stale_inbound_recovery' },
+                });
+
+                await triggerDispatch.triggerTask('process-inbound', {
+                    runId: run.id,
+                    caseId: row.case_id,
+                    messageId: row.message_id,
+                    autopilotMode: row.autopilot_mode || 'SUPERVISED',
+                    triggerType: 'STALE_INBOUND_RECOVERY',
+                }, {
+                    queue: `case-${row.case_id}`,
+                    idempotencyKey: `stale-inbound-recovery:${row.case_id}:${row.message_id}:${run.id}`,
+                    idempotencyKeyTTL: '1h',
+                }, {
+                    runId: run.id,
+                    caseId: row.case_id,
+                    triggerType: 'stale_inbound_recovery',
+                    source: 'stale_inbound_recovery',
+                    verifyMs: 8000,
+                    pollMs: 1200,
+                });
+
+                await db.logActivity(
+                    'stale_inbound_retriggered',
+                    `Re-triggered stale inbound #${row.message_id} for case ${row.case_id}`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        run_id: run.id,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                    }
+                );
+                summary.retried += 1;
+                summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'retried', runId: run.id });
+            } catch (error) {
+                summary.failed += 1;
+                summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'failed', error: error.message });
+                await db.logActivity(
+                    'stale_inbound_retrigger_failed',
+                    `Failed to re-trigger stale inbound #${row.message_id}: ${error.message}`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                        error: error.message,
+                    }
+                );
+            }
+        }
+
+        return summary;
     }
 
     /**

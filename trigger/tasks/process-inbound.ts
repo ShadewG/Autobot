@@ -220,6 +220,21 @@ export const processInbound = task({
         originalProposalId: originalProposalId || null,
       },
     });
+    let inboundMessageProcessed = false;
+    const markInboundProcessedSafe = async (error: string | null = null) => {
+      if (!messageId || inboundMessageProcessed) return;
+      try {
+        await db.markMessageProcessed(messageId, runId, error);
+        inboundMessageProcessed = true;
+      } catch (markError: any) {
+        logger.warn("Failed to mark inbound message processed", {
+          caseId,
+          messageId,
+          runId,
+          error: markError?.message || String(markError),
+        });
+      }
+    };
 
     try {
       const runAdjustedDraftLoop = async ({
@@ -553,6 +568,7 @@ export const processInbound = task({
         caseId, messageId, messageType: triggerMsg.message_type,
       });
       await markStep("skip_non_agency", `Run #${runId}: skipping ${triggerMsg.message_type} message`);
+      await markInboundProcessedSafe();
       try { await completeRun(caseId, runId); } catch {}
       return { status: "skipped", reason: `excluded_message_type:${triggerMsg.message_type}` };
     }
@@ -766,6 +782,7 @@ export const processInbound = task({
             reason: "decision_spin_detected",
             noneDecisions,
           });
+          await markInboundProcessedSafe();
           await completeRun(caseId, runId);
           return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
         }
@@ -777,6 +794,7 @@ export const processInbound = task({
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
       );
+      await markInboundProcessedSafe();
       await completeRun(caseId, runId);
       return { status: "completed", action: "none", reasoning: decision.reasoning };
     }
@@ -839,6 +857,7 @@ export const processInbound = task({
           false,
           null
         );
+        await markInboundProcessedSafe();
         await completeRun(caseId, runId);
         return {
           status: "completed",
@@ -937,6 +956,7 @@ export const processInbound = task({
     let humanDecision: any = null;
     if (gate.shouldWait && gate.waitpointTokenId) {
       await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
+      await markInboundProcessedSafe();
       await waitRun(caseId, runId);
       logger.info("Waiting for human decision", {
         caseId, proposalId: gate.proposalId, tokenId: gate.waitpointTokenId,
@@ -1284,6 +1304,7 @@ export const processInbound = task({
       classification.confidence, "INBOUND_MESSAGE",
       execution.actionExecuted, execution.executionResult
     );
+    await markInboundProcessedSafe();
 
     try {
       await completeRun(caseId, runId);
