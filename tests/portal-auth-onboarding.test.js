@@ -170,7 +170,7 @@ describe('Portal auth onboarding', function () {
         id: 42,
         name: payload.name,
         email_handle: payload.email_handle,
-        email: payload.email,
+        email: `${payload.email_handle}@foib-request.com`,
         is_admin: false,
         active: true,
       };
@@ -207,7 +207,7 @@ describe('Portal auth onboarding', function () {
     assert.strictEqual(response.status, 201);
     assert.strictEqual(response.body.success, true);
     assert.strictEqual(response.body.created, true);
-    assert.strictEqual(createdArgs.email, 'new@example.com');
+    assert.strictEqual(createdArgs.email_handle, 'new-user');
     assert.strictEqual(updatedPasswordFor, 42);
     assert.strictEqual(linkedPayload.provider_user_id, 'portal-999');
     assert.ok((response.headers['set-cookie'] || []).some((value) => value.includes('autobot_uid=')));

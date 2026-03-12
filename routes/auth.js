@@ -274,12 +274,9 @@ router.post('/portal/create-account', express.json(), async (req, res) => {
         }
 
         const payload = await verifyPortalHandoffToken(portalToken);
-        const email = payload.email ? String(payload.email).toLowerCase() : null;
-
         const user = await db.createUser({
             name: name.trim(),
             email_handle: handle,
-            email,
         });
 
         const hash = await bcrypt.hash(password, 10);
@@ -309,7 +306,10 @@ router.post('/portal/create-account', express.json(), async (req, res) => {
         if (error.code === '23505') {
             return res.status(409).json({ success: false, error: 'Identity or handle already exists' });
         }
-        return res.status(401).json({ success: false, error: error.message === 'Invalid handle format' ? error.message : 'Invalid portal token' });
+        if (error.message === 'Invalid handle format' || error.message === 'Portal token app mismatch' || error.message === 'Portal token missing required claims' || error.name === 'JWSSignatureVerificationFailed') {
+            return res.status(401).json({ success: false, error: 'Invalid portal token' });
+        }
+        return res.status(500).json({ success: false, error: error.message || 'Failed to create account' });
     }
 });
 

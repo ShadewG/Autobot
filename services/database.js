@@ -2017,12 +2017,12 @@ class DatabaseService {
     // Users
     // =========================================================================
 
-    async createUser({ name, email_handle, email = null }) {
+    async createUser({ name, email_handle }) {
         const result = await this.query(
-            `INSERT INTO users (name, email_handle, email)
-             VALUES ($1, $2, $3)
+            `INSERT INTO users (name, email_handle)
+             VALUES ($1, $2)
              RETURNING *`,
-            [name, email_handle, email]
+            [name, email_handle]
         );
         return result.rows[0];
     }
