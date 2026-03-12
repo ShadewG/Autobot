@@ -103,6 +103,23 @@ describe('portal-agent-service-skyvern budgets', function () {
     assert.strictEqual(snapshot.hasSignals, true);
   });
 
+  it('treats a terminated workflow with a completed inner task as a successful submission', function () {
+    const innerTask = portalSkyvern._extractSuccessfulInnerTaskResult({
+      status: 'terminated',
+      block_1_output: {
+        task_id: 'tsk_123',
+        task_status: 'completed',
+        errors: [],
+        outputs: { confirmation_number: 'ABC-123' },
+      },
+    });
+
+    assert.ok(innerTask);
+    assert.strictEqual(innerTask.taskId, 'tsk_123');
+    assert.strictEqual(innerTask.taskStatus, 'completed');
+    assert.deepStrictEqual(innerTask.output, { confirmation_number: 'ABC-123' });
+  });
+
   it('cuts off workflow runs that show no progress for too long', async function () {
     process.env.SKYVERN_WORKFLOW_LOOP_MIN_ELAPSED_MS = '5';
     process.env.SKYVERN_WORKFLOW_LOOP_MAX_STAGNANT_POLLS = '3';

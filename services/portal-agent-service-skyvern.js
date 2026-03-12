@@ -318,6 +318,48 @@ class PortalAgentServiceSkyvern {
         };
     }
 
+    _extractSuccessfulInnerTaskResult(data = {}) {
+        if (!data || typeof data !== 'object') {
+            return null;
+        }
+
+        const candidates = [];
+        for (const [key, value] of Object.entries(data)) {
+            if (!/^block_\d+_output$/i.test(key)) continue;
+            if (!value || typeof value !== 'object') continue;
+            candidates.push(value);
+        }
+
+        for (const candidate of candidates) {
+            const taskStatus = String(
+                candidate.task_status ||
+                candidate.status ||
+                candidate.final_status ||
+                ''
+            ).toLowerCase();
+            const failureReason = candidate.failure_reason || candidate.error || candidate.message || null;
+            const errors = Array.isArray(candidate.errors)
+                ? candidate.errors.filter(Boolean)
+                : [];
+            const completed = ['completed', 'succeeded', 'success'].includes(taskStatus);
+
+            if (completed && !failureReason && errors.length === 0) {
+                return {
+                    taskId: candidate.task_id || null,
+                    taskStatus: taskStatus || 'completed',
+                    output:
+                        candidate.outputs ||
+                        candidate.extracted_information ||
+                        candidate.result ||
+                        {},
+                    raw: candidate,
+                };
+            }
+        }
+
+        return null;
+    }
+
     _captchaInputRules() {
         return `CAPTCHA INPUT RULES (CRITICAL):
 - If a captcha/verification text input already has any value, CLEAR IT COMPLETELY before typing.
@@ -1711,14 +1753,24 @@ class PortalAgentServiceSkyvern {
             }
 
             const finalStatus = (finalResult.status || finalResult.final_status || '').toLowerCase();
-            const completed = ['completed', 'succeeded', 'success'].includes(finalStatus);
-            const failed = finalStatus.includes('fail') || finalStatus.includes('error');
+            const successfulInnerTask = this._extractSuccessfulInnerTaskResult(finalResult);
+            const completed = ['completed', 'succeeded', 'success'].includes(finalStatus)
+                || (finalStatus === 'terminated' && !!successfulInnerTask);
+            const failed = (finalStatus.includes('fail') || finalStatus.includes('error')) && !successfulInnerTask;
             const recordingUrl = finalResult.recording_url || finalResult.recording || workflowResponse.recording_url || null;
-            const extractedData = finalResult.outputs || finalResult.extracted_information || finalResult.result || {};
+            const extractedData =
+                finalResult.outputs ||
+                finalResult.extracted_information ||
+                finalResult.result ||
+                successfulInnerTask?.output ||
+                {};
             const finalWorkflowRunLink = this._buildWorkflowRunUrl(workflowRunId, finalResult) || workflowRunLink;
+            const effectiveStatus = completed && !failed
+                ? (successfulInnerTask?.taskStatus || 'completed')
+                : (finalResult.status || finalResult.final_status || 'failed');
 
             await database.updateCasePortalStatus(caseData.id, {
-                last_portal_status: finalResult.status || finalResult.final_status || (completed ? 'completed' : 'failed'),
+                last_portal_status: effectiveStatus,
                 last_portal_status_at: new Date(),
                 last_portal_recording_url: recordingUrl || null,
                 last_portal_details: JSON.stringify(finalResult),
@@ -1727,7 +1779,7 @@ class PortalAgentServiceSkyvern {
             });
 
             if (completed && !failed) {
-                const statusText = finalResult.status || 'completed';
+                const statusText = effectiveStatus;
                 await database.updateCaseStatus(caseData.id, 'awaiting_response', {
                     substatus: `Portal submission completed (${statusText})`,
                     send_date: new Date()
@@ -1781,18 +1833,22 @@ class PortalAgentServiceSkyvern {
                         portal_url: portalUrl,
                         run_id: workflowRunId,
                         engine: 'skyvern_workflow',
-                        task_url: finalWorkflowRunLink || null
+                        task_url: finalWorkflowRunLink || null,
+                        workflow_terminal_status: finalStatus || null,
+                        inner_task_id: successfulInnerTask?.taskId || null,
+                        inner_task_status: successfulInnerTask?.taskStatus || null,
                     }
                 );
 
                 return {
                     success: true,
-                    status: finalResult.status || 'completed',
-                    submission_status: finalResult.status || 'completed',
+                    status: statusText,
+                    submission_status: statusText,
                     runId: workflowRunId,
                     recording_url: recordingUrl || null,
                     extracted_data: extractedData,
                     workflow_url: finalWorkflowRunLink || null,
+                    inner_task_id: successfulInnerTask?.taskId || null,
                     engine: 'skyvern_workflow'
                 };
             }
