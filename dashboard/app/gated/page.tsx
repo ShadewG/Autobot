@@ -401,6 +401,10 @@ function getApproveLabel(actionType: string | null): string {
   return ACTION_LABELS[normalized] || `APPROVE: ${normalized.replace(/_/g, " ")}`;
 }
 
+function getFeeDecisionLabel(action: "ADD_TO_INVOICING" | "WAIT_FOR_GOOD_TO_PAY"): string {
+  return action === "ADD_TO_INVOICING" ? "Add to Invoicing" : "Wait for Good to Pay";
+}
+
 function getActionExplanation(actionType: string | null, hasDraft: boolean, portalUrl?: string | null, agencyEmail?: string | null): string {
   const normalized = typeof actionType === "string" ? actionType : String(actionType ?? "");
   if (!normalized) return "Approve this proposal to execute it.";
@@ -1488,6 +1492,32 @@ function MonitorPageContent() {
       revalidateQueue();
     } catch (err) {
       showToast(`Retry failed: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleFeeWorkflowDecision = async (action: "ADD_TO_INVOICING" | "WAIT_FOR_GOOD_TO_PAY") => {
+    if (!selectedItem || selectedItem.type !== "proposal") return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/monitor/proposals/${selectedItem.data.id}/decision`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      removeCurrentItem();
+      showToast(action === "ADD_TO_INVOICING" ? "Added to invoicing" : "Waiting for good to pay");
+      revalidateQueue();
+    } catch (err) {
+      showToast(`${getFeeDecisionLabel(action)} failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -3030,6 +3060,8 @@ function MonitorPageContent() {
               const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
               const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
               const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+              const showAddToInvoicing = gateOptions?.includes("ADD_TO_INVOICING");
+              const showWaitForGoodToPay = gateOptions?.includes("WAIT_FOR_GOOD_TO_PAY");
               return (
                 <>
                   <div className="flex gap-2">
@@ -3074,6 +3106,30 @@ function MonitorPageContent() {
                       </Button>
                     )}
                   </div>
+                  {(showAddToInvoicing || showWaitForGoodToPay) && (
+                    <div className="flex gap-2">
+                      {showAddToInvoicing && (
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => handleFeeWorkflowDecision("ADD_TO_INVOICING")}
+                          disabled={isSubmitting}
+                        >
+                          <DollarSign className="h-3 w-3 mr-1" /> {getFeeDecisionLabel("ADD_TO_INVOICING")}
+                        </Button>
+                      )}
+                      {showWaitForGoodToPay && (
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => handleFeeWorkflowDecision("WAIT_FOR_GOOD_TO_PAY")}
+                          disabled={isSubmitting}
+                        >
+                          <Clock className="h-3 w-3 mr-1" /> {getFeeDecisionLabel("WAIT_FOR_GOOD_TO_PAY")}
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     {showDismiss && (
                       <DropdownMenu>

@@ -206,6 +206,13 @@ function getDeliveryTarget(
   return null;
 }
 
+function getProposalApproveLabel(actionType: string | null, actionChainLength = 0): string {
+  if (actionChainLength > 1) return `Approve ${actionChainLength} Actions`;
+  if (actionType === "ACCEPT_FEE") return "Accept Fee";
+  if (actionType && EMAIL_ACTION_TYPES.includes(actionType)) return "Send";
+  return "Approve";
+}
+
 function daysOpen(submittedAt: string | null | undefined): string {
   if (!submittedAt) return "—";
   const d = new Date(submittedAt);
@@ -623,6 +630,7 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
                 <TableHead className="text-[10px] h-6 px-1">Status</TableHead>
                 <TableHead className="text-[10px] h-6 px-1">Engine</TableHead>
                 <TableHead className="text-[10px] h-6 px-1">Result</TableHead>
+                <TableHead className="text-[10px] h-6 px-1">Links</TableHead>
                 <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
               </TableRow>
             </TableHeader>
@@ -645,6 +653,33 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
                         {truncateJson(sub.extracted_data)}
                       </span>
                     )}
+                  </TableCell>
+                  <TableCell className="text-[10px] px-1 py-1 whitespace-nowrap">
+                    <div className="flex items-center gap-2">
+                      {sub.screenshot_url && (
+                        <a
+                          href={sub.screenshot_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="h-2.5 w-2.5" /> Screenshot
+                        </a>
+                      )}
+                      {sub.recording_url && (
+                        <a
+                          href={sub.recording_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="h-2.5 w-2.5" /> Recording
+                        </a>
+                      )}
+                      {!sub.screenshot_url && !sub.recording_url && (
+                        <span className="text-muted-foreground">\u2014</span>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
                     {formatRelativeTime(sub.started_at)}
@@ -1956,6 +1991,30 @@ function DetailV2Content() {
     }
   };
 
+  const handleFeeWorkflowDecision = async (
+    proposalId: number,
+    action: "ADD_TO_INVOICING" | "WAIT_FOR_GOOD_TO_PAY"
+  ) => {
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/proposals/${proposalId}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      toast.success(action === "ADD_TO_INVOICING" ? "Added to invoicing" : "Waiting for good to pay");
+      await mutate();
+      mutateRuns();
+      startPolling();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
   const handleDismissPending = async (proposalId: number, reason: string) => {
     const proposal = _pendingProposals.find(p => p.id === proposalId);
     if (!proposal) return;
@@ -2996,11 +3055,10 @@ function DetailV2Content() {
                   return currentTabProposals.map(proposal => {
                     const draft = getDraft(proposal.id);
                     const actionType = proposal.action_type || "";
-                    const isEmailLike = EMAIL_ACTION_TYPES.includes(actionType);
-                    const hasChain = (proposal.action_chain?.length ?? 0) > 1;
-                    const approveLabel = hasChain
-                      ? `Approve ${proposal.action_chain!.length} Actions`
-                      : isEmailLike ? "Send" : "Approve";
+                    const approveLabel = getProposalApproveLabel(
+                      actionType,
+                      proposal.action_chain?.length ?? 0
+                    );
                     const delivery = getDeliveryTarget(actionType || null, request, agency_summary || null);
                     const manualPdfEscalation = actionType === "ESCALATE"
                       ? extractManualPdfEscalation(proposal.reasoning || [])
@@ -3281,6 +3339,8 @@ function DetailV2Content() {
                             const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
                             const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
                             const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+                            const showAddToInvoicing = gateOptions?.includes("ADD_TO_INVOICING");
+                            const showWaitForGoodToPay = gateOptions?.includes("WAIT_FOR_GOOD_TO_PAY");
                             return (
                               <>
                                 {showRetryResearch && (
@@ -3298,6 +3358,28 @@ function DetailV2Content() {
                                 {showAdjust && (
                                   <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setPendingAdjustProposalId(proposal.id); setPendingAdjustModalOpen(true); }} disabled={isApproving || isAdjustingPending}>
                                     <Edit className="h-3 w-3 mr-1" /> Adjust
+                                  </Button>
+                                )}
+                                {showAddToInvoicing && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleFeeWorkflowDecision(proposal.id, "ADD_TO_INVOICING")}
+                                    disabled={isApproving || isAdjustingPending}
+                                  >
+                                    <DollarSign className="h-3 w-3 mr-1" /> Add to Invoicing
+                                  </Button>
+                                )}
+                                {showWaitForGoodToPay && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={() => handleFeeWorkflowDecision(proposal.id, "WAIT_FOR_GOOD_TO_PAY")}
+                                    disabled={isApproving || isAdjustingPending}
+                                  >
+                                    <Clock className="h-3 w-3 mr-1" /> Wait for Good to Pay
                                   </Button>
                                 )}
                                 {showDismiss && (

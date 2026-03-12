@@ -137,6 +137,22 @@ function getActionExplanation(actionType: string | null, hasDraft: boolean, port
   return explanation;
 }
 
+function getProposalApproveLabel(actionType: string | null, actionChainLength = 0): string {
+  if (actionChainLength > 1) return `Approve ${actionChainLength} Actions`;
+  if (actionType === "ACCEPT_FEE") return "Accept Fee";
+  if (actionType && [
+    "SEND_INITIAL_REQUEST",
+    "SEND_FOLLOWUP",
+    "SEND_CLARIFICATION",
+    "SEND_REBUTTAL",
+    "NEGOTIATE_FEE",
+    "ACCEPT_FEE",
+    "DECLINE_FEE",
+    "SEND_PDF_EMAIL",
+  ].includes(actionType)) return "Send";
+  return "Approve";
+}
+
 function getDeliveryTarget(
   actionType: string | null,
   request: RequestWorkspaceResponse["request"],
@@ -703,6 +719,27 @@ function RequestDetailContent() {
         toast.success("Approved");
       }
       optimisticClear();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleFeeWorkflowDecision = async (action: "ADD_TO_INVOICING" | "WAIT_FOR_GOOD_TO_PAY") => {
+    if (!data?.pending_proposal) return;
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      toast.success(action === "ADD_TO_INVOICING" ? "Added to invoicing" : "Waiting for good to pay");
+      await mutate();
+      mutateRuns();
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -1447,9 +1484,10 @@ function RequestDetailContent() {
     ? "Draft Pending Approval"
     : "Proposal Pending Approval";
   const hasChain = (pending_proposal?.action_chain?.length ?? 0) > 1;
-  const pendingApproveLabel = hasChain
-    ? `Approve ${pending_proposal!.action_chain!.length} Actions`
-    : isEmailLikePendingAction ? "Send" : "Approve";
+  const pendingApproveLabel = getProposalApproveLabel(
+    pendingActionType || null,
+    pending_proposal?.action_chain?.length ?? 0
+  );
   const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
   const nextDelivery = pendingDelivery
     ? pendingDelivery
@@ -2348,6 +2386,8 @@ function RequestDetailContent() {
                             const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
                             const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
                             const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+                            const showAddToInvoicing = gateOptions?.includes("ADD_TO_INVOICING");
+                            const showWaitForGoodToPay = gateOptions?.includes("WAIT_FOR_GOOD_TO_PAY");
                             return (
                               <>
                                 <div className="flex gap-2">
@@ -2391,6 +2431,26 @@ function RequestDetailContent() {
                                       disabled={isApproving || isAdjustingPending}
                                     >
                                       <Edit className="h-3 w-3 mr-1" /> Adjust
+                                    </Button>
+                                  )}
+                                  {showAddToInvoicing && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleFeeWorkflowDecision("ADD_TO_INVOICING")}
+                                      disabled={isApproving || isAdjustingPending}
+                                    >
+                                      <DollarSign className="h-3 w-3 mr-1" /> Add to Invoicing
+                                    </Button>
+                                  )}
+                                  {showWaitForGoodToPay && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleFeeWorkflowDecision("WAIT_FOR_GOOD_TO_PAY")}
+                                      disabled={isApproving || isAdjustingPending}
+                                    >
+                                      <Clock className="h-3 w-3 mr-1" /> Wait for Good to Pay
                                     </Button>
                                   )}
                                 </div>

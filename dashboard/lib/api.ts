@@ -565,7 +565,7 @@ export const proposalsAPI = {
   decide: (
     id: number,
     decision: {
-      action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW';
+      action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW' | 'ADD_TO_INVOICING' | 'WAIT_FOR_GOOD_TO_PAY';
       instruction?: string;
       reason?: string;
       attachments?: Array<{ filename: string; content: string; type: string }>;
