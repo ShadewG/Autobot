@@ -5,7 +5,7 @@ const logger = require('../../services/logger');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { getCanonicalMessageText } = require('../../lib/message-normalization');
-const { resolveReviewState, isStaleWaitingRunWithoutProposal, getCaseProgressEvidence } = require('../../lib/resolve-review-state');
+const { resolveReviewState, getCaseProgressEvidence } = require('../../lib/resolve-review-state');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const {
     normalizePortalTimeoutSubstatus,
@@ -18,6 +18,15 @@ const {
 } = require('../../utils/request-normalization');
 
 const NO_CORRESPONDENCE_RECOVERY_STATUSES = new Set(['sent', 'awaiting_response', 'portal_in_progress', 'responded']);
+
+function isStaleWaitingRunWithoutProposal({ caseData, activeProposal, activeRun }) {
+    const runStatus = String(activeRun?.status || '').toLowerCase();
+    if (!activeRun || activeProposal) return false;
+    if (!['waiting', 'paused', 'gated'].includes(runStatus)) return false;
+
+    const progressEvidence = getCaseProgressEvidence(caseData);
+    return !progressEvidence.hasAnyCorrespondence && !progressEvidence.hasDispatchEvidence;
+}
 
 function isSingleNotionReference(value = '') {
     const normalized = String(value || '').trim().replace(/-/g, '').toLowerCase();
