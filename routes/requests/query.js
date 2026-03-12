@@ -415,7 +415,12 @@ router.get('/', async (req, res) => {
             query += ` AND c.user_id IS NULL`;
         }
 
-        // Exclude completed/cancelled cases from main view unless explicitly requested
+        // Exclude bugged cases from the normal operator list unless explicitly requested.
+        // Completed/cancelled stay optional behind include_completed.
+        if (!status) {
+            query += ` AND c.status != 'bugged'`;
+        }
+
         if (!includeCompleted && !status) {
             query += ` AND c.status NOT IN ('completed', 'cancelled')`;
         }
@@ -1996,6 +2001,21 @@ router.get('/:id/workspace', async (req, res) => {
             extracted_text: att.extracted_text || null,
             has_extracted_text: !!att.extracted_text,
         }));
+        if (!requestDetail.last_portal_screenshot_url) {
+            const latestPortalScreenshot = await db.query(
+                `SELECT COALESCE(metadata->>'persistent_url', metadata->>'url') AS screenshot_url
+                   FROM activity_log
+                  WHERE case_id = $1
+                    AND event_type = 'portal_screenshot'
+                  ORDER BY created_at DESC
+                  LIMIT 1`,
+                [requestId]
+            );
+            const fallbackPortalScreenshotUrl = String(latestPortalScreenshot.rows[0]?.screenshot_url || '').trim();
+            if (fallbackPortalScreenshotUrl) {
+                requestDetail.last_portal_screenshot_url = fallbackPortalScreenshotUrl;
+            }
+        }
         requestDetail.import_warnings = filterStaleImportWarnings(requestDetail.import_warnings, {
             originalAgencyName: primaryCaseAgency?.agency_name || caseData.agency_name,
             resolvedAgencyName,
