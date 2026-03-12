@@ -131,6 +131,47 @@ describe('fee workflow service', function () {
     }));
   });
 
+  it('parks fee case even if Notion sync fails after the case update', async function () {
+    const proposal = {
+      id: 2026,
+      case_id: 25161,
+      action_type: 'ACCEPT_FEE',
+      metadata: {},
+    };
+    const humanDecision = { action: 'WAIT_FOR_GOOD_TO_PAY' };
+
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 25161,
+      notion_page_id: '2fd87c20-070a-80c6-a908-d0f1a87bd7c2',
+      portal_request_number: 'PD-2026-292',
+      last_fee_quote_amount: 80,
+      agency_name: 'Bryan Police Department',
+      user_id: null,
+    });
+    sinon.stub(db, 'getLatestInboundMessage').resolves({
+      id: 9003,
+      body_text: 'The fee is $80 and must be approved before payment.',
+    });
+    sinon.stub(db, 'getUserById').resolves(null);
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(new Error('Notion unavailable'));
+    sinon.stub(proposalLifecycle, 'markProposalExecuted').resolves();
+    const updateCaseStub = sinon.stub(db, 'updateCase').resolves();
+    const logActivityStub = sinon.stub(db, 'logActivity').resolves();
+
+    const result = await feeWorkflowService.handleFeeProposalDecision(proposal, {
+      action: 'WAIT_FOR_GOOD_TO_PAY',
+      humanDecision,
+      decidedBy: 'dashboard',
+    });
+
+    assert.strictEqual(result.handled, true);
+    assert.match(result.response.message, /Notion sync failed/i);
+    sinon.assert.calledWithMatch(updateCaseStub, 25161, sinon.match({
+      pause_reason: feeWorkflowService.WAITING_GOOD_TO_PAY,
+    }));
+    sinon.assert.calledTwice(logActivityStub);
+  });
+
   it('advances waiting good-to-pay cases when Notion is marked good to pay', async function () {
     const caseRow = {
       id: 25161,

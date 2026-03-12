@@ -199,7 +199,6 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
 async function markProposalWaiting(proposal, humanDecision, caseUpdate, activityType, activityMessage, { notionMode, reason, actorId, decidedBy } = {}) {
   const caseData = await db.getCaseById(proposal.case_id);
   if (!caseData) throw new Error(`Case ${proposal.case_id} not found`);
-  const notionResult = await syncFeeWorkflowToNotion(caseData, proposal, { mode: notionMode, reason });
   await proposalLifecycle.markProposalExecuted(proposal.id, {
     humanDecision,
     executionKey: `${humanDecision.action.toLowerCase()}:${proposal.id}`,
@@ -209,7 +208,7 @@ async function markProposalWaiting(proposal, humanDecision, caseUpdate, activity
     requires_human: true,
     pause_reason: caseUpdate.pause_reason,
     substatus: caseUpdate.substatus,
-    notion_page_id: notionResult.pageId || caseData.notion_page_id,
+    notion_page_id: caseData.notion_page_id,
   });
   await db.logActivity(activityType, activityMessage, {
     case_id: proposal.case_id,
@@ -217,10 +216,30 @@ async function markProposalWaiting(proposal, humanDecision, caseUpdate, activity
     actor_type: 'human',
     actor_id: actorId || undefined,
     source_service: decidedBy || 'dashboard',
-    notion_page_id: notionResult.pageId || null,
+    notion_page_id: caseData.notion_page_id || null,
     pause_reason: caseUpdate.pause_reason,
   });
-  return notionResult;
+  try {
+    const notionResult = await syncFeeWorkflowToNotion(caseData, proposal, { mode: notionMode, reason });
+    if (notionResult?.pageId && notionResult.pageId !== caseData.notion_page_id) {
+      await db.updateCase(proposal.case_id, { notion_page_id: notionResult.pageId });
+    }
+    return notionResult;
+  } catch (error) {
+    await db.logActivity('fee_workflow_notion_sync_failed', `Fee workflow Notion sync failed after parking case: ${error.message}`, {
+      case_id: proposal.case_id,
+      proposal_id: proposal.id,
+      actor_type: 'system',
+      actor_id: actorId || undefined,
+      source_service: decidedBy || 'dashboard',
+      pause_reason: caseUpdate.pause_reason,
+      error_message: error.message,
+    });
+    return {
+      pageId: caseData.notion_page_id || null,
+      syncError: error.message,
+    };
+  }
 }
 
 async function handleFeeProposalDecision(proposal, { action, humanDecision, reason = null, userId = null, decidedBy = 'dashboard' } = {}) {
@@ -254,7 +273,9 @@ async function handleFeeProposalDecision(proposal, { action, humanDecision, reas
       handled: true,
       response: {
         success: true,
-        message: 'Case added to invoicing and parked until payment is marked paid.',
+        message: notionResult?.syncError
+          ? `Case added to invoicing and parked until payment is marked paid. Notion sync failed: ${notionResult.syncError}`
+          : 'Case added to invoicing and parked until payment is marked paid.',
         proposal_id: proposal.id,
         action,
         notion_page_id: notionResult.pageId,
@@ -279,7 +300,9 @@ async function handleFeeProposalDecision(proposal, { action, humanDecision, reas
       handled: true,
       response: {
         success: true,
-        message: 'Case parked until Notion marks it good to pay.',
+        message: notionResult?.syncError
+          ? `Case parked until Notion marks it good to pay. Notion sync failed: ${notionResult.syncError}`
+          : 'Case parked until Notion marks it good to pay.',
         proposal_id: proposal.id,
         action,
         notion_page_id: notionResult.pageId,
