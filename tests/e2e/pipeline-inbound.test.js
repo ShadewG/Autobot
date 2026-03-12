@@ -237,6 +237,44 @@ describe("Pipeline E2E: Classification Step", function () {
     }
   });
 
+  it("overrides portal closure drift when the body says the requested record does not exist", async function () {
+    const mocks = installMocks("acknowledgment");
+    try {
+      const { classifyInbound } = require("../../trigger/steps/classify-inbound.ts");
+
+      mocks.message.from_email = "messages@nextrequest.com";
+      mocks.message.subject = "Your City of Hardeeville, SC public records request #26-111 has been closed.";
+      mocks.message.body_text = [
+        "Record request #26-111 has been closed. The closure reason supplied was:",
+        "The record you asked for does not exist. Please contact [phone/email] so that we can assist you in making a focused and effective request that reasonably describes an identifiable record.",
+        "Questions about your request? Reply to this email or sign in to contact staff at City of Hardeeville, SC.",
+      ].join("\n");
+
+      const context = {
+        caseId: 1004,
+        caseData: mocks.caseData,
+        messages: [mocks.message],
+        attachments: [],
+        analysis: null,
+        followups: null,
+        existingProposal: null,
+        autopilotMode: "SUPERVISED",
+        constraints: [],
+        scopeItems: [],
+      };
+
+      const result = await classifyInbound(context, mocks.message.id, "INBOUND_MESSAGE");
+
+      expect(result.classification).to.equal("DENIAL");
+      expect(result.denialSubtype).to.equal("no_records");
+      expect(result.requiresResponse).to.equal(true);
+      expect(result.suggestedAction).to.equal("respond");
+      expect(mocks.generateObjectStub.called).to.equal(true);
+    } finally {
+      mocks.restore();
+    }
+  });
+
   it("overrides fee-schedule drift when the response also asserts statutory confidentiality", async function () {
     const mocks = installMocks("acknowledgment");
     try {

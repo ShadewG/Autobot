@@ -141,7 +141,7 @@ function looksLikeExplicitNoRecordsDenial(message: any, attachments: any[] = [])
 
   if (!corpus) return false;
 
-  return /no responsive (?:documents|records)|determined there are no responsive (?:documents|records)|has reviewed .* determined there are no responsive (?:documents|records)|no records responsive to your request|no documents responsive to your request/.test(
+  return /no responsive (?:documents|records)|determined there are no responsive (?:documents|records)|has reviewed .* determined there are no responsive (?:documents|records)|no records responsive to your request|no documents responsive to your request|record you asked for does not exist|records? (?:you|requested) .* do(?:es)? not exist/.test(
     corpus
   );
 }
