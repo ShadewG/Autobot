@@ -1400,7 +1400,7 @@ Return concise legal citations and key statutory language with sources.`;
             const agencyResponseText = this.getMessageBodyForPrompt(messageData);
             const denialSubtype = this.inferDenialSubtype(messageData, analysis);
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${denialSubtype}`);
-            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints, forceDraft = false } = options;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
             const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
@@ -1415,8 +1415,11 @@ Return concise legal citations and key statutory language with sources.`;
                 'format_issue': 'Request alternative delivery or use their portal'
             };
 
-            // If they mentioned a portal, don't argue - just use it
-            if (analysis.portal_url) {
+            // Only suppress rebuttal drafting on portal routes when this helper is being
+            // used to decide whether we should reply at all. Once the pipeline has already
+            // chosen SEND_REBUTTAL, we must generate the actual draft instead of returning
+            // a no-reply sentinel that later becomes a fallback shell proposal.
+            if (!forceDraft && analysis.portal_url) {
                 console.log('Portal URL found - no rebuttal needed, use portal instead');
                 return {
                     should_auto_reply: false,
@@ -1427,7 +1430,7 @@ Return concise legal citations and key statutory language with sources.`;
             }
 
             // For "overly_broad" - check if this is really a fight worth having
-            if (denialSubtype === 'overly_broad') {
+            if (!forceDraft && denialSubtype === 'overly_broad') {
                 // If they just asked us to narrow or use a portal, do that instead
                 const bodyLower = agencyResponseText.toLowerCase();
                 if (bodyLower.includes('portal') || bodyLower.includes('nextrequest') || bodyLower.includes('govqa')) {

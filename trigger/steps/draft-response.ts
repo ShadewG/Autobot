@@ -234,6 +234,7 @@ export async function draftResponse(
           rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
             ? researchCtx.rebuttal_support_points
             : undefined,
+          forceDraft: true,
         }
       );
       break;

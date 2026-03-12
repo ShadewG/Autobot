@@ -78,6 +78,39 @@ describe('AI service request strategy path', function () {
     assert.doesNotMatch(draft.body_text, /happy to narrow|proceed in phases/i);
   });
 
+
+  it('still generates a rebuttal draft when the action is already SEND_REBUTTAL on a portal-hosted denial', async function () {
+    sinon.stub(aiService, 'researchStateLaws').resolves('');
+    sinon.stub(aiService, 'callAI').resolves({
+      text: 'Records Custodian,\n\nPlease clarify the legal basis for the no-records determination.\n\nSamuel Hylton',
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'South Carolina' });
+
+    const draft = await aiService.generateDenialRebuttal(
+      {
+        subject: 'Your City of Hardeeville, SC public records request #26-111 has been closed.',
+        normalized_body_text: 'The record you asked for does not exist. Please contact us so that we can assist you in making a focused and effective request.',
+      },
+      { denial_subtype: 'no_records', portal_url: 'https://hardeevillesc.nextrequest.com/' },
+      {
+        state: 'SC',
+        agency_name: 'Hardeeville Police Department, South Carolina',
+        requested_records: ['incident reports'],
+      },
+      { forceDraft: true }
+    );
+
+    assert.ok(draft);
+    assert.match(draft.body_text, /legal basis|no-records determination/i);
+    assert.notStrictEqual(draft.should_auto_reply, false);
+  });
+
   it('does not write adaptive learning outcomes anymore', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
 
