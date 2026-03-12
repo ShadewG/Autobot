@@ -6,6 +6,7 @@ const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 const { notify } = require('./event-bus');
 const pdfFormService = require('./pdf-form-service');
+const { persistPortalScreenshot } = require('./portal-screenshot-store');
 const {
     logExternalCallStarted,
     logExternalCallCompleted,
@@ -34,12 +35,287 @@ class PortalAgentServiceSkyvern {
         this.workflowBrowserSessionId = process.env.SKYVERN_BROWSER_SESSION_ID || null;
         this.workflowBrowserAddress = process.env.SKYVERN_BROWSER_ADDRESS || null;
         this.workflowHttpTimeout = parseInt(process.env.SKYVERN_HTTP_TIMEOUT_MS || '120000', 10);
-        this.workflowSoftTimeoutMs = parseInt(process.env.SKYVERN_WORKFLOW_SOFT_TIMEOUT_MS || '840000', 10); // 14m
+        this.workflowSoftTimeoutMs = parseInt(process.env.SKYVERN_WORKFLOW_SOFT_TIMEOUT_MS || '1200000', 10); // 20m upper bound; provider caps apply below
         this.workflowCancelTimeoutMs = parseInt(process.env.SKYVERN_CANCEL_TIMEOUT_MS || '8000', 10); // 8s best-effort cancel
         this.skyvernAppBaseUrl = process.env.SKYVERN_APP_BASE_URL || 'https://app.skyvern.com';
         this.emailHelper = new EmailVerificationHelper({
             inboxAddress: process.env.REQUESTS_INBOX || 'requests@foib-request.com'
         });
+    }
+
+    _getDefaultRequesterName() {
+        const configured = String(process.env.REQUESTER_NAME || '').trim();
+        return configured || 'Samuel Hylton';
+    }
+
+    _getRequesterIdentity(caseOwner = null, overrides = {}) {
+        const fallbackName = this._getDefaultRequesterName();
+        const ownerName = String(caseOwner?.name || overrides.name || fallbackName).trim() || fallbackName;
+        const nameParts = ownerName.split(/\s+/).filter(Boolean);
+        const firstName = overrides.firstName || nameParts[0] || 'Samuel';
+        const lastName = overrides.lastName || nameParts.slice(1).join(' ') || 'Hylton';
+        const email = overrides.email || caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const phone = overrides.phone || caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
+        const organization = overrides.organization ?? (caseOwner ? (caseOwner.signature_organization ?? '') : (process.env.REQUESTER_ORG || ''));
+        const title = overrides.title || caseOwner?.signature_title || process.env.REQUESTER_TITLE || '';
+
+        return {
+            name: ownerName,
+            firstName,
+            lastName,
+            email,
+            phone,
+            organization,
+            title,
+            address: {
+                line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '',
+                line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
+                city: caseOwner?.address_city || process.env.REQUESTER_CITY || '',
+                state: caseOwner?.address_state || process.env.REQUESTER_STATE || '',
+                zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || ''
+            }
+        };
+    }
+
+    _normalizeWorkflowProvider(portalProvider = null, portalUrl = null) {
+        const provider = String(portalProvider || '').toLowerCase();
+        if (provider.includes('nextrequest')) return 'nextrequest';
+        if (provider.includes('justfoia')) return 'justfoia';
+        if (provider.includes('govqa')) return 'govqa';
+        if (provider.includes('civicplus')) return 'civicplus';
+        if (provider.includes('form center')) return 'formcenter';
+        if (provider.includes('custom form')) return 'customform';
+
+        const url = String(portalUrl || '').toLowerCase();
+        if (url.includes('nextrequest.com')) return 'nextrequest';
+        if (url.includes('justfoia.com')) return 'justfoia';
+        if (url.includes('govqa') || url.includes('custhelp') || url.includes('mycusthelp')) return 'govqa';
+        if (url.includes('civicplus')) return 'civicplus';
+        if (url.includes('/formcenter/')) return 'formcenter';
+        return 'default';
+    }
+
+    _getWorkflowBudget({ portalProvider = null, portalUrl = null, retryContext = null, dryRun = false } = {}) {
+        const provider = this._normalizeWorkflowProvider(portalProvider, portalUrl);
+        const configuredSoftTimeoutMs = Number.isFinite(this.workflowSoftTimeoutMs) && this.workflowSoftTimeoutMs > 0
+            ? this.workflowSoftTimeoutMs
+            : 300000;
+        const providerCaps = {
+            nextrequest: 540000,
+            govqa: 960000,
+            justfoia: 600000,
+            civicplus: 960000,
+            formcenter: 960000,
+            customform: 960000,
+            default: 600000
+        };
+        const retryCaps = {
+            nextrequest: 420000,
+            govqa: 780000,
+            justfoia: 480000,
+            civicplus: 780000,
+            formcenter: 780000,
+            customform: 780000,
+            default: 480000
+        };
+        const dryRunCaps = {
+            nextrequest: 420000,
+            govqa: 780000,
+            justfoia: 420000,
+            civicplus: 780000,
+            formcenter: 780000,
+            customform: 780000,
+            default: 420000
+        };
+        const stepCaps = {
+            nextrequest: 8,
+            govqa: 10,
+            justfoia: 12,
+            civicplus: 12,
+            formcenter: 12,
+            customform: 12,
+            default: 10
+        };
+        const retryStepCaps = {
+            nextrequest: 7,
+            govqa: 8,
+            justfoia: 10,
+            civicplus: 10,
+            formcenter: 10,
+            customform: 10,
+            default: 8
+        };
+        const dryRunStepCaps = {
+            nextrequest: 6,
+            govqa: 7,
+            justfoia: 8,
+            civicplus: 8,
+            formcenter: 8,
+            customform: 8,
+            default: 6
+        };
+
+        let softTimeoutMs = Math.min(configuredSoftTimeoutMs, providerCaps[provider] || providerCaps.default);
+        let maxSteps = stepCaps[provider] || stepCaps.default;
+        if (retryContext) {
+            softTimeoutMs = Math.min(softTimeoutMs, retryCaps[provider] || retryCaps.default);
+            maxSteps = Math.min(maxSteps, retryStepCaps[provider] || retryStepCaps.default);
+        }
+        if (dryRun) {
+            softTimeoutMs = Math.min(softTimeoutMs, dryRunCaps[provider] || dryRunCaps.default);
+            maxSteps = Math.min(maxSteps, dryRunStepCaps[provider] || dryRunStepCaps.default);
+        }
+
+        return {
+            provider,
+            softTimeoutMs,
+            maxSteps,
+            pollIntervalMs: parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10)
+        };
+    }
+
+    _extractNumericWorkflowMetric(...values) {
+        for (const value of values) {
+            if (Number.isFinite(value)) {
+                return value;
+            }
+            if (typeof value === 'string' && value.trim() !== '') {
+                const parsed = Number(value);
+                if (Number.isFinite(parsed)) {
+                    return parsed;
+                }
+            }
+        }
+        return null;
+    }
+
+    _extractWorkflowProgressSnapshot(data = {}, status = '') {
+        const screenshots = Array.isArray(data.screenshot_urls)
+            ? data.screenshot_urls.filter((url) => typeof url === 'string' && url.trim())
+            : [];
+        const latestStep = data.latest_step || data.current_step_details || data.active_step || null;
+        const actionCount = this._extractNumericWorkflowMetric(
+            data.action_count,
+            data.actions_count,
+            data.actions_completed,
+            data.step_count,
+            data.steps_count,
+            data.steps_completed,
+            Array.isArray(data.actions) ? data.actions.length : null,
+            Array.isArray(data.steps) ? data.steps.length : null,
+            Array.isArray(data.workflow_steps) ? data.workflow_steps.length : null,
+            latestStep?.index,
+            latestStep?.step_index
+        );
+        const currentUrlCandidates = [
+            data.current_url,
+            data.browser_url,
+            data.page_url,
+            data.current_page_url,
+            data.navigation_url,
+            data.url,
+            data.page?.url,
+            data.current_page?.url,
+            data.browser_state?.url,
+            data.metadata?.current_url,
+            data.metadata?.page_url
+        ];
+        const currentUrl = currentUrlCandidates.find((value) => typeof value === 'string' && value.trim()) || null;
+        const currentStepCandidates = [
+            data.current_step,
+            data.step_name,
+            data.step_label,
+            latestStep?.name,
+            latestStep?.label,
+            latestStep?.title,
+            data.metadata?.current_step
+        ];
+        const currentStep = currentStepCandidates.find((value) => typeof value === 'string' && value.trim()) || null;
+
+        return {
+            status: String(status || '').toLowerCase(),
+            actionCount,
+            currentUrl,
+            currentStep,
+            screenshotCount: screenshots.length,
+            latestScreenshotUrl: screenshots.length > 0 ? screenshots[screenshots.length - 1] : null,
+            hasSignals: Boolean(
+                screenshots.length > 0 ||
+                currentUrl ||
+                currentStep ||
+                Number.isFinite(actionCount)
+            )
+        };
+    }
+
+    _getWorkflowLoopGuard(budget = {}) {
+        const provider = String(budget.provider || 'default').toLowerCase();
+        const defaultMinElapsedMs = parseInt(process.env.SKYVERN_WORKFLOW_LOOP_MIN_ELAPSED_MS || '90000', 10);
+        const defaultStagnantPolls = parseInt(process.env.SKYVERN_WORKFLOW_LOOP_MAX_STAGNANT_POLLS || '12', 10);
+        const providerStagnantPolls = {
+            nextrequest: 10,
+            govqa: 14,
+            justfoia: 12,
+            civicplus: 14,
+            formcenter: 14,
+            customform: 14,
+            default: defaultStagnantPolls
+        };
+
+        return {
+            minElapsedMs: defaultMinElapsedMs,
+            maxStagnantPolls: providerStagnantPolls[provider] || providerStagnantPolls.default
+        };
+    }
+
+    _buildWorkflowLoopFingerprint(snapshot = {}) {
+        return JSON.stringify({
+            status: snapshot.status || null,
+            actionCount: Number.isFinite(snapshot.actionCount) ? snapshot.actionCount : null,
+            currentUrl: snapshot.currentUrl || null,
+            currentStep: snapshot.currentStep || null,
+            screenshotCount: snapshot.screenshotCount || 0,
+            latestScreenshotUrl: snapshot.latestScreenshotUrl || null
+        });
+    }
+
+    _buildWorkflowLoopReason(snapshot = {}, stagnantForMs = 0, stagnantPolls = 0) {
+        const parts = [
+            `No visible portal progress for ${Math.max(1, Math.round(stagnantForMs / 1000))}s`,
+            `${stagnantPolls} stagnant poll${stagnantPolls === 1 ? '' : 's'}`
+        ];
+
+        if (Number.isFinite(snapshot.actionCount)) {
+            parts.push(`step count stalled at ${snapshot.actionCount}`);
+        }
+        if (snapshot.currentStep) {
+            parts.push(`step "${snapshot.currentStep}" repeated`);
+        }
+        if (snapshot.currentUrl) {
+            parts.push(`stuck on ${snapshot.currentUrl}`);
+        }
+        if (snapshot.latestScreenshotUrl) {
+            parts.push('latest screenshot unchanged');
+        }
+
+        return parts.join('; ');
+    }
+
+    _withWorkflowTelemetry(data = {}, snapshot = {}, budget = {}) {
+        return {
+            ...data,
+            autobot_portal_telemetry: {
+                provider: budget.provider || null,
+                max_steps: budget.maxSteps || null,
+                soft_timeout_ms: budget.softTimeoutMs || null,
+                poll_interval_ms: budget.pollIntervalMs || null,
+                action_count: Number.isFinite(snapshot.actionCount) ? snapshot.actionCount : null,
+                current_url: snapshot.currentUrl || null,
+                current_step: snapshot.currentStep || null,
+                screenshot_count: snapshot.screenshotCount || 0,
+                latest_screenshot_url: snapshot.latestScreenshotUrl || null
+            }
+        };
     }
 
     _captchaInputRules() {
@@ -742,7 +1018,11 @@ class PortalAgentServiceSkyvern {
                 case_id: caseData.id || null,
                 portal_url: portalUrl,
                 dry_run: dryRun,
-                max_steps: null,
+                max_steps: this._getWorkflowBudget({
+                    portalProvider: caseData.portal_provider,
+                    portalUrl,
+                    dryRun
+                }).maxSteps,
                 run_id: runId,
                 engine: 'skyvern_workflow'
             }
@@ -943,31 +1223,18 @@ class PortalAgentServiceSkyvern {
     }
 
     _buildWorkflowPersonalInfo(caseData, caseOwner = null) {
-        // Use case owner's info if available, fall back to env vars / defaults
-        const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requester = this._getRequesterIdentity(caseOwner);
         // Important: requestor contact email should be the case owner's identity,
         // not the shared portal login inbox (REQUESTS_INBOX). Portal confirmations
         // sent to REQUESTS_INBOX don't route to cases properly.
-        const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
-        const ownerOrg = caseOwner
-            ? (caseOwner.signature_organization ?? '')
-            : (process.env.REQUESTER_ORG || '');
-        const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || '';
 
         return {
-            name: ownerName,
-            email: ownerEmail,
-            phone: ownerPhone,
-            organization: ownerOrg,
-            title: ownerTitle,
-            address: {
-                line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '',
-                line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
-                city: caseOwner?.address_city || process.env.REQUESTER_CITY || '',
-                state: caseOwner?.address_state || process.env.REQUESTER_STATE || '',
-                zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || ''
-            },
+            name: requester.name,
+            email: requester.email,
+            phone: requester.phone,
+            organization: requester.organization,
+            title: requester.title,
+            address: requester.address,
             preferred_delivery: 'electronic',
             fee_waiver: {
                 requested: true,
@@ -1139,9 +1406,9 @@ class PortalAgentServiceSkyvern {
             });
 
             // 3. Parse scout results
-            // Derive name from case owner or env
-            const ownerFirstName = caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel';
-            const ownerLastName = caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton';
+            const requester = this._getRequesterIdentity(caseOwner, { email });
+            const ownerFirstName = requester.firstName;
+            const ownerLastName = requester.lastName;
 
             if (extracted.requires_account === false) {
                 console.log(`📋 Portal ${portalUrl} does not require an account — saving marker`);
@@ -1244,7 +1511,14 @@ class PortalAgentServiceSkyvern {
             if (portalAccount) await database.updatePortalAccountLastUsed(portalAccount.id);
         }
 
-        const totpIdentifier = caseOwner?.email || process.env.TOTP_INBOX || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const requesterIdentity = this._getRequesterIdentity(caseOwner);
+        const workflowBudget = this._getWorkflowBudget({
+            portalProvider: caseData.portal_provider,
+            portalUrl,
+            retryContext,
+            dryRun
+        });
+        const totpIdentifier = caseOwner?.email || process.env.TOTP_INBOX || requesterIdentity.email;
         const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions, caseOwner });
         if (retryContext?.navigation_goal) {
             parameters.navigation_goal = retryContext.navigation_goal;
@@ -1266,7 +1540,7 @@ class PortalAgentServiceSkyvern {
         if (safeLog.parameters?.login) {
             safeLog.parameters.login = '[redacted credential payload]';
         }
-        console.log('📦 Workflow payload:', JSON.stringify(safeLog, null, 2));
+        console.log(`📦 Workflow payload (provider=${workflowBudget.provider}, timeout=${workflowBudget.softTimeoutMs}ms, maxSteps=${workflowBudget.maxSteps}):`, JSON.stringify(safeLog, null, 2));
 
         const workflowStartedAt = Date.now();
         try {
@@ -1291,7 +1565,8 @@ class PortalAgentServiceSkyvern {
                 {
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-api-key': this.apiKey
+                        'x-api-key': this.apiKey,
+                        'x-max-steps-override': String(workflowBudget.maxSteps)
                     },
                     timeout: this.workflowHttpTimeout
                 }
@@ -1349,7 +1624,7 @@ class PortalAgentServiceSkyvern {
             );
 
             const finalResult = workflowRunId
-                ? await this._pollWorkflowRun(workflowRunId, caseData.id)
+                ? await this._pollWorkflowRun(workflowRunId, caseData.id, workflowBudget)
                 : null;
 
             if (!finalResult) {
@@ -1385,7 +1660,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || requesterIdentity.email,
                         status: 'timeout',
                         confirmation_number: null,
                         notes: timeoutReason,
@@ -1468,7 +1743,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || requesterIdentity.email,
                         status: finalResult.status || 'completed',
                         confirmation_number: extractedData?.confirmation_number || caseData.portal_request_number || null,
                         agency_notion_page_id: primary?.agency_notion_page_id || null
@@ -1484,10 +1759,10 @@ class PortalAgentServiceSkyvern {
                         await database.createPortalAccount({
                             portal_url: portalUrl,
                             portal_type: caseData.portal_provider || null,
-                            email: caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                            email: requesterIdentity.email,
                             password: defaultPassword,
-                            first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
-                            last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                            first_name: requesterIdentity.firstName,
+                            last_name: requesterIdentity.lastName,
                             account_status: 'active',
                             user_id: userId
                         });
@@ -1556,18 +1831,20 @@ class PortalAgentServiceSkyvern {
                     }
                 );
 
-                // If this is the first attempt with stored credentials, retry WITHOUT
-                // an account so Skyvern creates a new one (password is always Insanity10M).
-                if (portalAccount && !retryContext) {
-                    console.log(`🔄 Login failed for ${portalUrl} — retrying with account creation (no stored creds)`);
-                    return this._submitViaWorkflow({
-                        caseData, portalUrl, dryRun,
-                        runId: crypto.randomUUID(),
-                        retryContext: { previousError: failureReason, loginFailed: true }
-                    });
-                }
+                await database.logActivity(
+                    'portal_retry_skipped',
+                    `Portal login retry skipped to control Skyvern spend: ${failureReason}`,
+                    {
+                        case_id: caseData.id,
+                        portal_url: portalUrl,
+                        error: failureReason,
+                        run_id: workflowRunId,
+                        engine: 'skyvern_workflow',
+                        retry_policy: 'single_workflow_per_attempt',
+                        skip_reason: 'login_failure'
+                    }
+                );
 
-                // Already retried or no account to lock — escalate to human
                 const truncatedReason = String(failureReason || 'Login failed').substring(0, 80);
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                     substatus: `Portal login failed: ${truncatedReason}`.substring(0, 100),
@@ -1603,7 +1880,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || requesterIdentity.email,
                         status: 'not_automatable',
                         confirmation_number: null,
                         notes: `Portal not automatable: ${String(failureReason).substring(0, 200)}`,
@@ -1627,19 +1904,19 @@ class PortalAgentServiceSkyvern {
                 };
             }
 
-            // ACCOUNT EXISTS: If Skyvern created an account but then looped, save creds and retry with login
+            // ACCOUNT EXISTS: save usable credentials, but do not launch a second workflow run for the same attempt
             const accountAlreadyExists = /email.*already exists|account.*already|duplicate.*email/i.test(failureReason + ' ' + fullRunText);
             if (accountAlreadyExists && !portalAccount && !retryContext) {
-                console.log(`🔑 Account already exists on ${portalUrl} — saving credentials and retrying with login`);
+                console.log(`🔑 Account already exists on ${portalUrl} — saving credentials and stopping this attempt`);
                 const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
                 try {
                     await database.createPortalAccount({
                         portal_url: portalUrl,
                         portal_type: caseData.portal_provider || null,
-                        email: caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        email: requesterIdentity.email,
                         password: defaultPassword,
-                        first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
-                        last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                        first_name: requesterIdentity.firstName,
+                        last_name: requesterIdentity.lastName,
                         account_status: 'active',
                         user_id: userId
                     });
@@ -1648,43 +1925,29 @@ class PortalAgentServiceSkyvern {
                     console.warn('Could not save portal account (may already exist):', saveErr.message);
                 }
 
-                await database.logActivity('portal_retry_requested',
-                    `Account already exists — retrying with saved credentials`, {
+                await database.logActivity('portal_retry_skipped',
+                    `Account already exists — saved credentials and skipped auto retry`, {
                     case_id: caseData.id, portal_url: portalUrl, error: failureReason,
-                    run_id: workflowRunId, engine: 'skyvern_workflow'
-                });
-
-                return this._submitViaWorkflow({
-                    caseData, portalUrl, dryRun,
-                    runId: crypto.randomUUID(),
-                    retryContext: { navigation_goal: 'Log in with existing credentials and submit the FOIA request. Do NOT create a new account.', previousError: failureReason }
+                    run_id: workflowRunId, engine: 'skyvern_workflow',
+                    retry_policy: 'single_workflow_per_attempt',
+                    skip_reason: 'account_already_exists'
                 });
             }
 
-            // RETRY: If this is the first attempt, ask AI for guidance and retry once
-            if (!retryContext) {
-                console.log(`🔄 First failure for case ${caseData.id}, requesting AI retry guidance...`);
-
-                await database.logActivity('portal_retry_requested',
-                    `Portal failed, requesting AI guidance for retry: ${failureReason}`, {
-                    case_id: caseData.id, portal_url: portalUrl, error: failureReason,
-                    run_id: workflowRunId, engine: 'skyvern_workflow'
-                });
-
-                const guidance = await this._generateRetryGuidance(caseData, portalUrl, failureReason, finalResult);
-
-                if (guidance.should_retry !== false) {
-                    console.log(`🔄 Retrying portal for case ${caseData.id} with AI guidance`);
-                    return this._submitViaWorkflow({
-                        caseData, portalUrl, dryRun,
-                        runId: crypto.randomUUID(),
-                        retryContext: { navigation_goal: guidance.navigation_goal, previousError: failureReason }
-                    });
+            await database.logActivity(
+                'portal_retry_skipped',
+                `Portal retry skipped to control Skyvern spend: ${failureReason}`,
+                {
+                    case_id: caseData.id,
+                    portal_url: portalUrl,
+                    error: failureReason,
+                    run_id: workflowRunId,
+                    engine: 'skyvern_workflow',
+                    retry_policy: 'single_workflow_per_attempt'
                 }
-            }
+            );
 
-            // ESCALATE: Retry exhausted or AI said don't retry
-            console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
+            console.log(`❌ Portal failed for case ${caseData.id}; not launching a second generic Skyvern workflow run for the same attempt`);
             const failureStr = String(failureReason || 'Unknown error');
 
             // Record portal failure memory before any early returns
@@ -1694,7 +1957,7 @@ class PortalAgentServiceSkyvern {
                 await notionService.addSubmissionComment(caseData.id, {
                     portal_url: portalUrl,
                     provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    account_email: portalAccount?.email || requesterIdentity.email,
                     status: 'failed',
                     confirmation_number: null,
                     notes: `Error: ${failureStr.substring(0, 200)}`,
@@ -1788,7 +2051,7 @@ class PortalAgentServiceSkyvern {
                 await notionService.addSubmissionComment(caseData.id, {
                     portal_url: portalUrl,
                     provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    account_email: portalAccount?.email || requesterIdentity.email,
                     status: 'failed',
                     confirmation_number: null,
                     notes: `Crash: ${message.substring(0, 200)}`,
@@ -2164,23 +2427,31 @@ class PortalAgentServiceSkyvern {
         return { success: false, status: 'not_real_portal', error: reason, engine: 'research_fallback' };
     }
 
-    async _pollWorkflowRun(workflowRunId, caseId = null) {
+    async _pollWorkflowRun(workflowRunId, caseId = null, budget = null) {
         if (!workflowRunId) {
             return null;
         }
         const configuredMaxPolls = parseInt(process.env.SKYVERN_WORKFLOW_MAX_POLLS || '480', 10);
-        const pollIntervalMs = parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10);
-        const softTimeoutMs = Number.isFinite(this.workflowSoftTimeoutMs) && this.workflowSoftTimeoutMs > 0
-            ? this.workflowSoftTimeoutMs
-            : 840000;
+        const pollIntervalMs = Number.isFinite(budget?.pollIntervalMs) && budget.pollIntervalMs > 0
+            ? budget.pollIntervalMs
+            : parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10);
+        const softTimeoutMs = Number.isFinite(budget?.softTimeoutMs) && budget.softTimeoutMs > 0
+            ? budget.softTimeoutMs
+            : (Number.isFinite(this.workflowSoftTimeoutMs) && this.workflowSoftTimeoutMs > 0
+                ? this.workflowSoftTimeoutMs
+                : 300000);
         const maxPollsByTimeout = Math.max(1, Math.ceil(softTimeoutMs / Math.max(1, pollIntervalMs)));
         const maxPolls = Math.max(1, Math.min(configuredMaxPolls, maxPollsByTimeout));
+        const loopGuard = this._getWorkflowLoopGuard(budget || {});
         // Correct endpoint: /api/v1/workflows/{workflowId}/runs/{runId}
         const statusUrl = `${this.baseUrl}/workflows/${this.workflowId}/runs/${workflowRunId}`;
 
         console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
         let lastScreenshotUrl = null;
         let screenshotIndex = 0; // tracks how many screenshots we've already logged
+        let stagnantFingerprint = null;
+        let stagnantPolls = 0;
+        let stagnantStartedAt = null;
         const startedAt = Date.now();
 
         for (let poll = 0; poll < maxPolls; poll++) {
@@ -2235,20 +2506,27 @@ class PortalAgentServiceSkyvern {
 
                             // Download from Skyvern and persist to local disk
                             if (logRow?.id) {
-                                const screenshotDir = `/data/screenshots/${caseId}`;
                                 try {
-                                    const fs = require('fs');
-                                    fs.mkdirSync(screenshotDir, { recursive: true });
                                     const imgResp = await axios.get(newScreenshots[i], { responseType: 'arraybuffer', timeout: 10000 });
-                                    const filename = `screenshot_${screenshotIndex + i}_${Date.now()}.png`;
-                                    fs.writeFileSync(`${screenshotDir}/${filename}`, Buffer.from(imgResp.data));
-                                    const persistentUrl = `/api/screenshots/${caseId}/${filename}`;
+                                    const persisted = await persistPortalScreenshot({
+                                        caseId,
+                                        runId: workflowRunId,
+                                        sequenceIndex: screenshotIndex + i,
+                                        status,
+                                        label: `Portal screenshot #${screenshotIndex + i + 1}`,
+                                        buffer: Buffer.from(imgResp.data),
+                                        extension: '.png',
+                                        metadata: { url: newScreenshots[i] },
+                                        skipActivityLog: true,
+                                        skipCaseUpdate: true,
+                                    });
+                                    const persistentUrl = persisted?.publicUrl || null;
                                     await database.query(
                                         `UPDATE activity_log SET metadata = metadata || $1::jsonb WHERE id = $2`,
                                         [JSON.stringify({ persistent_url: persistentUrl }), logRow.id]
                                     );
                                     // Update live screenshot on the case with persistent URL
-                                    if (i === newScreenshots.length - 1) {
+                                    if (persistentUrl && i === newScreenshots.length - 1) {
                                         await database.query(
                                             'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
                                             [persistentUrl, caseId]
@@ -2265,8 +2543,66 @@ class PortalAgentServiceSkyvern {
                     screenshotIndex = data.screenshot_urls.length;
                 }
 
+                const snapshot = this._extractWorkflowProgressSnapshot(data, status);
+                const fingerprint = this._buildWorkflowLoopFingerprint(snapshot);
+                if (fingerprint === stagnantFingerprint) {
+                    stagnantPolls += 1;
+                } else {
+                    stagnantFingerprint = fingerprint;
+                    stagnantPolls = 1;
+                    stagnantStartedAt = Date.now();
+                }
+
+                const stagnantForMs = stagnantStartedAt ? Date.now() - stagnantStartedAt : 0;
+                const canTreatAsLoop = snapshot.hasSignals || ['running', 'executing', 'in_progress', 'processing'].includes(status);
+                if (
+                    canTreatAsLoop &&
+                    stagnantPolls >= loopGuard.maxStagnantPolls &&
+                    stagnantForMs >= loopGuard.minElapsedMs &&
+                    !['completed', 'succeeded', 'success', 'failed', 'terminated', 'error', 'loop_detected'].includes(status)
+                ) {
+                    const loopReason = this._buildWorkflowLoopReason(snapshot, stagnantForMs, stagnantPolls);
+                    console.warn(`⚠️ Workflow run loop detected: ${loopReason}`);
+                    const cancelState = await this._cancelWorkflowRunWithTimeout(workflowRunId);
+                    if (caseId) {
+                        try {
+                            await database.logActivity(
+                                'portal_loop_detected',
+                                `Portal automation stopped after repeated no-progress polling`,
+                                {
+                                    case_id: caseId,
+                                    run_id: workflowRunId,
+                                    portal_status: status,
+                                    stale_for_ms: stagnantForMs,
+                                    stagnant_polls: stagnantPolls,
+                                    action_count: snapshot.actionCount,
+                                    current_url: snapshot.currentUrl,
+                                    current_step: snapshot.currentStep,
+                                    latest_screenshot_url: snapshot.latestScreenshotUrl,
+                                    cancel_attempted: !!cancelState.attempted,
+                                    cancel_succeeded: !!cancelState.cancelled,
+                                    reason: loopReason,
+                                }
+                            );
+                        } catch (loopErr) {
+                            console.warn(`   Loop detection activity log failed: ${loopErr.message}`);
+                        }
+                    }
+                    return this._withWorkflowTelemetry({
+                        ...data,
+                        status: 'loop_detected',
+                        failure_reason: loopReason,
+                        error: loopReason,
+                        loop_detected: true,
+                        cancel_attempted: !!cancelState.attempted,
+                        cancel_succeeded: !!cancelState.cancelled,
+                        stagnant_polls: stagnantPolls,
+                        stagnant_for_ms: stagnantForMs,
+                    }, snapshot, budget || {});
+                }
+
                 if (['completed', 'succeeded', 'success', 'failed', 'terminated', 'error'].includes(status)) {
-                    return data;
+                    return this._withWorkflowTelemetry(data, snapshot, budget || {});
                 }
             } catch (pollError) {
                 console.warn(`   Poll ${poll + 1}: error fetching workflow status - ${pollError.message}`);
@@ -2368,7 +2704,7 @@ SCOUT INSTRUCTIONS:
    a. Create an account using EXACTLY these credentials:
       - Email: ${email}
       - Password: ${password}
-      - Name: ${process.env.REQUESTER_NAME || 'Requester'}
+      - Name: ${this._getDefaultRequesterName()}
       - Phone: ${process.env.REQUESTER_PHONE || '(555) 555-1212'}
       - Address: ${process.env.REQUESTER_ADDRESS || ''}
    b. Fill in ALL required profile fields.
@@ -2389,22 +2725,23 @@ Use Set Extracted Information to return this JSON:
     }
 
     _buildScoutNavigationPayload({ email, password }) {
+        const requester = this._getRequesterIdentity(null, { email });
         return {
             account_email: email,
             account_password: password,
             account_password_confirm: password,
-            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
-            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
+            first_name: requester.firstName,
+            last_name: requester.lastName,
             email: email,
-            phone: process.env.REQUESTER_PHONE || '',
-            phone_number: process.env.REQUESTER_PHONE || '',
+            phone: requester.phone,
+            phone_number: requester.phone,
             address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
             street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
             city: process.env.REQUESTER_CITY || '',
             state_abbr: process.env.REQUESTER_STATE || '',
             zip: process.env.REQUESTER_ZIP || '',
             zip_code: process.env.REQUESTER_ZIP || '',
-            organization: process.env.REQUESTER_ORG || ''
+            organization: requester.organization
         };
     }
 
@@ -2419,15 +2756,16 @@ INSTRUCTIONS:
     }
 
     buildNavigationPayloadWithoutAccount(caseData) {
+        const requester = this._getRequesterIdentity();
         return {
             // Requester Information (person making the FOIA request)
-            email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-            requester_name: process.env.REQUESTER_NAME || 'Requester',
-            requester_email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
-            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
-            phone: process.env.REQUESTER_PHONE || '',
-            phone_number: process.env.REQUESTER_PHONE || '',
+            email: requester.email,
+            requester_name: requester.name,
+            requester_email: requester.email,
+            first_name: requester.firstName,
+            last_name: requester.lastName,
+            phone: requester.phone,
+            phone_number: requester.phone,
             address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
             street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
             city: process.env.REQUESTER_CITY || '',
@@ -2456,6 +2794,7 @@ INSTRUCTIONS:
      * Build navigation payload for LOGIN (existing account)
      */
     buildNavigationPayloadWithLogin(caseData, existingAccount) {
+        const requester = this._getRequesterIdentity(null, { email: existingAccount.email });
         return {
             // Login credentials
             login_email: existingAccount.email,
@@ -2463,12 +2802,12 @@ INSTRUCTIONS:
 
             // Requester Contact Information (person making the FOIA request)
             email: existingAccount.email,
-            requester_name: process.env.REQUESTER_NAME || 'Requester',
+            requester_name: requester.name,
             requester_email: existingAccount.email,
-            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
-            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
-            phone: process.env.REQUESTER_PHONE || '',
-            phone_number: process.env.REQUESTER_PHONE || '',
+            first_name: requester.firstName,
+            last_name: requester.lastName,
+            phone: requester.phone,
+            phone_number: requester.phone,
             address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
             street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
             city: process.env.REQUESTER_CITY || '',
@@ -2499,20 +2838,21 @@ INSTRUCTIONS:
      * Build navigation payload for ACCOUNT CREATION (new account)
      */
     buildNavigationPayloadWithAccountCreation(caseData, password, email) {
+        const requester = this._getRequesterIdentity(null, { email });
         return {
             // Account Creation fields
             account_email: email,
             account_password: password,
             account_password_confirm: password,
-            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
-            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
+            first_name: requester.firstName,
+            last_name: requester.lastName,
 
             // Requester Contact Information (person making the FOIA request)
             email: email,
-            requester_name: process.env.REQUESTER_NAME || 'Requester',
+            requester_name: requester.name,
             requester_email: email,
-            phone: process.env.REQUESTER_PHONE || '',
-            phone_number: process.env.REQUESTER_PHONE || '',
+            phone: requester.phone,
+            phone_number: requester.phone,
             address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
             street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
             city: process.env.REQUESTER_CITY || '',
@@ -2600,6 +2940,7 @@ SUBMISSION STAGE OBJECTIVE:
     }
 
     buildSubmissionStagePayload(caseData, { email, password, contactInfo, submissionUrl, dryRun }) {
+        const requester = this._getRequesterIdentity(null, { email, phone: contactInfo.phone });
         return {
             credentials: {
                 email,
@@ -2608,7 +2949,7 @@ SUBMISSION STAGE OBJECTIVE:
             submission_url: submissionUrl,
             contact_info: contactInfo,
             requester: {
-                name: process.env.REQUESTER_NAME || 'Requester',
+                name: requester.name,
                 email,
                 phone: contactInfo.phone,
                 title: 'Documentary Researcher'

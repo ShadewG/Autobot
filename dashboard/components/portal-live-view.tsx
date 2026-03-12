@@ -19,7 +19,7 @@ interface PortalScreenshotResponse {
 
 const TERMINAL_STATUSES = [
   "completed", "succeeded", "success", "failed", "terminated", "error",
-  "cancelled", "timed_out",
+  "cancelled", "timed_out", "loop_detected",
 ];
 
 function isTerminalStatus(status: string | null): boolean {
@@ -155,7 +155,7 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
                 rel="noopener noreferrer"
                 className={`${screenshots.length > 0 ? "" : "ml-auto "}text-[10px] text-blue-400 hover:underline flex items-center gap-1`}
               >
-                <ExternalLink className="h-3 w-3" /> Skyvern
+                <ExternalLink className="h-3 w-3" /> Open run
               </a>
             )}
           </CardTitle>
