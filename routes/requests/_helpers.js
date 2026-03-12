@@ -5,7 +5,7 @@ const logger = require('../../services/logger');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { getCanonicalMessageText } = require('../../lib/message-normalization');
-const { resolveReviewState, getCaseProgressEvidence } = require('../../lib/resolve-review-state');
+const { resolveReviewState } = require('../../lib/resolve-review-state');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const {
     normalizePortalTimeoutSubstatus,
@@ -18,6 +18,24 @@ const {
 } = require('../../utils/request-normalization');
 
 const NO_CORRESPONDENCE_RECOVERY_STATUSES = new Set(['sent', 'awaiting_response', 'portal_in_progress', 'responded']);
+
+function getCaseProgressEvidence(caseData = {}) {
+    const messageCount = Number(caseData?.message_count || 0);
+    const outboundCount = Number(caseData?.outbound_count || 0);
+    const threadCount = Number(caseData?.thread_count || 0);
+    const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+
+    return {
+        messageCount,
+        outboundCount,
+        threadCount,
+        portalSubmissionCount,
+        hasAnyCorrespondence,
+        hasDispatchEvidence,
+    };
+}
 
 function isStaleWaitingRunWithoutProposal({ caseData, activeProposal, activeRun }) {
     const runStatus = String(activeRun?.status || '').toLowerCase();
