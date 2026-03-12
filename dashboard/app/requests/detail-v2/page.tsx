@@ -1491,7 +1491,7 @@ function DetailV2Content() {
   // Multi-agency state
   const [agencyActionLoading, setAgencyActionLoading] = useState<{
     id: number;
-    action: "primary" | "research";
+    action: "primary" | "research" | "confirm-portal" | "block-portal";
   } | null>(null);
   const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
@@ -2396,6 +2396,38 @@ function DetailV2Content() {
     }
   };
 
+  const handleConfirmPortal = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoading({ id: caseAgencyId, action: "confirm-portal" });
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/portal/confirm`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to confirm portal");
+      await mutate();
+      toast.success("Portal confirmed for automation");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to confirm portal");
+    } finally {
+      setAgencyActionLoading(null);
+    }
+  };
+
+  const handleBlockPortal = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoading({ id: caseAgencyId, action: "block-portal" });
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/portal/block`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to mark portal manual-only");
+      await mutate();
+      toast.success("Portal marked manual-only");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to mark portal manual-only");
+    } finally {
+      setAgencyActionLoading(null);
+    }
+  };
+
   const handleStartRequestForAgency = async (caseAgencyId: number, freshCaseAgency?: CaseAgency) => {
     if (!id) return;
     const caseId = parseInt(id, 10);
@@ -3055,6 +3087,7 @@ function DetailV2Content() {
                   return currentTabProposals.map(proposal => {
                     const draft = getDraft(proposal.id);
                     const actionType = proposal.action_type || "";
+                    const isEmailLike = EMAIL_ACTION_TYPES.includes(actionType);
                     const approveLabel = getProposalApproveLabel(
                       actionType,
                       proposal.action_chain?.length ?? 0
@@ -3527,6 +3560,24 @@ function DetailV2Content() {
                       const isResearchingAgency =
                         agencyActionLoading?.id === ca.id &&
                         agencyActionLoading.action === "research";
+                      const isConfirmingPortal =
+                        agencyActionLoading?.id === ca.id &&
+                        agencyActionLoading.action === "confirm-portal";
+                      const isBlockingPortal =
+                        agencyActionLoading?.id === ca.id &&
+                        agencyActionLoading.action === "block-portal";
+                      const portalAutomationLabel =
+                        ca.portal_automation_status === "trusted"
+                          ? "Trusted portal"
+                          : ca.portal_automation_status === "auto_supported"
+                            ? "Auto-supported portal"
+                            : ca.portal_automation_status === "blocked"
+                              ? "Manual-only portal"
+                              : ca.portal_automation_status === "needs_confirmation"
+                                ? "Portal needs confirmation"
+                                : ca.portal_automation_status === "invalid"
+                                  ? "Invalid portal"
+                                  : null;
                       return (
                         <div key={ca.id} className="rounded border p-3 space-y-1.5">
                           <div className="flex items-center gap-2">
@@ -3543,6 +3594,21 @@ function DetailV2Content() {
                             <div className="flex items-center gap-1 text-[10px]">
                               <Globe className="h-2.5 w-2.5 text-muted-foreground" />
                               <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
+                            </div>
+                          )}
+                          {portalAutomationLabel && (
+                            <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                              <Badge
+                                variant={ca.portal_automation_status === "blocked" || ca.portal_automation_status === "invalid" ? "destructive" : "outline"}
+                                className="text-[10px] px-1 py-0"
+                              >
+                                {portalAutomationLabel}
+                              </Badge>
+                              {ca.portal_automation_reason && (
+                                <span className="text-muted-foreground">
+                                  {ca.portal_automation_reason.replace(/_/g, " ")}
+                                </span>
+                              )}
                             </div>
                           )}
                           {stats && (stats.total > 0 || stats.recordedSubmissionAt) && (
@@ -3584,6 +3650,30 @@ function DetailV2Content() {
                                 "Research"
                               )}
                             </Button>
+                            {ca.portal_url && ca.portal_automation_status !== "trusted" && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleConfirmPortal(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                                {isConfirmingPortal ? (
+                                  <>
+                                    <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                    Confirming...
+                                  </>
+                                ) : (
+                                  "Confirm Portal"
+                                )}
+                              </Button>
+                            )}
+                            {ca.portal_url && ca.portal_automation_status !== "blocked" && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleBlockPortal(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                                {isBlockingPortal ? (
+                                  <>
+                                    <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  "Mark Manual"
+                                )}
+                              </Button>
+                            )}
                             <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
                               {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
                               Start Request
