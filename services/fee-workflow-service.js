@@ -2,6 +2,7 @@ const db = require('./database');
 const notionService = require('./notion-service');
 const proposalLifecycle = require('./proposal-lifecycle');
 const triggerDispatch = require('./trigger-dispatch-service');
+const { wait: triggerWait } = require('@trigger.dev/sdk');
 const { extractUrls } = require('../utils/contact-utils');
 
 const WAITING_INVOICE_PAYMENT = 'WAITING_INVOICE_PAYMENT';
@@ -313,6 +314,47 @@ async function handleFeeProposalDecision(proposal, { action, humanDecision, reas
   return { handled: false };
 }
 
+async function completeFeeProposalWaitpoint(proposal, humanDecision) {
+  if (!proposal?.waitpoint_token) {
+    return { completed: false, tokenId: null };
+  }
+
+  let tokenId = proposal.waitpoint_token;
+  if (!tokenId.startsWith('waitpoint_')) {
+    const token = await triggerWait.createToken({
+      idempotencyKey: tokenId,
+      timeout: '30d',
+    });
+    tokenId = token.id;
+  }
+
+  const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
+  const completeResp = await fetch(
+    `${triggerApiUrl}/api/v1/waitpoints/tokens/${tokenId}/complete`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+      },
+      body: JSON.stringify({
+        data: {
+          action: humanDecision?.action || null,
+          instruction: humanDecision?.instruction || null,
+          reason: humanDecision?.reason || null,
+        },
+      }),
+    }
+  );
+
+  if (!completeResp.ok) {
+    const errorBody = await completeResp.text();
+    throw new Error(`Failed to complete fee waitpoint ${tokenId}: ${completeResp.status} ${errorBody}`);
+  }
+
+  return { completed: true, tokenId };
+}
+
 async function getFeeWorkflowNotionState(caseData) {
   const { pageId, page } = await resolveNotionPageForCase(caseData);
   const labels = propertyMultiSelect(page?.properties?.Label).map(normalizeLabel);
@@ -419,6 +461,7 @@ module.exports = {
   resolveNotionPageForCase,
   buildMailingAddress,
   handleFeeProposalDecision,
+  completeFeeProposalWaitpoint,
   getFeeWorkflowNotionState,
   sweepFeeWorkflowCases,
 };

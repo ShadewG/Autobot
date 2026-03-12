@@ -31,6 +31,10 @@ describe('fee decision routes', function () {
         action: 'ADD_TO_INVOICING',
       },
     });
+    const completeStub = sinon.stub(feeWorkflowService, 'completeFeeProposalWaitpoint').resolves({
+      completed: true,
+      tokenId: 'waitpoint_fee_2024',
+    });
 
     const app = express();
     app.use(express.json());
@@ -44,7 +48,11 @@ describe('fee decision routes', function () {
     assert.strictEqual(response.body.success, true);
     assert.strictEqual(response.body.action, 'ADD_TO_INVOICING');
     sinon.assert.calledOnce(feeStub);
+    sinon.assert.calledOnce(completeStub);
     sinon.assert.calledWithMatch(feeStub, sinon.match.has('id', 2024), sinon.match({
+      action: 'ADD_TO_INVOICING',
+    }));
+    sinon.assert.calledWithMatch(completeStub, sinon.match.has('id', 2024), sinon.match({
       action: 'ADD_TO_INVOICING',
     }));
   });
@@ -68,6 +76,10 @@ describe('fee decision routes', function () {
         action: 'WAIT_FOR_GOOD_TO_PAY',
       },
     });
+    const completeStub = sinon.stub(feeWorkflowService, 'completeFeeProposalWaitpoint').resolves({
+      completed: true,
+      tokenId: 'waitpoint_fee_2025',
+    });
 
     const result = await monitorHelpers.processProposalDecision(2025, 'WAIT_FOR_GOOD_TO_PAY', {
       reason: 'Need finance signoff',
@@ -78,9 +90,13 @@ describe('fee decision routes', function () {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.action, 'WAIT_FOR_GOOD_TO_PAY');
     sinon.assert.calledOnce(feeStub);
+    sinon.assert.calledOnce(completeStub);
     sinon.assert.calledWithMatch(feeStub, sinon.match.has('id', 2025), sinon.match({
       action: 'WAIT_FOR_GOOD_TO_PAY',
       userId: 42,
+    }));
+    sinon.assert.calledWithMatch(completeStub, sinon.match.has('id', 2025), sinon.match({
+      action: 'WAIT_FOR_GOOD_TO_PAY',
     }));
   });
 });

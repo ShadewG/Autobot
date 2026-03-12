@@ -270,9 +270,24 @@ async function processProposalDecision(
         decidedBy: userId || decidedBy,
     });
     if (feeWorkflowResult.handled) {
+        let waitpointCleanupError = null;
+        try {
+            await feeWorkflowService.completeFeeProposalWaitpoint(proposal, humanDecision);
+        } catch (error) {
+            waitpointCleanupError = error;
+            console.warn('Failed to complete fee workflow waitpoint after parking case', {
+                proposalId,
+                caseId,
+                action,
+                error: error.message,
+            });
+        }
         notify('info', feeWorkflowResult.response.message, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
-        return feeWorkflowResult.response;
+        return {
+            ...feeWorkflowResult.response,
+            ...(waitpointCleanupError ? { waitpoint_cleanup_error: waitpointCleanupError.message } : {}),
+        };
     }
 
     if (action === 'RETRY_RESEARCH') {

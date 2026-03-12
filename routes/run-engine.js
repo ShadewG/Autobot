@@ -1872,7 +1872,23 @@ router.post('/proposals/:id/decision', async (req, res) => {
       decidedBy: req.body.decidedBy || 'human',
     });
     if (feeWorkflowResult.handled) {
-      return res.json(feeWorkflowResult.response);
+      let waitpointCleanupError = null;
+      try {
+        await feeWorkflowService.completeFeeProposalWaitpoint(proposal, humanDecision);
+      } catch (error) {
+        waitpointCleanupError = error;
+        logger.warn('Failed to complete fee workflow waitpoint after parking case', {
+          proposalId,
+          caseId,
+          action,
+          error: error.message,
+        });
+      }
+
+      return res.json({
+        ...feeWorkflowResult.response,
+        ...(waitpointCleanupError ? { waitpoint_cleanup_error: waitpointCleanupError.message } : {}),
+      });
     }
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
