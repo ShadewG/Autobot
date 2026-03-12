@@ -296,6 +296,15 @@ export interface CaseAgency {
   last_portal_status?: string | null;
   portal_request_number?: string | null;
   email_thread_id?: number | null;
+  portal_automation_decision?: 'allow' | 'review' | 'block' | null;
+  portal_automation_status?: 'trusted' | 'auto_supported' | 'blocked' | 'needs_confirmation' | 'invalid' | null;
+  portal_automation_reason?: string | null;
+  portal_automation_source?: string | null;
+  portal_automation_policy_status?: 'trusted' | 'blocked' | null;
+  portal_automation_fingerprint?: string | null;
+  portal_automation_decided_at?: string | null;
+  portal_automation_success_count?: number;
+  portal_automation_failure_count?: number;
 }
 
 export interface AgencyCandidate {
