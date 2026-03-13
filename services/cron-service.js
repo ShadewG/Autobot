@@ -126,6 +126,7 @@ class CronService {
         portalStatusMonitoring:  100021,
         staleInboundRecovery:    100023,
         staleProposalRecovery:   100024,
+        staleReprocessRecovery:  100025,
     };
 
     constructor() {
@@ -804,6 +805,19 @@ class CronService {
             });
         }, null, true, 'America/New_York');
 
+        this.jobs.staleReprocessRecovery = new CronJob('11,21,31,41,51 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.staleReprocessRecovery, async () => {
+                try {
+                    const result = await this.runWithoutOverlap('stale_reprocess_recovery', () => this.runStaleReprocessRecoverySweep());
+                    if (result && (result.retried > 0 || result.failed > 0)) {
+                        console.log(`[stale-reprocess-recovery] scanned=${result.scanned} retried=${result.retried} failed=${result.failed}`);
+                    }
+                } catch (error) {
+                    console.error('Error in stale reprocess recovery cron:', error);
+                }
+            });
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 min (:00,:05,:10,...)');
@@ -820,6 +834,7 @@ class CronService {
         console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
         console.log('✓ Stale inbound recovery: ~10 min (:02,:12,:22,...)');
         console.log('✓ Stale proposal recovery: ~10 min (:08,:18,:28,...)');
+        console.log('✓ Stale reprocess recovery: ~10 min (:11,:21,:31,...)');
         if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
             console.log('✓ Portal status monitoring: Every 6 hours');
         } else {
@@ -2599,6 +2614,141 @@ class CronService {
 
     async runStaleProposalRecoverySweep({ minAgeMinutes = 15, limit = 25 } = {}) {
         return staleProposalRecoveryService.runStaleProposalRecoverySweep({ minAgeMinutes, limit });
+    }
+
+    async runStaleReprocessRecoverySweep({ minAgeMinutes = 15, limit = 25 } = {}) {
+        const result = await db.query(`
+            WITH latest_inbound AS (
+                SELECT DISTINCT ON (m.case_id)
+                    m.case_id,
+                    m.id AS message_id,
+                    COALESCE(m.received_at, m.created_at) AS inbound_at
+                FROM messages m
+                WHERE m.case_id IS NOT NULL
+                  AND m.direction = 'inbound'
+                ORDER BY m.case_id, COALESCE(m.received_at, m.created_at) DESC, m.id DESC
+            ),
+            active_proposals AS (
+                SELECT case_id, COUNT(*)::int AS proposal_count
+                FROM proposals
+                WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                GROUP BY case_id
+            ),
+            active_runs AS (
+                SELECT case_id, COUNT(*)::int AS run_count
+                FROM agent_runs
+                WHERE status IN ('created', 'queued', 'running', 'paused', 'waiting', 'processing')
+                GROUP BY case_id
+            )
+            SELECT
+                c.id AS case_id,
+                c.autopilot_mode,
+                c.substatus,
+                li.message_id,
+                li.inbound_at
+            FROM cases c
+            JOIN latest_inbound li ON li.case_id = c.id
+            LEFT JOIN active_proposals ap ON ap.case_id = c.id
+            LEFT JOIN active_runs ar ON ar.case_id = c.id
+            WHERE (
+                    c.substatus ILIKE 'Reset to inbound %; reprocessing'
+                 OR c.substatus ILIKE 'Resolving: reprocess%'
+                  )
+              AND COALESCE(ap.proposal_count, 0) = 0
+              AND COALESCE(ar.run_count, 0) = 0
+              AND li.inbound_at < NOW() - ($1::text || ' minutes')::interval
+            ORDER BY li.inbound_at ASC
+            LIMIT $2
+        `, [String(minAgeMinutes), limit]);
+
+        const summary = {
+            scanned: result.rows.length,
+            retried: 0,
+            failed: 0,
+            details: [],
+        };
+
+        for (const row of result.rows) {
+            try {
+                await db.query(
+                    `UPDATE messages
+                     SET processed_at = NULL,
+                         processed_run_id = NULL,
+                         last_error = NULL
+                     WHERE id = $1`,
+                    [row.message_id]
+                );
+
+                await db.query(
+                    `UPDATE cases
+                     SET status = 'awaiting_response',
+                         requires_human = false,
+                         pause_reason = NULL,
+                         substatus = $2,
+                         updated_at = NOW()
+                     WHERE id = $1`,
+                    [row.case_id, `Recovered stale reprocess for inbound #${row.message_id}; requeueing`]
+                );
+
+                const run = await db.createAgentRunFull({
+                    case_id: row.case_id,
+                    trigger_type: 'stale_reprocess_recovery',
+                    message_id: row.message_id,
+                    status: 'queued',
+                    autopilot_mode: row.autopilot_mode || 'SUPERVISED',
+                    langgraph_thread_id: `stale-reprocess:${row.case_id}:msg-${row.message_id}:${Date.now()}`,
+                    metadata: { source: 'stale_reprocess_recovery' },
+                });
+
+                await triggerDispatch.triggerTask('process-inbound', {
+                    runId: run.id,
+                    caseId: row.case_id,
+                    messageId: row.message_id,
+                    autopilotMode: row.autopilot_mode || 'SUPERVISED',
+                    triggerType: 'STALE_REPROCESS_RECOVERY',
+                }, {
+                    queue: `case-${row.case_id}`,
+                    idempotencyKey: `stale-reprocess-recovery:${row.case_id}:${row.message_id}:${run.id}`,
+                    idempotencyKeyTTL: '1h',
+                }, {
+                    runId: run.id,
+                    caseId: row.case_id,
+                    triggerType: 'stale_reprocess_recovery',
+                    source: 'stale_reprocess_recovery',
+                });
+
+                await db.logActivity(
+                    'stale_reprocess_retriggered',
+                    `Re-triggered stale reprocess for inbound #${row.message_id}`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        run_id: run.id,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                    }
+                );
+
+                summary.retried += 1;
+                summary.details.push({ caseId: row.case_id, messageId: row.message_id, outcome: 'retried', runId: run.id });
+            } catch (error) {
+                summary.failed += 1;
+                summary.details.push({ caseId: row.case_id, messageId: row.message_id, outcome: 'failed', error: error.message });
+                await db.logActivity(
+                    'stale_reprocess_retrigger_failed',
+                    `Failed to recover stale reprocess for inbound #${row.message_id}: ${error.message}`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                        error: error.message,
+                    }
+                );
+            }
+        }
+
+        return summary;
     }
 
     /**
