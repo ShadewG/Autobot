@@ -10,8 +10,8 @@ import { formatDateTime, cn, cleanEmailBody } from "@/lib/utils";
 import {
   Mail, Globe, Phone, Truck, FileText, FileCode, Loader2,
   Paperclip, Download, ExternalLink, ChevronDown, ChevronRight,
-  Send, DollarSign, Scale, RotateCcw, Search, AlertTriangle,
-  Bot,
+  Send, DollarSign, Scale, RotateCcw, Search, AlertTriangle, Play,
+  Bot, Activity, CheckCircle, Clock,
 } from "lucide-react";
 
 // ── Message type config ─────────────────────────────────────────────────────
@@ -149,6 +149,62 @@ const PORTAL_STATUS_STYLE: MessageStyle = {
   bgColor: "bg-teal-500/5",
   labelColor: "text-teal-400",
 };
+
+function humanizePortalValue(value: string | null | undefined, fallback = "Unknown") {
+  const normalized = String(value || "").trim();
+  if (!normalized) return fallback;
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getPortalStatusTone(status: string | null | undefined) {
+  const normalized = String(status || "").toLowerCase();
+  if (
+    normalized.includes("filled")
+    || normalized === "completed"
+    || normalized === "success"
+    || normalized === "succeeded"
+    || normalized.includes("confirmation")
+  ) {
+    return {
+      badgeClass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      accentClass: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      Icon: CheckCircle,
+    };
+  }
+  if (
+    normalized.includes("failed")
+    || normalized.includes("blocked")
+    || normalized.includes("captcha")
+    || normalized === "error"
+  ) {
+    return {
+      badgeClass: "border-red-500/30 bg-red-500/10 text-red-300",
+      accentClass: "border-red-500/30 bg-red-500/10 text-red-300",
+      Icon: AlertTriangle,
+    };
+  }
+  if (
+    normalized.includes("running")
+    || normalized.includes("progress")
+    || normalized.includes("queued")
+    || normalized.includes("pending")
+  ) {
+    return {
+      badgeClass: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+      accentClass: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+      Icon: Loader2,
+    };
+  }
+  return {
+    badgeClass: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    accentClass: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    Icon: Clock,
+  };
+}
 
 const INBOUND_DEFAULT: MessageStyle = {
   label: "Email",
@@ -308,7 +364,7 @@ function AttachmentList({ attachments }: { attachments: ThreadMessage["attachmen
       {attachments.map((att, i) => {
         const isPdf = att.content_type === "application/pdf" || att.filename?.toLowerCase().endsWith(".pdf");
         const isImage = att.content_type?.startsWith("image/");
-        const downloadUrl = `/api/monitor/attachments/${att.id}/download`;
+        const downloadUrl = att.url || `/api/monitor/attachments/${att.id}/download`;
         const sizeLabel = att.size_bytes
           ? att.size_bytes > 1024 * 1024
             ? `${(att.size_bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -361,12 +417,293 @@ function AttachmentList({ attachments }: { attachments: ThreadMessage["attachmen
                 </pre>
               </div>
             )}
+            {isImage && att.url && (
+              <div className="ml-6 mt-2">
+                <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="block w-fit">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={downloadUrl}
+                    alt={att.filename || "Portal screenshot"}
+                    className="max-h-40 rounded border border-border/40 bg-muted/20 object-contain"
+                  />
+                </a>
+              </div>
+            )}
           </div>
         );
       })}
     </div>
   );
 }
+
+type PortalMessageMetadata = {
+  portal_url?: string | null;
+  portal_task_url?: string | null;
+  portal_request_number?: string | null;
+  engine?: string | null;
+  status?: string | null;
+  account_email?: string | null;
+  screenshot_url?: string | null;
+  recording_url?: string | null;
+  browser_backend?: string | null;
+  browser_session_id?: string | null;
+  browser_session_url?: string | null;
+  browser_debugger_url?: string | null;
+  browser_debugger_fullscreen_url?: string | null;
+  browser_region?: string | null;
+  browser_status?: string | null;
+  error_message?: string | null;
+  extracted_data?: Record<string, unknown> | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  screenshot_count?: number | null;
+};
+
+function getPortalMetadata(message: ThreadMessage): PortalMessageMetadata {
+  const metadata = message.metadata && typeof message.metadata === "object"
+    ? message.metadata
+    : {};
+
+  return {
+    portal_url: typeof metadata.portal_url === "string" ? metadata.portal_url : null,
+    portal_task_url: typeof metadata.portal_task_url === "string" ? metadata.portal_task_url : null,
+    portal_request_number: typeof metadata.portal_request_number === "string" ? metadata.portal_request_number : null,
+    engine: typeof metadata.engine === "string" ? metadata.engine : null,
+    status: typeof metadata.status === "string" ? metadata.status : message.portal_notification_type || null,
+    account_email: typeof metadata.account_email === "string" ? metadata.account_email : null,
+    screenshot_url: typeof metadata.screenshot_url === "string" ? metadata.screenshot_url : null,
+    recording_url: typeof metadata.recording_url === "string" ? metadata.recording_url : null,
+    browser_backend: typeof metadata.browser_backend === "string" ? metadata.browser_backend : null,
+    browser_session_id: typeof metadata.browser_session_id === "string" ? metadata.browser_session_id : null,
+    browser_session_url: typeof metadata.browser_session_url === "string" ? metadata.browser_session_url : null,
+    browser_debugger_url: typeof metadata.browser_debugger_url === "string" ? metadata.browser_debugger_url : null,
+    browser_debugger_fullscreen_url: typeof metadata.browser_debugger_fullscreen_url === "string" ? metadata.browser_debugger_fullscreen_url : null,
+    browser_region: typeof metadata.browser_region === "string" ? metadata.browser_region : null,
+    browser_status: typeof metadata.browser_status === "string" ? metadata.browser_status : null,
+    error_message: typeof metadata.error_message === "string" ? metadata.error_message : null,
+    extracted_data: metadata.extracted_data && typeof metadata.extracted_data === "object"
+      ? metadata.extracted_data as Record<string, unknown>
+      : null,
+    started_at: typeof metadata.started_at === "string" ? metadata.started_at : null,
+    completed_at: typeof metadata.completed_at === "string" ? metadata.completed_at : null,
+    screenshot_count: typeof metadata.screenshot_count === "number" ? metadata.screenshot_count : null,
+  };
+}
+
+const PortalScreenshotPreview = memo(function PortalScreenshotPreview({
+  imageUrl,
+  filename,
+  extraCount = 0,
+}: {
+  imageUrl: string;
+  filename: string;
+  extraCount?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <span className="text-[10px] text-muted-foreground">Screenshot unavailable</span>
+    );
+  }
+
+  return (
+    <a
+      href={imageUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group relative block overflow-hidden rounded-xl border border-border/60 bg-black/20"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={imageUrl}
+        alt={filename || "Portal screenshot"}
+        className="h-36 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+        onError={() => setFailed(true)}
+      />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent p-2">
+        <div className="flex items-center justify-between gap-2 text-[11px] text-white/90">
+          <span className="truncate font-medium">{filename || "Portal screenshot"}</span>
+          <span className="inline-flex items-center gap-1 text-white/70">
+            <ExternalLink className="h-3 w-3" />
+            Open
+          </span>
+        </div>
+        {extraCount > 0 && (
+          <div className="mt-1 text-[10px] text-white/65">
+            +{extraCount} more screenshot{extraCount > 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+    </a>
+  );
+});
+
+function formatExtractedDataInline(data: Record<string, unknown> | null | undefined): string | null {
+  if (!data) return null;
+  const entries = Object.entries(data).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return null;
+  const filled = entries.length;
+  const provider = data.provider || data.portal_provider || null;
+  const pageKind = data.page_kind || data.page_type || null;
+  const total = data.visible_fields || data.total_fields || null;
+  const parts: string[] = [];
+  if (total) {
+    parts.push(`${filled}/${total} fields filled (${Math.round((filled / Number(total)) * 100)}%)`);
+  } else {
+    parts.push(`${filled} field${filled !== 1 ? "s" : ""} captured`);
+  }
+  if (provider) parts.push(String(provider));
+  if (pageKind) parts.push(String(pageKind));
+  return parts.join(" · ");
+}
+
+const PortalMessageCard = memo(function PortalMessageCard({
+  message,
+}: {
+  message: ThreadMessage;
+}) {
+  const metadata = getPortalMetadata(message);
+  const liveUrl = metadata.browser_debugger_url || metadata.browser_debugger_fullscreen_url || null;
+  const screenshotAttachments = (message.attachments || []).filter((att) => att.content_type?.startsWith("image/"));
+  const primaryScreenshot = screenshotAttachments[0] || null;
+  const primaryScreenshotUrl = primaryScreenshot?.url || metadata.screenshot_url || null;
+  const primaryScreenshotName = primaryScreenshot?.filename || "Portal screenshot";
+  const detailRows = [
+    { label: "Engine", value: humanizePortalValue(metadata.engine, "Automation") },
+    { label: "Backend", value: humanizePortalValue(metadata.browser_backend, "Browser") },
+    { label: "Account", value: metadata.account_email || "Not captured" },
+    { label: "Request #", value: metadata.portal_request_number || "Pending" },
+  ].filter((item) => item.value && item.value !== "Not captured" ? true : item.label !== "Account");
+  const tone = getPortalStatusTone(metadata.status || message.summary || message.subject);
+  const ToneIcon = tone.Icon;
+  const summary = message.summary || message.body || "Portal automation activity recorded.";
+  const runTime = metadata.completed_at || metadata.started_at || message.sent_at;
+  const extractedInline = formatExtractedDataInline(metadata.extracted_data);
+
+  return (
+    <div className="w-full overflow-hidden">
+      {/* Compact single-line header: status badge + summary + time + recording */}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+        <Globe className="h-3 w-3 text-cyan-400" />
+        <Badge variant="outline" className={cn("gap-1 text-[10px] font-medium shrink-0", tone.badgeClass)}>
+          <ToneIcon className={cn("h-3 w-3", ToneIcon === Loader2 && "animate-spin")} />
+          {humanizePortalValue(metadata.status || "Status update")}
+        </Badge>
+        <span className="truncate min-w-0">{summary}</span>
+        {extractedInline && (
+          <span className="shrink-0 text-[10px] text-emerald-300">{extractedInline}</span>
+        )}
+        <span className="shrink-0">•</span>
+        <span className="shrink-0 whitespace-nowrap">{formatDateTime(runTime)}</span>
+        {metadata.recording_url && (
+          <a
+            href={metadata.recording_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/20"
+          >
+            <Play className="h-2.5 w-2.5" />
+            Recording
+          </a>
+        )}
+      </div>
+
+      {/* Error message always visible */}
+      {metadata.error_message && (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200 mb-1">
+          <div className="mb-1 flex items-center gap-1 font-medium">
+            <AlertTriangle className="h-3 w-3" />
+            Run issue
+          </div>
+          <LinkifiedText text={metadata.error_message} className="whitespace-pre-wrap break-words" />
+        </div>
+      )}
+
+      {/* Collapsed details: grid, links, screenshot, run details */}
+      <details className="rounded-lg border border-white/5 bg-black/15 px-3 py-1.5 text-xs text-muted-foreground">
+        <summary className="cursor-pointer select-none text-[11px] font-medium text-foreground/80">
+          Details
+        </summary>
+        <div className="mt-2 space-y-3">
+          {/* Links */}
+          <div className="flex flex-wrap items-center gap-2">
+            {metadata.recording_url && (
+              <a href={metadata.recording_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/20">
+                <Play className="h-3 w-3" /> Recording
+              </a>
+            )}
+            {metadata.browser_session_url && (
+              <a href={metadata.browser_session_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 hover:border-cyan-400/30 hover:text-cyan-200">
+                <Activity className="h-3 w-3" /> Session
+              </a>
+            )}
+            {metadata.portal_url && (
+              <a href={metadata.portal_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 hover:border-cyan-400/30 hover:text-cyan-200">
+                <ExternalLink className="h-3 w-3" /> Portal
+              </a>
+            )}
+            {liveUrl && (
+              <a href={liveUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 hover:border-cyan-400/30 hover:text-cyan-200">
+                <Play className="h-3 w-3" /> Live
+              </a>
+            )}
+            {primaryScreenshotUrl && (
+              <a href={primaryScreenshotUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 hover:border-cyan-400/30 hover:text-cyan-200">
+                <Download className="h-3 w-3" /> Screenshot
+              </a>
+            )}
+          </div>
+
+          {/* Detail grid */}
+          {detailRows.length > 0 && (
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {detailRows.map((item) => (
+                <div key={item.label} className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{item.label}</div>
+                  <div className="mt-1 truncate text-sm font-medium text-foreground/90" title={item.value}>
+                    {item.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Screenshot preview */}
+          {primaryScreenshotUrl && (
+            <PortalScreenshotPreview
+              imageUrl={primaryScreenshotUrl}
+              filename={primaryScreenshotName}
+              extraCount={Math.max(0, screenshotAttachments.length - 1)}
+            />
+          )}
+
+          {/* Run details */}
+          {metadata.portal_task_url && (
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Automation run</div>
+              <a href={metadata.portal_task_url} target="_blank" rel="noopener noreferrer"
+                className="break-all text-blue-400 hover:underline">
+                {metadata.portal_task_url}
+              </a>
+            </div>
+          )}
+          {message.body && (
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Notes</div>
+              <LinkifiedText text={message.body} className="whitespace-pre-wrap break-words text-foreground/80" />
+            </div>
+          )}
+        </div>
+      </details>
+    </div>
+  );
+});
 
 // ── Message Bubble ──────────────────────────────────────────────────────────
 
@@ -594,17 +931,19 @@ export function Thread({ messages, maxHeight, canonicalPortalUrl, canonicalAgenc
       <ScrollArea className={cn(isFullHeight ? "flex-1 min-h-0" : (maxHeight || "h-[400px]"), "w-full")}>
         <div className="space-y-4 pr-2 w-full">
           {[...messages].reverse().map((message) => (
-            message.channel === "CALL"
-              ? <PhoneCallBubble key={message.id} message={message} />
-              : (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  showRaw={showRaw}
-                  canonicalPortalUrl={canonicalPortalUrl}
-                  canonicalAgencyName={canonicalAgencyName}
-                />
-              )
+            message.channel === "CALL" ? (
+              <PhoneCallBubble key={message.id} message={message} />
+            ) : message.channel === "PORTAL" ? (
+              <PortalMessageCard key={message.id} message={message} />
+            ) : (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                showRaw={showRaw}
+                canonicalPortalUrl={canonicalPortalUrl}
+                canonicalAgencyName={canonicalAgencyName}
+              />
+            )
           ))}
         </div>
       </ScrollArea>

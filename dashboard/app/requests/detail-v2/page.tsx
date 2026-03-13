@@ -678,6 +678,12 @@ function PortalSubmissionScreenshot({
 
   if (!url) return null;
 
+  if (failed) {
+    return (
+      <div className="text-[11px] text-muted-foreground">Screenshot unavailable</div>
+    );
+  }
+
   return (
     <a
       href={url}
@@ -685,28 +691,16 @@ function PortalSubmissionScreenshot({
       rel="noopener noreferrer"
       className="group relative block overflow-hidden rounded-2xl border border-border/60 bg-black/30"
     >
-      {!failed ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={url}
-            alt={alt}
-            className="h-44 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-            onError={() => setFailed(true)}
-          />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 text-xs text-white/85">
-            Portal screenshot
-          </div>
-        </>
-      ) : (
-        <div className="flex h-44 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
-          <Paperclip className="h-4 w-4" />
-          <div>
-            <div className="font-medium text-foreground/80">Screenshot unavailable</div>
-            <div>The stored image link is no longer valid.</div>
-          </div>
-        </div>
-      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={alt}
+        className="h-44 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+        onError={() => setFailed(true)}
+      />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 text-xs text-white/85">
+        Portal screenshot
+      </div>
     </a>
   );
 }
@@ -961,11 +955,25 @@ function PortalSubmissionCard({
     { label: "Account", value: submission.account_email || "Not captured" },
     { label: "Region", value: humanizePortalLabel(submission.browser_region, "n/a") },
   ];
-  const extractedPreview = submission.extracted_data && typeof submission.extracted_data === "object"
-    ? Object.entries(submission.extracted_data)
-        .filter(([, value]) => value !== null && value !== undefined && value !== "")
-        .slice(0, 4)
-    : [];
+  const extractedInline = (() => {
+    if (!submission.extracted_data || typeof submission.extracted_data !== "object") return null;
+    const entries = Object.entries(submission.extracted_data).filter(([, v]) => v !== null && v !== undefined && v !== "");
+    if (entries.length === 0) return null;
+    const filled = entries.length;
+    const data = submission.extracted_data as Record<string, unknown>;
+    const provider = data.provider || data.portal_provider || null;
+    const pageKind = data.page_kind || data.page_type || null;
+    const total = data.visible_fields || data.total_fields || null;
+    const parts: string[] = [];
+    if (total) {
+      parts.push(`Filled ${filled}/${total} fields (${Math.round((filled / Number(total)) * 100)}%)`);
+    } else {
+      parts.push(`${filled} field${filled !== 1 ? "s" : ""} captured`);
+    }
+    if (provider) parts.push(String(provider));
+    if (pageKind) parts.push(String(pageKind));
+    return parts.join(" · ");
+  })();
 
   return (
     <div className="rounded-2xl border border-border/60 bg-[linear-gradient(180deg,rgba(14,20,24,0.96),rgba(8,12,15,0.98))] p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
@@ -992,15 +1000,15 @@ function PortalSubmissionCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {submission.screenshot_url && (
+          {submission.recording_url && (
             <a
-              href={submission.screenshot_url}
+              href={submission.recording_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
+              className="inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-200 transition-colors hover:bg-cyan-500/20"
             >
-              <ExternalLink className="h-3 w-3" />
-              Screenshot
+              <Play className="h-3 w-3" />
+              Recording
             </a>
           )}
           {submission.browser_session_url && (
@@ -1025,15 +1033,15 @@ function PortalSubmissionCard({
               Live
             </a>
           )}
-          {submission.recording_url && (
+          {submission.screenshot_url && (
             <a
-              href={submission.recording_url}
+              href={submission.screenshot_url}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
             >
               <ExternalLink className="h-3 w-3" />
-              Recording
+              Screenshot
             </a>
           )}
           {submission.browser_session_id && (
@@ -1140,14 +1148,9 @@ function PortalSubmissionCard({
         </div>
       )}
 
-      {extractedPreview.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {extractedPreview.map(([key, value]) => (
-            <div key={key} className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200">
-              <span className="mr-1 text-emerald-100/70">{humanizePortalLabel(key)}</span>
-              <span className="font-medium">{String(value)}</span>
-            </div>
-          ))}
+      {extractedInline && (
+        <div className="mt-4 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200 w-fit">
+          {extractedInline}
         </div>
       )}
 
@@ -3622,6 +3625,17 @@ function DetailV2Content() {
 
               {/* Thread (flex-1, fills remaining space) */}
               <div className="flex-1 min-h-0 overflow-hidden">
+                {(() => {
+                  const sub = (request.substatus || "").toLowerCase();
+                  if (sub.includes("portal fail") || sub.includes("fallback")) {
+                    return (
+                      <div className="mx-3 mb-2 rounded border border-orange-600/40 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-200">
+                        Email fallback to {request.agency_email || "agency"} (portal failed)
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
                 {hasRecordedSubmissionWithoutThread && (
                   <div className="mx-3 mb-2 rounded border border-amber-700/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
                     No email thread is stored for this case. The request was already submitted on{" "}
@@ -3659,6 +3673,7 @@ function DetailV2Content() {
                       String(proposal.status || "").toUpperCase() === "DECISION_RECEIVED";
                     // Resolve per-proposal recipient for display
                     const proposalRecipient = draft.editedRecipient || originalRecipient;
+                    const proposalFieldIdBase = `proposal-${proposal.id}`;
 
                     return (
                       <div key={proposal.id} className="px-3 py-3 space-y-2">
@@ -3690,6 +3705,8 @@ function DetailV2Content() {
                               <div className="flex items-center gap-1.5">
                                 <span className="text-[10px] text-muted-foreground font-medium shrink-0">To:</span>
                                 <input
+                                  id={`${proposalFieldIdBase}-recipient`}
+                                  name={`${proposalFieldIdBase}-recipient`}
                                   className="flex-1 bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
                                   value={proposalRecipient}
                                   onChange={(e) => setDraft(proposal.id, { editedRecipient: e.target.value })}
@@ -3698,6 +3715,8 @@ function DetailV2Content() {
                               </div>
                               {(proposal.draft_subject || draft.editedSubject) && (
                                 <input
+                                  id={`${proposalFieldIdBase}-subject`}
+                                  name={`${proposalFieldIdBase}-subject`}
                                   className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
                                   value={draft.editedSubject}
                                   onChange={(e) => setDraft(proposal.id, { editedSubject: e.target.value })}
@@ -3705,6 +3724,8 @@ function DetailV2Content() {
                                 />
                               )}
                               <textarea
+                                id={`${proposalFieldIdBase}-body`}
+                                name={`${proposalFieldIdBase}-body`}
                                 className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
                                 rows={8}
                                 value={draft.editedBody}
@@ -3795,6 +3816,8 @@ function DetailV2Content() {
                                   </div>
                                   {proposal.action_chain[1].draftSubject && (
                                     <input
+                                      id={`${proposalFieldIdBase}-chain-subject`}
+                                      name={`${proposalFieldIdBase}-chain-subject`}
                                       className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
                                       value={draft.editedChainSubject}
                                       onChange={(e) => setDraft(proposal.id, { editedChainSubject: e.target.value })}
@@ -3802,6 +3825,8 @@ function DetailV2Content() {
                                     />
                                   )}
                                   <textarea
+                                    id={`${proposalFieldIdBase}-chain-body`}
+                                    name={`${proposalFieldIdBase}-chain-body`}
                                     className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
                                     rows={4}
                                     value={draft.editedChainBody}
@@ -4080,18 +4105,24 @@ function DetailV2Content() {
                     {/* Add Agency form */}
                     <div className="space-y-2 rounded border border-dashed border-border/60 p-2">
                       <Input
+                        id="manual-agency-name"
+                        name="manual-agency-name"
                         placeholder="Agency name"
                         value={manualAgencyName}
                         onChange={(e) => setManualAgencyName(e.target.value)}
                         className="h-7 text-xs"
                       />
                       <Input
+                        id="manual-agency-email"
+                        name="manual-agency-email"
                         placeholder="Email (optional)"
                         value={manualAgencyEmail}
                         onChange={(e) => setManualAgencyEmail(e.target.value)}
                         className="h-7 text-xs"
                       />
                       <Input
+                        id="manual-agency-portal-url"
+                        name="manual-agency-portal-url"
                         placeholder="Portal URL (optional)"
                         value={manualAgencyPortalUrl}
                         onChange={(e) => setManualAgencyPortalUrl(e.target.value)}
