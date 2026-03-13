@@ -100,6 +100,12 @@ const GATE_CONFIG: Record<PauseReason, GateConfig> = {
     bgColor: "bg-orange-500/15",
     textColor: "text-orange-300",
   },
+  PORTAL_AUTH_INTERVENTION_REQUIRED: {
+    label: "Portal Auth Needed",
+    icon: <UserCheck className="h-3.5 w-3.5" />,
+    bgColor: "bg-cyan-500/15",
+    textColor: "text-cyan-300",
+  },
   escalated: {
     label: "Escalated",
     icon: <Phone className="h-3.5 w-3.5" />,
@@ -183,6 +189,7 @@ export const GATE_TYPE_LABELS: Record<PauseReason, string> = {
   email_send_failed: "Email Failed",
   portal_failed: "Portal Failed",
   portal_timed_out: "Portal Timeout",
+  PORTAL_AUTH_INTERVENTION_REQUIRED: "Portal Auth Needed",
   escalated: "Escalated",
   agent_run_failed: "Agent Error",
   stuck_portal_task: "Portal Stuck",
