@@ -42,6 +42,44 @@ function collapseDuplicateClosingBlocks(text: string | null | undefined): string
   return lines.slice(0, secondClosingIdx).join("\n").trim();
 }
 
+function buildResearchHandoffDraft(caseData: any, reasoning: any, fallbackCaseName: string) {
+  const label = String(
+    caseData?.agency_name
+    || caseData?.subject_name
+    || caseData?.case_name
+    || fallbackCaseName
+  ).trim();
+
+  const lines = Array.isArray(reasoning)
+    ? reasoning
+        .map((entry) => {
+          if (!entry) return "";
+          if (typeof entry === "string") return entry.trim();
+          if (typeof entry === "object") return String(entry.detail || entry.summary || entry.step || "").trim();
+          return String(entry).trim();
+        })
+        .filter(Boolean)
+    : [];
+
+  const bullets = lines.slice(0, 4).map((line) => `- ${line}`);
+  if (bullets.length === 0) {
+    bullets.push("- Research completed, but a verified delivery path was not found.");
+  }
+
+  return {
+    subject: `Research handoff needed: ${label}`,
+    bodyText: [
+      `Research handoff required for ${label}.`,
+      "",
+      "What the system found:",
+      ...bullets,
+      "",
+      "Next step:",
+      "Review the suggested redirect target, add a verified portal/email/contact if you have one, or retry research with better clues.",
+    ].join("\n"),
+  };
+}
+
 export async function draftResponse(
   caseId: number,
   actionType: ActionType,
@@ -404,6 +442,7 @@ export async function draftResponse(
         lessonsContext,
         examplesContext,
         correspondenceContext,
+        statusInquiry: true,
       });
       break;
     }
@@ -426,9 +465,16 @@ export async function draftResponse(
       if (existingReferral) {
         // Referral data already present from research step — don't overwrite
         logger.info("Using existing referral data for RESEARCH_AGENCY draft", { caseId });
+        const researchDraft = buildResearchHandoffDraft(
+          caseData,
+          existingReferral.brief?.suggested_agencies?.map((agency: any) => agency?.reason || agency?.name).filter(Boolean)
+            || existingReferral.brief?.reasoning
+            || [],
+          caseData.case_name || `case ${caseId}`
+        );
         return {
-          subject: null,
-          bodyText: null,
+          subject: researchDraft.subject,
+          bodyText: researchDraft.bodyText,
           bodyHtml: null,
           lessonsApplied,
           researchContactResult: existingReferral.contactResult,
@@ -488,9 +534,18 @@ export async function draftResponse(
         contact_research_notes: JSON.stringify({ contactResult, brief }),
         last_contact_research_at: new Date(),
       });
+      const researchDraft = buildResearchHandoffDraft(
+        caseData,
+        brief?.reasoning || [
+          brief?.researchFailed
+            ? "Automated research did not find a verified delivery path."
+            : "Research completed, but no verified delivery path was found.",
+        ],
+        caseData.case_name || `case ${caseId}`
+      );
       return {
-        subject: null,
-        bodyText: null,
+        subject: researchDraft.subject,
+        bodyText: researchDraft.bodyText,
         bodyHtml: null,
         lessonsApplied,
         researchContactResult: contactResult,

@@ -219,6 +219,46 @@ describe('AI service request strategy path', function () {
     assert.match(draft.body_text, /case number or another specific identifier/i);
   });
 
+  it('sanitizes status-update drafts so they do not echo security keys or requester phone numbers', async function () {
+    sinon.stub(aiService, 'callAI').resolves({
+      text: [
+        'Hello Records Custodian,',
+        '',
+        'I am writing to confirm receipt of my request.',
+        'Your request reference number is PRR-2025-1168 and your security key is DCC5EBE0.',
+        'Please have both reference numbers available when communicating with our staff regarding your request.',
+        '',
+        'Thank you,',
+        'Thank you,',
+      ].join('\n'),
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'Florida', response_days: 10 });
+
+    const draft = await aiService.generateFollowUp(
+      {
+        case_name: 'Herschol Howell',
+        subject_name: 'Herschol Howell',
+        agency_name: "Santa Rosa County Sheriff's Office",
+        send_date: '2026-02-17',
+        state: 'FL',
+      },
+      0,
+      { statusInquiry: true }
+    );
+
+    assert.doesNotMatch(draft.body_text, /security key/i);
+    assert.doesNotMatch(draft.body_text, /209-800-7702/);
+    assert.doesNotMatch(draft.body_text, /Please have both reference numbers available/i);
+    assert.match(draft.body_text, /Hello Records Custodian,/);
+    assert.strictEqual((draft.body_text.match(/Thank you,/g) || []).length, 1);
+  });
+
   it('does not write adaptive learning outcomes anymore', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
 

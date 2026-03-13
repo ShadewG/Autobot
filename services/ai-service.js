@@ -338,6 +338,25 @@ class AIService {
         return rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trim();
     }
 
+    sanitizeStatusInquiryDraft(text) {
+        if (!text) return text;
+
+        let result = String(text);
+
+        // JustFOIA/GovQA status inquiries should not echo back portal security keys.
+        result = result.replace(/\bsecurity key\b[^.\n]*[.\n]?/gi, '');
+        result = result.replace(/please have (?:both )?reference numbers? available[^.\n]*[.\n]?/gi, '');
+        result = result.replace(/please have this security key and reference number available[^.\n]*[.\n]?/gi, '');
+
+        // Remove duplicated closings that often appear in follow-up generations.
+        result = result.replace(/(?:\n\s*thank you,\s*){2,}/gi, '\nThank you,\n');
+
+        return result
+            .replace(/[ \t]{2,}/g, ' ')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
     /**
      * Strip quoted reply history from email bodies
      */
@@ -1864,7 +1883,13 @@ Respond with JSON ONLY.`;
     async generateFollowUp(caseData, followUpCount = 0, options = {}) {
         try {
             console.log(`Generating follow-up #${followUpCount + 1} for case: ${caseData.case_name}`);
-            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext } = options;
+            const {
+                adjustmentInstruction,
+                lessonsContext,
+                examplesContext,
+                correspondenceContext,
+                statusInquiry = false,
+            } = options;
 
             const tone = followUpCount === 0 ? 'polite and professional' : 'firm but professional';
             const stateDeadline = await db.getStateDeadline(caseData.state);
@@ -1902,9 +1927,15 @@ Return ONLY the email body text.`;
                 `${responseHandlingPrompts.followUpSystemPrompt}\n\n${prompt}`,
                 { effort: 'medium', includeMetadata: true }
             );
-            const bodyText = followupResult.text;
+            const bodyText = statusInquiry
+                ? this.sanitizeStatusInquiryDraft(followupResult.text)
+                : followupResult.text;
             const userSignature = await this.getUserSignatureForCase(caseData);
-            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, {
+                includeEmail: false,
+                includeAddress: false,
+                includePhone: !statusInquiry,
+            });
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
