@@ -65,6 +65,19 @@ function buildBrowserbaseSessionUrl(sessionId) {
     return sessionId ? `${BROWSERBASE_SESSION_URL_PREFIX}${sessionId}` : null;
 }
 
+function isBrowserbaseQuotaErrorMessage(message) {
+    const haystack = normalizeText(message);
+    if (!haystack) return false;
+    return (
+        haystack.includes('browser minutes limit reached') ||
+        haystack.includes('credits remaining') ||
+        haystack.includes('low on credits') ||
+        (haystack.includes('402') && haystack.includes('browserbase')) ||
+        (haystack.includes('402') && haystack.includes('upgrade your account')) ||
+        haystack.includes('free plan browser minutes limit reached')
+    );
+}
+
 function parseCsvSet(value) {
     return new Set(
         String(value || '')
@@ -797,11 +810,26 @@ class PortalAgentServicePlaywright {
                     };
                     continue;
                 }
+                if (isBrowserbaseQuotaErrorMessage(message)) {
+                    const quotaError = new Error(message);
+                    quotaError.code = 'BROWSERBASE_QUOTA_EXHAUSTED';
+                    throw quotaError;
+                }
                 throw error;
             }
         }
 
-        return client.sessions.create(sessionParams);
+        try {
+            return await client.sessions.create(sessionParams);
+        } catch (error) {
+            const message = String(error?.message || error || '');
+            if (isBrowserbaseQuotaErrorMessage(message)) {
+                const quotaError = new Error(message);
+                quotaError.code = 'BROWSERBASE_QUOTA_EXHAUSTED';
+                throw quotaError;
+            }
+            throw error;
+        }
     }
 
     async _installBrowserCostControls(context, browserbaseCostPolicy = {}) {
@@ -1244,8 +1272,11 @@ class PortalAgentServicePlaywright {
             const errorMessage = error?.message || String(error);
             const looksLikeNavigationTimeout = /page\.goto: Timeout|Timeout .*exceeded/i.test(errorMessage);
             const unreachableOnInitialLoad = page && page.url() === 'about:blank' && looksLikeNavigationTimeout;
+            const quotaExhausted = error?.code === 'BROWSERBASE_QUOTA_EXHAUSTED' || isBrowserbaseQuotaErrorMessage(errorMessage);
 
-            summary.status = unreachableOnInitialLoad ? 'blocked_portal_unreachable' : 'error';
+            summary.status = quotaExhausted
+                ? 'quota_exhausted'
+                : (unreachableOnInitialLoad ? 'blocked_portal_unreachable' : 'error');
             summary.error = errorMessage;
             summary.success = false;
             if (page) {
@@ -1264,6 +1295,11 @@ class PortalAgentServicePlaywright {
                 summary.blockers.push({
                     status: 'blocked_portal_unreachable',
                     reason: 'Portal did not establish an initial browser response from this worker',
+                });
+            } else if (quotaExhausted) {
+                summary.blockers.push({
+                    status: 'quota_exhausted',
+                    reason: 'Browserbase browser minutes or credits are exhausted',
                 });
             }
             await this._maybeRunPortalScout(caseData, summary.final_url || normalizedUrl, summary.provider || providerHint, summary, {
@@ -2837,6 +2873,7 @@ service.buildBrowserbaseCostPolicy = buildBrowserbaseCostPolicy;
 service.shouldUseBrowserbaseAuthContext = shouldUseBrowserbaseAuthContext;
 service.buildBrowserbaseProxyPolicy = buildBrowserbaseProxyPolicy;
 service.isBrowserbaseAuthInterventionState = isBrowserbaseAuthInterventionState;
+service.isBrowserbaseQuotaErrorMessage = isBrowserbaseQuotaErrorMessage;
 service.isSupportedPlaywrightUrl = isSupportedPlaywrightUrl;
 service.scoreGovQaRequestLink = scoreGovQaRequestLink;
 service.scoreJustFoiaLaunchLink = scoreJustFoiaLaunchLink;
