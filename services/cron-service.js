@@ -14,6 +14,7 @@ const qualityReportService = require('./quality-report-service');
 const errorTrackingService = require('./error-tracking-service');
 const portalStatusMonitorService = require('./portal-status-monitor-service');
 const feeWorkflowService = require('./fee-workflow-service');
+const staleProposalRecoveryService = require('./stale-proposal-recovery-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const { countsTowardDismissCircuitBreaker } = require('./proposal-lifecycle');
 const { tasks } = require('@trigger.dev/sdk');
@@ -124,6 +125,7 @@ class CronService {
         portalDispatch:          100020,
         portalStatusMonitoring:  100021,
         staleInboundRecovery:    100023,
+        staleProposalRecovery:   100024,
     };
 
     constructor() {
@@ -789,6 +791,19 @@ class CronService {
             });
         }, null, true, 'America/New_York');
 
+        this.jobs.staleProposalRecovery = new CronJob('8,18,28,38,48,58 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.staleProposalRecovery, async () => {
+                try {
+                    const result = await this.runWithoutOverlap('stale_proposal_recovery', () => this.runStaleProposalRecoverySweep());
+                    if (result && (result.recovered > 0 || result.failed > 0)) {
+                        console.log(`[stale-proposal-recovery] scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed}`);
+                    }
+                } catch (error) {
+                    console.error('Error in stale proposal recovery cron:', error);
+                }
+            });
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 5 min (:00,:05,:10,...)');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 min (:00,:05,:10,...)');
@@ -804,6 +819,7 @@ class CronService {
         console.log('✓ Orphan review recovery: ~5 min (:04,:09,:14,...)');
         console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
         console.log('✓ Stale inbound recovery: ~10 min (:02,:12,:22,...)');
+        console.log('✓ Stale proposal recovery: ~10 min (:08,:18,:28,...)');
         if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
             console.log('✓ Portal status monitoring: Every 6 hours');
         } else {
@@ -1460,7 +1476,7 @@ class CronService {
                                     .filter(c => typeof c === 'string' && c.endsWith('_EXEMPT'));
                                 const draft = await aiService.generateDenialRebuttal(
                                     latestInbound, latestAnalysis, caseData,
-                                    { excludeItems: exemptItems, scopeItems: caseData.scope_items_jsonb || [] }
+                                    { excludeItems: exemptItems, scopeItems: caseData.scope_items_jsonb || [], forceDraft: true }
                                 );
                                 draftSubject = draft.subject || `RE: ${latestInbound.subject || 'Public Records Request'}`;
                                 draftBodyText = draft.body_text;
@@ -2579,6 +2595,10 @@ class CronService {
         }
 
         return summary;
+    }
+
+    async runStaleProposalRecoverySweep({ minAgeMinutes = 15, limit = 25 } = {}) {
+        return staleProposalRecoveryService.runStaleProposalRecoverySweep({ minAgeMinutes, limit });
     }
 
     /**
