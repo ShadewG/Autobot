@@ -10,7 +10,7 @@ const {
 } = require('./agent-log-events');
 const { normalizeAgencyEmailHint } = require('./canonical-agency');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
-const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl, classifyRequestChannelUrl, normalizeRequestChannelFields } = require('../utils/portal-utils');
 const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety, extractAgencyNameFromAdditionalDetails, hasCompoundAgencyIdentity, isGenericAgencyLabel, isPlaceholderAgencyEmail } = require('../utils/request-normalization');
 const { normalizeStateCode, parseStateFromAgencyName } = require('../utils/state-utils');
 const dns = require('dns').promises;
@@ -49,7 +49,7 @@ async function validateImportedCase(caseData) {
                 });
             }
         }
-    } else if (!caseData.portal_url) {
+    } else if (!caseData.portal_url && !caseData.manual_request_url && !caseData.pdf_form_url) {
         warnings.push({
             type: 'MISSING_EMAIL',
             message: 'No agency email and no portal URL — case cannot be sent',
@@ -585,7 +585,8 @@ class NotionService {
         const hasSummary = hasMeaningfulImportContent(caseData.additional_details);
         const hasPageNarrative = hasMeaningfulImportContent(options.pageContent || '');
         const hasRequestSignals = hasRequestedRecords || hasSummary || hasPageNarrative;
-        const hasDeliveryPath = Boolean(normalizeNotionText(caseData.agency_email) || normalizeNotionText(caseData.portal_url));
+        const hasAutomatedDeliveryPath = Boolean(normalizeNotionText(caseData.agency_email) || normalizeNotionText(caseData.portal_url));
+        const hasManualRequestPath = Boolean(normalizeNotionText(caseData.manual_request_url) || normalizeNotionText(caseData.pdf_form_url));
 
         if (placeholderTitle) {
             warnings.push({
@@ -609,7 +610,16 @@ class NotionService {
             return warnings;
         }
 
-        if (hasRequestSignals && !hasDeliveryPath) {
+        if (hasRequestSignals && !hasAutomatedDeliveryPath && hasManualRequestPath) {
+            warnings.push({
+                type: 'MANUAL_REQUEST_PATH',
+                message: 'Case has request content and a manual/PDF request path, but no automatable portal or email channel',
+                field: caseData.pdf_form_url ? 'pdf_form_url' : 'manual_request_url',
+            });
+            if (!['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'].includes(caseData.status)) {
+                caseData.status = 'needs_human_review';
+            }
+        } else if (hasRequestSignals && !hasAutomatedDeliveryPath) {
             warnings.push({
                 type: 'MISSING_DELIVERY_PATH',
                 message: 'Case has request content but no portal URL or agency email after import research',
@@ -702,6 +712,8 @@ class NotionService {
         caseData.agency_email = null;
         caseData.portal_url = null;
         caseData.portal_provider = null;
+        caseData.manual_request_url = null;
+        caseData.pdf_form_url = null;
         caseData.alternate_agency_email = null;
         return caseData;
     }
@@ -736,6 +748,8 @@ class NotionService {
             updates.agency_email = placeholderEmail;
             updates.portal_url = null;
             updates.portal_provider = null;
+            updates.manual_request_url = importedCaseData.manual_request_url || null;
+            updates.pdf_form_url = importedCaseData.pdf_form_url || null;
             updates.alternate_agency_email = null;
         } else if (this.hasConcreteImportedAgencyIdentity(importedCaseData)) {
             if (importedCaseData.agency_id) updates.agency_id = importedCaseData.agency_id;
@@ -743,6 +757,8 @@ class NotionService {
             if (importedCaseData.agency_email) updates.agency_email = importedCaseData.agency_email;
             if (importedCaseData.portal_url) updates.portal_url = importedCaseData.portal_url;
             if (importedCaseData.portal_provider) updates.portal_provider = importedCaseData.portal_provider;
+            if (importedCaseData.manual_request_url !== undefined) updates.manual_request_url = importedCaseData.manual_request_url;
+            if (importedCaseData.pdf_form_url !== undefined) updates.pdf_form_url = importedCaseData.pdf_form_url;
             if (importedCaseData.alternate_agency_email) updates.alternate_agency_email = importedCaseData.alternate_agency_email;
         }
 
@@ -764,14 +780,16 @@ class NotionService {
         const agencyName = normalizeNotionText(importedCaseData.agency_name || '');
         const agencyEmail = normalizeNotionText(importedCaseData.agency_email || '');
         const portalUrl = normalizePortalUrl(importedCaseData.portal_url || null);
+        const manualRequestUrl = normalizePortalUrl(importedCaseData.manual_request_url || null);
+        const pdfFormUrl = normalizePortalUrl(importedCaseData.pdf_form_url || null);
         let agencyId = importedCaseData.agency_id || null;
         const portalProvider =
             importedCaseData.portal_provider ||
             detectPortalProviderByUrl(portalUrl)?.name ||
             null;
 
-        const hasIdentity = Boolean(agencyId || agencyName || agencyEmail || portalUrl);
-        const genericNameOnly = isGenericAgencyLabel(agencyName) && !agencyId && !agencyEmail && !portalUrl;
+        const hasIdentity = Boolean(agencyId || agencyName || agencyEmail || portalUrl || manualRequestUrl || pdfFormUrl);
+        const genericNameOnly = isGenericAgencyLabel(agencyName) && !agencyId && !agencyEmail && !portalUrl && !manualRequestUrl && !pdfFormUrl;
         if (!hasIdentity || genericNameOnly) {
             return caseRecord || null;
         }
@@ -818,6 +836,14 @@ class NotionService {
             caseRowPatch.portal_provider = portalProvider;
         }
 
+        if (manualRequestUrl && !caseRecord?.manual_request_url) {
+            caseRowPatch.manual_request_url = manualRequestUrl;
+        }
+
+        if (pdfFormUrl && !caseRecord?.pdf_form_url) {
+            caseRowPatch.pdf_form_url = pdfFormUrl;
+        }
+
         if (Object.keys(caseRowPatch).length > 0) {
             latestCaseRecord = await db.updateCase(caseId, caseRowPatch);
         }
@@ -828,6 +854,8 @@ class NotionService {
             agency_email: agencyEmail || null,
             portal_url: portalUrl || null,
             portal_provider: portalProvider,
+            manual_request_url: manualRequestUrl || null,
+            pdf_form_url: pdfFormUrl || null,
             is_primary: true,
             added_source: importedCaseData.police_dept_id ? 'notion_relation' : 'notion_import',
             status: 'active',
@@ -1561,7 +1589,7 @@ class NotionService {
                 all_fields: allFieldsData
             };
 
-            let { emailCandidate, portalCandidate } = await this.extractContactsWithAI(fieldsPayload, caseData);
+            let { emailCandidate, portalCandidate, manualRequestCandidate, pdfFormCandidate } = await this.extractContactsWithAI(fieldsPayload, caseData);
 
             // NO FALLBACK - return null if not found
             caseData.agency_email = emailCandidate || null;
@@ -1577,6 +1605,10 @@ class NotionService {
             // PD-sourced portal URL always overrides text-extracted ones
             if (portalCandidate) {
                 caseData.portal_url = portalCandidate;
+            } else if (!caseData.pdf_form_url && pdfFormCandidate) {
+                caseData.pdf_form_url = pdfFormCandidate;
+            } else if (!caseData.manual_request_url && manualRequestCandidate) {
+                caseData.manual_request_url = manualRequestCandidate;
             }
 
             const deptTitleProp = Object.values(deptProps).find(p => p.type === 'title');
@@ -1619,6 +1651,8 @@ class NotionService {
             this.applyFallbackContactsFromPage(caseData, notionPage);
         }
 
+        Object.assign(caseData, normalizeRequestChannelFields(caseData));
+
         return caseData;
     }
 
@@ -1639,12 +1673,17 @@ class NotionService {
                 });
 
                 if (!caseData.portal_url) {
-                    const portalCandidate = this.detectContactChannels([val]).portalCandidate;
+                    const { portalCandidate, manualRequestCandidate, pdfFormCandidate } = this.detectContactChannels([val]);
                     if (portalCandidate) {
                         caseData.portal_url = portalCandidate;
+                    } else if (!caseData.pdf_form_url && pdfFormCandidate) {
+                        caseData.pdf_form_url = pdfFormCandidate;
+                    } else if (!caseData.manual_request_url && manualRequestCandidate) {
+                        caseData.manual_request_url = manualRequestCandidate;
                     }
                 }
             }
+            Object.assign(caseData, normalizeRequestChannelFields(caseData));
         } catch (error) {
             console.warn('Failed to apply fallback contacts from page:', error.message);
         }
@@ -1885,6 +1924,8 @@ Respond with JSON:
     detectContactChannels(values = []) {
         const emails = [];
         const portals = [];
+        const manualPages = [];
+        const pdfForms = [];
 
         values.forEach((value) => {
             if (!value) {
@@ -1901,8 +1942,14 @@ Respond with JSON:
             const urls = extractUrls(value);
             urls.forEach(url => {
                 const normalized = normalizePortalUrl(url);
-                if (normalized && this.isLikelyPortalUrl(normalized, rawText) && !portals.includes(normalized)) {
+                if (!normalized) return;
+                const classified = classifyRequestChannelUrl(normalized);
+                if (classified.kind === 'portal' && this.isLikelyPortalUrl(normalized, rawText) && !portals.includes(normalized)) {
                     portals.push(normalized);
+                } else if (classified.kind === 'manual_request' && !manualPages.includes(normalized)) {
+                    manualPages.push(normalized);
+                } else if (classified.kind === 'pdf_form' && !pdfForms.includes(normalized)) {
+                    pdfForms.push(normalized);
                 }
             });
 
@@ -1914,8 +1961,13 @@ Respond with JSON:
                         const cleanToken = token.replace(/[),.]+$/, '');
                         if (cleanToken.includes('.') && !cleanToken.includes('@')) {
                             const normalizedToken = normalizePortalUrl(cleanToken);
-                            if (normalizedToken && this.isLikelyPortalUrl(normalizedToken, raw) && !portals.includes(normalizedToken)) {
+                            const classified = classifyRequestChannelUrl(normalizedToken);
+                            if (normalizedToken && classified.kind === 'portal' && this.isLikelyPortalUrl(normalizedToken, raw) && !portals.includes(normalizedToken)) {
                                 portals.push(normalizedToken);
+                            } else if (normalizedToken && classified.kind === 'manual_request' && !manualPages.includes(normalizedToken)) {
+                                manualPages.push(normalizedToken);
+                            } else if (normalizedToken && classified.kind === 'pdf_form' && !pdfForms.includes(normalizedToken)) {
+                                pdfForms.push(normalizedToken);
                             }
                         }
                     });
@@ -1925,7 +1977,9 @@ Respond with JSON:
 
         return {
             emailCandidate: emails[0] || null,
-            portalCandidate: portals.find(url => isSupportedPortalUrl(url)) || portals[0] || null
+            portalCandidate: portals.find(url => isSupportedPortalUrl(url)) || portals[0] || null,
+            manualRequestCandidate: manualPages[0] || null,
+            pdfFormCandidate: pdfForms[0] || null,
         };
     }
 
@@ -2698,6 +2752,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 try {
                     // Check if case already exists in our database
                     existing = await db.getCaseByNotionId(notionCase.notion_page_id);
+                    Object.assign(notionCase, normalizeRequestChannelFields(notionCase));
                     const preValidationWarnings = await validateImportedCase(notionCase);
                     notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, preValidationWarnings);
                     this.applyImportReadinessGuard(notionCase);
@@ -2745,6 +2800,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                             agency_email: notionCase.agency_email || (preserveExistingChannels ? existing.agency_email : null),
                             portal_url: notionCase.portal_url || (preserveExistingChannels ? existing.portal_url : null),
                             portal_provider: notionCase.portal_provider || (preserveExistingChannels ? existing.portal_provider : null),
+                            manual_request_url: notionCase.manual_request_url || (preserveExistingChannels ? existing.manual_request_url : null),
+                            pdf_form_url: notionCase.pdf_form_url || (preserveExistingChannels ? existing.pdf_form_url : null),
                             status: notionCase.status || 'ready_to_send',
                             last_notion_synced_at: new Date(),
                         });
@@ -3721,6 +3778,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 }
             }
 
+            Object.assign(notionCase, normalizeRequestChannelFields(notionCase));
             const preValidationWarnings = await validateImportedCase(notionCase);
             notionCase.import_warnings = mergeImportWarnings(notionCase.import_warnings, preValidationWarnings);
             this.applyImportReadinessGuard(notionCase, { pageContent });

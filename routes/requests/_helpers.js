@@ -1240,6 +1240,8 @@ function toRequestDetail(caseData) {
         fee_quote: feeQuote,
         portal_url: caseData.portal_url || null,
         portal_provider: caseData.portal_provider || null,
+        manual_request_url: caseData.manual_request_url || null,
+        pdf_form_url: caseData.pdf_form_url || null,
         portal_request_number: caseData.portal_request_number || null,
         last_portal_task_url: caseData.last_portal_task_url || null,
         last_portal_status: caseData.last_portal_status || null,
@@ -1306,6 +1308,7 @@ function toThreadMessage(message, attachments = [], caseData = null) {
         summary: message.summary || null,
         call_contact_info: isCallMessage ? contactInfo : null,
         call_phone: isCallMessage ? callPhone : null,
+        metadata: meta && typeof meta === 'object' ? meta : null,
         attachments: attachments
     };
 }
@@ -1476,6 +1479,20 @@ function buildPortalSubmissionThreadMessages({
                     skyvern_task_id: submission.skyvern_task_id || null,
                     engine: submission.engine || null,
                     status: submission.status || null,
+                    account_email: submission.account_email || null,
+                    screenshot_url: submission.screenshot_url || null,
+                    recording_url: submission.recording_url || null,
+                    browser_backend: submission.browser_backend || null,
+                    browser_session_id: submission.browser_session_id || null,
+                    browser_session_url: submission.browser_session_url || null,
+                    browser_debugger_url: submission.browser_debugger_url || null,
+                    browser_debugger_fullscreen_url: submission.browser_debugger_fullscreen_url || null,
+                    browser_region: submission.browser_region || null,
+                    browser_status: submission.browser_status || null,
+                    error_message: submission.error_message || null,
+                    extracted_data: extracted,
+                    started_at: submission.started_at || null,
+                    completed_at: submission.completed_at || null,
                     screenshot_count: screenshotAttachments.length,
                 },
             };
