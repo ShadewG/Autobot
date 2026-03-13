@@ -99,6 +99,7 @@ import {
   Download,
   Bug,
   FileText,
+  Brain,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -3561,6 +3562,41 @@ function DetailV2Content() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* ── AI DECISION BAR — compact summary of latest AI action ─────────── */}
+      {agentDecisions.length > 0 && isPaused && (() => {
+        const latest = agentDecisions[0];
+        const confPct = latest.confidence != null ? Math.round(latest.confidence * 100) : null;
+        const reasonText = Array.isArray(latest.reasoning)
+          ? latest.reasoning[0]
+          : typeof latest.reasoning === "string" ? latest.reasoning : null;
+        return (
+          <div className="shrink-0 flex items-center gap-3 px-4 py-1.5 border-b border-blue-700/20 bg-blue-950/10 text-xs">
+            <span className="text-blue-400 font-medium shrink-0 flex items-center gap-1">
+              <Brain className="h-3 w-3" /> AI:
+            </span>
+            <span className="font-medium">{(latest.action_taken || "").replace(/_/g, " ")}</span>
+            {confPct != null && (
+              <span className={cn(
+                "tabular-nums",
+                confPct >= 80 ? "text-green-400" : confPct >= 60 ? "text-amber-400" : "text-red-400"
+              )}>
+                {confPct}%
+              </span>
+            )}
+            {reasonText && (
+              <span className="text-muted-foreground truncate min-w-0">
+                — {typeof reasonText === "string" ? reasonText.slice(0, 100) : ""}
+              </span>
+            )}
+            {latest.outcome && (
+              <Badge variant="outline" className="text-[10px] shrink-0">
+                {latest.outcome.replace(/_/g, " ")}
+              </Badge>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── MAIN BODY ─── two-panel split ──────────────────────────────────── */}
       <div className="flex-1 flex min-h-0">

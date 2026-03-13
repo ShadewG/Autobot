@@ -905,9 +905,11 @@ export default function ReconciliationPage() {
             </Card>
           </div>
 
-          {/* Section cards */}
+          {/* Section cards — sorted by count descending so highest-impact issues surface first */}
           <div className="space-y-3">
-            {SECTIONS.map((config) => (
+            {[...SECTIONS]
+              .sort((a, b) => b.getCount(report) - a.getCount(report))
+              .map((config) => (
               <SectionCard
                 key={config.key}
                 config={config}

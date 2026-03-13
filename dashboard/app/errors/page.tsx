@@ -53,6 +53,39 @@ interface ErrorEvent {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+type Severity = "critical" | "warning" | "info";
+
+const SEVERITY_STYLES: Record<Severity, { dot: string; row: string; badge: string; label: string }> = {
+  critical: { dot: "bg-red-500", row: "border-l-2 border-l-red-500/60", badge: "bg-red-500/10 text-red-400", label: "Critical" },
+  warning: { dot: "bg-amber-500", row: "border-l-2 border-l-amber-500/40", badge: "bg-amber-500/10 text-amber-400", label: "Warning" },
+  info: { dot: "bg-blue-500", row: "border-l-2 border-l-blue-500/20", badge: "bg-blue-500/10 text-blue-400", label: "Info" },
+};
+
+function classifySeverity(err: ErrorEvent): Severity {
+  const msg = (err.error_message || "").toLowerCase();
+  const name = (err.error_name || "").toLowerCase();
+  const code = (err.error_code || "").toLowerCase();
+  const service = err.source_service;
+
+  // Critical: unrecoverable failures, data loss risk, decision engine errors
+  if (service === "decision_engine") return "critical";
+  if (name.includes("typeerror") || name.includes("referenceerror")) return "critical";
+  if (code === "500" || code === "internal_server_error") return "critical";
+  if (msg.includes("fatal") || msg.includes("corruption") || msg.includes("data loss")) return "critical";
+  if (err.retryable === false && (err.retry_attempt ?? 0) >= 2) return "critical";
+  if (msg.includes("cannot read propert") || msg.includes("undefined is not")) return "critical";
+
+  // Warning: transient/retryable failures, rate limits, timeouts
+  if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("econnreset")) return "warning";
+  if (msg.includes("429") || msg.includes("rate limit") || msg.includes("quota")) return "warning";
+  if (err.retryable === true) return "warning";
+  if (msg.includes("agent run failed") || msg.includes("agent_run_failed")) return "warning";
+  if (msg.includes("portal") && msg.includes("fail")) return "warning";
+
+  // Info: everything else
+  return "info";
+}
+
 const SERVICE_COLORS: Record<string, string> = {
   inbound_processor: "bg-blue-500/10 text-blue-400",
   email_executor: "bg-purple-500/10 text-purple-400",
@@ -91,6 +124,7 @@ export default function ErrorsPage() {
   const [sourceFilter, setSourceFilter] = useState<string>("");
   const [operationFilter, setOperationFilter] = useState<string>("");
   const [caseIdSearch, setCaseIdSearch] = useState<string>("");
+  const [severityFilter, setSeverityFilter] = useState<string>("");
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
   // Build query params from filters
@@ -116,16 +150,30 @@ export default function ErrorsPage() {
     { refreshInterval: 30000 }
   );
 
-  const errors = data?.errors || [];
+  const allErrors = data?.errors || [];
 
-  // Compute KPIs
+  // Classify severity for each error
+  const classifiedErrors = useMemo(
+    () => allErrors.map((e) => ({ ...e, severity: classifySeverity(e) })),
+    [allErrors]
+  );
+
+  // Apply severity filter
+  const errors = useMemo(
+    () => severityFilter ? classifiedErrors.filter((e) => e.severity === severityFilter) : classifiedErrors,
+    [classifiedErrors, severityFilter]
+  );
+
+  // Compute KPIs (always from full set, not filtered)
   const kpis = useMemo(() => {
-    const total = errors.length;
-    const todayCount = errors.filter((e) => isToday(e.created_at)).length;
+    const total = classifiedErrors.length;
+    const todayCount = classifiedErrors.filter((e) => isToday(e.created_at)).length;
 
+    const severityCounts = { critical: 0, warning: 0, info: 0 };
     const serviceCounts = new Map<string, number>();
     const operationCounts = new Map<string, number>();
-    for (const e of errors) {
+    for (const e of classifiedErrors) {
+      severityCounts[e.severity]++;
       serviceCounts.set(e.source_service, (serviceCounts.get(e.source_service) || 0) + 1);
       if (e.operation) {
         operationCounts.set(e.operation, (operationCounts.get(e.operation) || 0) + 1);
@@ -150,17 +198,17 @@ export default function ErrorsPage() {
       }
     }
 
-    return { total, todayCount, topService, topServiceCount, topOperation, topOperationCount };
-  }, [errors]);
+    return { total, todayCount, topService, topServiceCount, topOperation, topOperationCount, severityCounts };
+  }, [classifiedErrors]);
 
-  // Unique filter options derived from the data
+  // Unique filter options derived from full data (not filtered)
   const uniqueServices = useMemo(
-    () => [...new Set(errors.map((e) => e.source_service))].sort(),
-    [errors]
+    () => [...new Set(allErrors.map((e) => e.source_service))].sort(),
+    [allErrors]
   );
   const uniqueOperations = useMemo(
-    () => [...new Set(errors.map((e) => e.operation).filter(Boolean) as string[])].sort(),
-    [errors]
+    () => [...new Set(allErrors.map((e) => e.operation).filter(Boolean) as string[])].sort(),
+    [allErrors]
   );
 
   const toggleRow = (id: number) => {
@@ -249,6 +297,34 @@ export default function ErrorsPage() {
         </Card>
       </div>
 
+      {/* Severity Summary Bar */}
+      <div className="flex items-center gap-3">
+        {(["critical", "warning", "info"] as Severity[]).map((sev) => {
+          const style = SEVERITY_STYLES[sev];
+          const count = kpis.severityCounts[sev];
+          const isActive = severityFilter === sev;
+          return (
+            <button
+              key={sev}
+              onClick={() => setSeverityFilter(isActive ? "" : sev)}
+              className={cn(
+                "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                isActive ? "border-foreground/30 bg-muted" : "border-transparent hover:bg-muted/50"
+              )}
+            >
+              <span className={cn("h-2 w-2 rounded-full", style.dot)} />
+              {style.label}
+              <span className="font-mono">{count}</span>
+            </button>
+          );
+        })}
+        {severityFilter && (
+          <button onClick={() => setSeverityFilter("")} className="text-[10px] text-muted-foreground hover:text-foreground ml-1">
+            Clear
+          </button>
+        )}
+      </div>
+
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
@@ -303,6 +379,7 @@ export default function ErrorsPage() {
                   setSourceFilter("");
                   setOperationFilter("");
                   setCaseIdSearch("");
+                  setSeverityFilter("");
                 }}
               >
                 Clear filters
@@ -354,18 +431,22 @@ export default function ErrorsPage() {
                 <TableBody>
                   {errors.map((err) => {
                     const isExpanded = expandedRows.has(err.id);
+                    const sevStyle = SEVERITY_STYLES[err.severity];
                     return (
                       <TableRow
                         key={err.id}
-                        className="cursor-pointer hover:bg-muted/50 align-top"
+                        className={cn("cursor-pointer hover:bg-muted/50 align-top", sevStyle.row)}
                         onClick={() => toggleRow(err.id)}
                       >
                         <TableCell className="pr-0">
-                          {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span className={cn("h-2 w-2 rounded-full shrink-0", sevStyle.dot)} title={sevStyle.label} />
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                           <span title={new Date(err.created_at).toLocaleString()}>

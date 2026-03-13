@@ -72,7 +72,7 @@ export function BugReportButton() {
       {/* Floating button */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed bottom-4 right-4 z-50 flex h-10 w-10 items-center justify-center rounded-full bg-red-600 text-white shadow-lg transition-all hover:bg-red-500 hover:scale-110 active:scale-95"
+        className="fixed bottom-6 right-6 z-50 flex h-9 w-9 items-center justify-center rounded-full bg-red-600/80 text-white shadow-lg transition-all hover:bg-red-500 hover:scale-110 hover:opacity-100 active:scale-95 opacity-60"
         title="Report a bug"
       >
         <Bug className="h-4.5 w-4.5" />

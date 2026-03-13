@@ -17,6 +17,7 @@ import { useAuth } from "./auth-provider";
 
 const adminLinks = [
   { href: "/runs", label: "RUNS" },
+  { href: "/workers", label: "WORKERS" },
   { href: "/eval", label: "EVALS" },
   { href: "/examples", label: "EXAMPLES" },
   { href: "/reconciliation", label: "RECON" },
@@ -85,7 +86,7 @@ export function NavLinks() {
           <DropdownMenu>
             <DropdownMenuTrigger
               className={cn(
-                "flex items-center gap-1 uppercase transition-colors outline-none",
+                "flex shrink-0 items-center gap-1 uppercase transition-colors outline-none",
                 isAdminActive
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground"

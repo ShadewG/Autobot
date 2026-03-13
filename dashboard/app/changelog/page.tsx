@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { fetchAPI } from "@/lib/api";
 import { Loader2 } from "lucide-react";
+import { CURRENT_CHANGELOG_VERSION } from "@/components/changelog-popup";
 
 interface ChangelogEntry {
   id: number;
@@ -133,6 +134,11 @@ export default function ChangelogPage() {
                 <Badge variant="outline" className="text-xs font-mono">
                   {version}
                 </Badge>
+                {version === CURRENT_CHANGELOG_VERSION && (
+                  <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-400 border-green-500/30">
+                    Current
+                  </Badge>
+                )}
                 <span className="text-[10px] text-muted-foreground">
                   {new Date(entries[0].created_at).toLocaleDateString()}
                 </span>

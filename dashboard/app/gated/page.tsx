@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn, formatRelativeTime, formatDate, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem, cleanEmailBody } from "@/lib/utils";
+import { cn, formatRelativeTime, formatDate, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem, cleanEmailBody, humanizeSubstatus } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import { LinkifiedText } from "@/components/linkified-text";
@@ -63,6 +63,7 @@ import {
   CheckSquare,
   Square,
   Bug,
+  Brain,
 } from "lucide-react";
 import {
   Collapsible,
@@ -2550,6 +2551,58 @@ function MonitorPageContent() {
             )}
           </div>
 
+          {/* AI Summary — structured at-a-glance panel */}
+          <div className="border border-blue-700/30 bg-blue-950/15 p-3 space-y-2">
+            <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider flex items-center gap-1">
+              <Brain className="h-3 w-3" /> AI Summary
+            </p>
+            <div className="text-xs space-y-1.5">
+              <div className="flex items-start gap-2">
+                <span className="text-muted-foreground shrink-0 w-[70px]">Decision:</span>
+                <span className="font-medium">
+                  {selectedItem.data.action_type?.replace(/_/g, " ")}
+                  {selectedItem.data.confidence != null && (
+                    <span className={cn(
+                      "ml-1.5",
+                      selectedItem.data.confidence >= 0.8 ? "text-green-400" :
+                      selectedItem.data.confidence >= 0.6 ? "text-amber-400" : "text-red-400"
+                    )}>
+                      ({Math.round(selectedItem.data.confidence * 100)}% confident)
+                    </span>
+                  )}
+                </span>
+              </div>
+              {reasoning.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground shrink-0 w-[70px]">Reason:</span>
+                  <span className="text-foreground/80">{formatReasoningItem(reasoning[0])}</span>
+                </div>
+              )}
+              {selectedItem.data.case_substatus && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground shrink-0 w-[70px]">Status:</span>
+                  <span className="text-foreground/80">{humanizeSubstatus(selectedItem.data.case_substatus)}</span>
+                </div>
+              )}
+              {riskFlags.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground shrink-0 w-[70px]">Risks:</span>
+                  <span className="text-amber-400">{riskFlags.slice(0, 2).map(humanizeRiskFlag).join(", ")}{riskFlags.length > 2 ? ` +${riskFlags.length - 2}` : ""}</span>
+                </div>
+              )}
+              <div className="flex items-start gap-2">
+                <span className="text-muted-foreground shrink-0 w-[70px]">Next step:</span>
+                <span className="text-foreground/80">
+                  {draftBody ? "Review the draft below and approve, adjust, or dismiss." :
+                   selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Approve to submit via portal, or dismiss." :
+                   selectedItem.data.action_type === "CLOSE_CASE" ? "Confirm closure or dismiss to keep case open." :
+                   selectedItem.data.action_type === "ESCALATE" ? "Review context and take manual action." :
+                   "Choose an action below."}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Trigger message preview — what email triggered this proposal */}
           {selectedItem.data.trigger_message && (
             <div className="border border-border bg-muted/30 p-2.5 space-y-1">
@@ -2660,7 +2713,7 @@ function MonitorPageContent() {
                         {selectedItem.data.case_substatus && (
                           <p>
                             <span className="text-muted-foreground">Case substatus:</span>{" "}
-                            {selectedItem.data.case_substatus}
+                            {humanizeSubstatus(selectedItem.data.case_substatus)}
                           </p>
                         )}
                         {!selectedItem.data.last_inbound_preview && (
@@ -2745,52 +2798,70 @@ function MonitorPageContent() {
             </Collapsible>
           )}
 
-          {/* Inbound message — full text */}
+          {/* Inbound message — collapsed by default */}
           {selectedItem.data.last_inbound_preview && (
-            <div className="border p-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <SectionLabel>Inbound</SectionLabel>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => openCorrespondence(selectedItem.data.case_id)}
-                >
-                  <MessageSquare className="h-3 w-3 mr-1" />
-                  {showCorrespondence ? "Hide Correspondence" : "See Full Correspondence"}
-                </Button>
-              </div>
-              {selectedItem.data.last_inbound_subject && (
-                <p className="text-xs mb-1.5">
-                  <span className="text-muted-foreground">Subj:</span>{" "}
-                  {selectedItem.data.last_inbound_subject}
-                </p>
-              )}
-              {(() => {
-                const { body: inboundClean, quotedThread: inboundQuoted } = cleanEmailBody(selectedItem.data.last_inbound_preview || "");
-                return (
-                  <div className="bg-background border p-2">
-                    <LinkifiedText
-                      text={inboundClean}
-                      className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
-                    />
-                    {inboundQuoted && (
-                      <details className="mt-2 border-t border-border/50 pt-2">
-                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
-                          Show full thread
-                        </summary>
-                        <div className="mt-1.5 pl-2 border-l-2 border-muted">
-                          <LinkifiedText
-                            text={inboundQuoted}
-                            className="text-xs whitespace-pre-wrap font-[inherit] text-muted-foreground/60"
-                          />
-                        </div>
-                      </details>
+            <Collapsible>
+              <div className="border p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <SectionLabel>Inbound</SectionLabel>
+                    {selectedItem.data.last_inbound_subject && (
+                      <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                        {selectedItem.data.last_inbound_subject}
+                      </span>
                     )}
                   </div>
-                );
-              })()}
-            </div>
+                  <div className="flex items-center gap-1">
+                    <CollapsibleTrigger asChild>
+                      <button className="text-[10px] text-primary hover:underline">
+                        Show
+                      </button>
+                    </CollapsibleTrigger>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => openCorrespondence(selectedItem.data.case_id)}
+                    >
+                      <MessageSquare className="h-3 w-3 mr-1" />
+                      {showCorrespondence ? "Hide" : "Full Thread"}
+                    </Button>
+                  </div>
+                </div>
+                <CollapsibleContent>
+                  {selectedItem.data.last_inbound_subject && (
+                    <p className="text-xs mb-1.5 mt-2">
+                      <span className="text-muted-foreground">Subj:</span>{" "}
+                      {selectedItem.data.last_inbound_subject}
+                    </p>
+                  )}
+                  {(() => {
+                    const { body: inboundClean, quotedThread: inboundQuoted } = cleanEmailBody(selectedItem.data.last_inbound_preview || "");
+                    return (
+                      <div className="bg-background border p-2 mt-1.5">
+                        <LinkifiedText
+                          text={inboundClean}
+                          className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                        />
+                        {inboundQuoted && (
+                          <details className="mt-2 border-t border-border/50 pt-2">
+                            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                              Show full thread
+                            </summary>
+                            <div className="mt-1.5 pl-2 border-l-2 border-muted">
+                              <LinkifiedText
+                                text={inboundQuoted}
+                                className="text-xs whitespace-pre-wrap font-[inherit] text-muted-foreground/60"
+                              />
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
           )}
 
           {/* Inbound attachments — right after inbound message */}
@@ -3162,7 +3233,11 @@ function MonitorPageContent() {
                     <Button
                       variant="destructive"
                       className="flex-1"
-                      onClick={handleWithdraw}
+                      onClick={() => {
+                        if (window.confirm("Withdraw this case? This will cancel the request permanently.")) {
+                          handleWithdraw();
+                        }
+                      }}
                       disabled={isSubmitting}
                     >
                       <Ban className="h-3 w-3 mr-1" /> WITHDRAW
@@ -3264,6 +3339,43 @@ function MonitorPageContent() {
             </div>
           </div>
 
+          {/* AI Summary — what happened and what to do */}
+          <div className="border border-purple-700/30 bg-purple-950/15 p-3 space-y-2">
+            <p className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider flex items-center gap-1">
+              <Brain className="h-3 w-3" /> AI Summary
+            </p>
+            <div className="text-xs space-y-1.5">
+              <div className="flex items-start gap-2">
+                <span className="text-muted-foreground shrink-0 w-[70px]">Reason:</span>
+                <span className="text-foreground/80">
+                  {humanizeSubstatus(selectedItem.data.substatus || selectedItem.data.pause_reason || "Needs human review")}
+                </span>
+              </div>
+              {selectedItem.data.research_summary && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground shrink-0 w-[70px]">Research:</span>
+                  <span className="text-foreground/80 line-clamp-2">
+                    {selectedItem.data.research_summary.slice(0, 150)}{selectedItem.data.research_summary.length > 150 ? "..." : ""}
+                  </span>
+                </div>
+              )}
+              {selectedItem.data.last_fee_quote_amount != null && (
+                <div className="flex items-start gap-2">
+                  <span className="text-muted-foreground shrink-0 w-[70px]">Fee:</span>
+                  <span className="text-amber-400 font-medium">${selectedItem.data.last_fee_quote_amount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex items-start gap-2">
+                <span className="text-muted-foreground shrink-0 w-[70px]">Next step:</span>
+                <span className="text-foreground/80">
+                  {selectedItem.data.portal_url ? "Review portal status and resolve." :
+                   selectedItem.data.last_fee_quote_amount ? "Decide whether to accept, negotiate, or decline the fee." :
+                   "Review the case context and decide how to proceed."}
+                </span>
+              </div>
+            </div>
+          </div>
+
           {/* Substatus / reason */}
           {(() => {
             const rawReason = selectedItem.data.substatus || "";
@@ -3279,7 +3391,7 @@ function MonitorPageContent() {
             <div className="border border-purple-700/50 bg-purple-950/20 p-3">
               <SectionLabel>Review Reason</SectionLabel>
               <p className="text-xs text-purple-300">
-                {displayReason}
+                {humanizeSubstatus(displayReason)}
               </p>
             </div>
             );
@@ -3630,7 +3742,11 @@ function MonitorPageContent() {
                   </Button>
                   <Button
                     variant="destructive"
-                    onClick={handleWithdraw}
+                    onClick={() => {
+                      if (window.confirm("Withdraw this case? This will cancel the request permanently.")) {
+                        handleWithdraw();
+                      }
+                    }}
                     disabled={isSubmitting}
                   >
                     <Ban className="h-3 w-3 mr-1" /> WITHDRAW
@@ -4178,7 +4294,7 @@ function MonitorPageContent() {
                               <p><span className="text-muted-foreground">Case status:</span> {task.case_status.replace(/_/g, " ")}</p>
                             )}
                             {task.case_substatus && (
-                              <p><span className="text-muted-foreground">Case substatus:</span> {task.case_substatus}</p>
+                              <p><span className="text-muted-foreground">Case substatus:</span> {humanizeSubstatus(task.case_substatus)}</p>
                             )}
                             {task.case_pause_reason && (
                               <p><span className="text-muted-foreground">Pause reason:</span> {task.case_pause_reason.replace(/_/g, " ")}</p>

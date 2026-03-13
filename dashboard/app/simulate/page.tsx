@@ -461,9 +461,22 @@ export default function SimulatePage() {
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
         <ScrollArea className="flex-1 pr-1">
           {status === "idle" && (
-            <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-3">
-              <FlaskConical className="h-10 w-10 opacity-20" />
-              <p className="text-sm">Select a preset or paste a message, then run the simulation.</p>
+            <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-muted-foreground gap-4 px-8">
+              <FlaskConical className="h-12 w-12 opacity-15" />
+              <div className="text-center space-y-1.5">
+                <p className="text-sm font-medium text-foreground/60">Test the AI pipeline without side effects</p>
+                <p className="text-xs leading-relaxed max-w-sm">
+                  Paste an agency email or use a preset to see how the AI classifies it,
+                  what action it decides, and what draft reply it generates. No emails are sent and no data is changed.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider">
+                <span className="flex items-center gap-1"><Mail className="h-3 w-3" /> Classify</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className="flex items-center gap-1"><Brain className="h-3 w-3" /> Decide</span>
+                <ChevronRight className="h-3 w-3" />
+                <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> Draft</span>
+              </div>
             </div>
           )}
 
