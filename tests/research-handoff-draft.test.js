@@ -61,4 +61,41 @@ describe("research handoff draft generation", function () {
     assert.match(draft.bodyText, /Research needs a verified Boone County records contact\./);
     assert.doesNotMatch(draft.bodyText, /\[object Object\]/);
   });
+
+  it("falls back to case name when agency and subject labels are placeholders", async function () {
+    sinon.stub(db, "getCaseById").resolves({
+      id: 7007,
+      case_name: "Charles Miles Sentenced to Prison in 2024 Beating Death Case",
+      subject_name: "—",
+      agency_name: "Unknown agency",
+      agency_email: null,
+      portal_url: null,
+      state: "SC",
+      status: "needs_human_review",
+      substatus: null,
+      additional_details: "",
+      constraints_jsonb: [],
+      scope_items_jsonb: [],
+      contact_research_notes: null,
+    });
+    sinon.stub(db, "getMessagesByCaseId").resolves([]);
+    sinon.stub(db, "updateCase").resolves({});
+    sinon.stub(decisionMemory, "getRelevantLessons").resolves([]);
+    sinon.stub(decisionMemory, "formatLessonsForPrompt").returns("");
+    sinon.stub(successfulExamples, "getRelevantExamples").resolves([]);
+    sinon.stub(successfulExamples, "formatExamplesForPrompt").returns("");
+    sinon.stub(aiService, "generateAgencyResearchBrief").resolves({
+      reasoning: [
+        { detail: "No verified delivery path was found." },
+      ],
+      researchFailed: false,
+      suggested_agencies: [],
+    });
+
+    const draft = await draftResponse(7007, "RESEARCH_AGENCY", [], [], null, null, null);
+
+    assert.strictEqual(draft.subject, "Research handoff needed: Charles Miles Sentenced to Prison in 2024 Beating Death Case");
+    assert.match(draft.bodyText, /Research handoff required for Charles Miles Sentenced to Prison in 2024 Beating Death Case\./);
+    assert.doesNotMatch(draft.bodyText, /Research handoff required for —\./);
+  });
 });

@@ -154,4 +154,38 @@ describe('stale proposal recovery', function () {
       restore();
     }
   });
+
+  it('rebuilds placeholder-dash research handoff drafts using the case name', async function () {
+    const dbStub = {
+      query: sinon.stub().resolves({
+        rows: [{
+          id: 2060,
+          case_id: 26695,
+          action_type: 'RESEARCH_AGENCY',
+          status: 'PENDING_APPROVAL',
+          draft_subject: 'Research handoff needed: —',
+          draft_body_text: 'Research handoff required for —.\n\nWhat the system found:\n- No agency identified yet.',
+          reasoning: [{ detail: 'No agency identified yet.' }],
+          warnings: null,
+          risk_flags: [],
+          updated_at: new Date().toISOString(),
+        }],
+      }),
+      getCaseById: sinon.stub().resolves({ id: 26695, case_name: 'Charles Miles Sentenced to Prison in 2024 Beating Death Case', agency_name: 'Unknown agency', subject_name: '—' }),
+      updateProposal: sinon.stub().resolves(),
+      logActivity: sinon.stub().resolves(),
+    };
+    const aiServiceStub = {};
+
+    const { service, restore } = loadRecoveryService({ dbStub, aiServiceStub });
+    try {
+      const result = await service.runStaleProposalRecoverySweep({ minAgeMinutes: 0, limit: 10 });
+      assert.strictEqual(result.recovered, 1);
+      sinon.assert.calledWithMatch(dbStub.updateProposal, 2060, sinon.match({
+        draftSubject: 'Research handoff needed: Charles Miles Sentenced to Prison in 2024 Beating Death Case',
+      }));
+    } finally {
+      restore();
+    }
+  });
 });

@@ -16,13 +16,22 @@ function normalizeLines(reasoning = []) {
 }
 
 function buildResearchHandoffDraft(caseData, reasoning, fallbackCaseName) {
-  const preferredAgency = String(caseData?.agency_name || '').trim();
-  const label = String(
-    (preferredAgency && preferredAgency.toLowerCase() !== 'unknown agency' ? preferredAgency : '')
-      || caseData?.subject_name
-      || caseData?.case_name
-      || fallbackCaseName
-  ).trim();
+  const candidates = [
+    caseData?.agency_name,
+    caseData?.subject_name,
+    caseData?.case_name,
+    fallbackCaseName,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .filter((value) => {
+      const normalized = value.toLowerCase();
+      return normalized !== 'unknown agency'
+        && normalized !== '—'
+        && normalized !== '-'
+        && normalized !== 'untitled case';
+    });
+  const label = candidates[0] || 'this case';
 
   const bullets = normalizeLines(reasoning).slice(0, 4).map((line) => `- ${line}`);
   if (bullets.length === 0) {
@@ -68,7 +77,9 @@ function hasGenericResearchHandoff(proposal) {
   const subject = String(proposal?.draft_subject || '');
   const body = String(proposal?.draft_body_text || '');
   return subject.startsWith('Action needed:')
+    || /Research handoff needed:\s*[—-]\s*$/i.test(subject)
     || body.includes('(Draft generation failed — manual action required)')
+    || /Research handoff required for\s+[—-]\./i.test(body)
     || !body.trim();
 }
 
@@ -185,7 +196,9 @@ async function runStaleProposalRecoverySweep({ minAgeMinutes = 15, limit = 25 } 
             p.action_type = 'RESEARCH_AGENCY'
             AND (
               COALESCE(p.draft_subject, '') ILIKE 'Action needed:%'
+              OR COALESCE(p.draft_subject, '') ~* '^Research handoff needed:\\s*[—-]\\s*$'
               OR COALESCE(p.draft_body_text, '') ILIKE '%Draft generation failed%'
+              OR COALESCE(p.draft_body_text, '') ~* 'Research handoff required for\\s+[—-]\\.\\s*$'
               OR NULLIF(TRIM(COALESCE(p.draft_body_text, '')), '') IS NULL
             )
           )

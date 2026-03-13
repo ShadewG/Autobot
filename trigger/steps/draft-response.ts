@@ -43,12 +43,22 @@ function collapseDuplicateClosingBlocks(text: string | null | undefined): string
 }
 
 function buildResearchHandoffDraft(caseData: any, reasoning: any, fallbackCaseName: string) {
-  const label = String(
-    caseData?.agency_name
-    || caseData?.subject_name
-    || caseData?.case_name
-    || fallbackCaseName
-  ).trim();
+  const candidates = [
+    caseData?.agency_name,
+    caseData?.subject_name,
+    caseData?.case_name,
+    fallbackCaseName,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value) => {
+      const normalized = value.toLowerCase();
+      return normalized !== "unknown agency"
+        && normalized !== "—"
+        && normalized !== "-"
+        && normalized !== "untitled case";
+    });
+  const label = candidates[0] || "this case";
 
   const lines = Array.isArray(reasoning)
     ? reasoning
