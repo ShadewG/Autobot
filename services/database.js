@@ -679,6 +679,10 @@ class DatabaseService {
                 )
             `);
             await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS portal_request_number TEXT');
+            await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS manual_request_url TEXT');
+            await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS pdf_form_url TEXT');
+            await this.query('ALTER TABLE IF EXISTS case_agencies ADD COLUMN IF NOT EXISTS manual_request_url TEXT');
+            await this.query('ALTER TABLE IF EXISTS case_agencies ADD COLUMN IF NOT EXISTS pdf_form_url TEXT');
             await this.query(`
                 CREATE INDEX IF NOT EXISTS idx_unmatched_signals_request_number
                     ON unmatched_portal_signals(detected_request_number) WHERE matched_case_id IS NULL
@@ -688,6 +692,63 @@ class DatabaseService {
                     ON cases(portal_request_number) WHERE portal_request_number IS NOT NULL
             `);
 
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_submissions (
+                    id SERIAL PRIMARY KEY,
+                    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+                    run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+                    skyvern_task_id VARCHAR(255),
+                    status VARCHAR(100) NOT NULL,
+                    engine VARCHAR(100),
+                    account_email VARCHAR(255),
+                    screenshot_url TEXT,
+                    recording_url TEXT,
+                    extracted_data JSONB,
+                    error_message TEXT,
+                    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ
+                )
+            `);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_backend VARCHAR(50)`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_session_id VARCHAR(255)`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_session_url TEXT`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_debugger_url TEXT`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_debugger_fullscreen_url TEXT`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_region VARCHAR(50)`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_status VARCHAR(50)`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_metadata JSONB NOT NULL DEFAULT '{}'::jsonb`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_live_urls_jsonb JSONB NOT NULL DEFAULT '{}'::jsonb`);
+            await this.query(`ALTER TABLE portal_submissions ADD COLUMN IF NOT EXISTS browser_logs_synced_at TIMESTAMPTZ`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_case_id ON portal_submissions(case_id)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_status ON portal_submissions(status)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_browser_session_id ON portal_submissions(browser_session_id)`);
+
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_session_events (
+                    id SERIAL PRIMARY KEY,
+                    portal_submission_id INTEGER NOT NULL REFERENCES portal_submissions(id) ON DELETE CASCADE,
+                    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+                    browser_session_id VARCHAR(255) NOT NULL,
+                    event_index INTEGER NOT NULL,
+                    method VARCHAR(255) NOT NULL,
+                    page_id INTEGER,
+                    level VARCHAR(50),
+                    url TEXT,
+                    status_code INTEGER,
+                    message TEXT,
+                    occurred_at TIMESTAMPTZ,
+                    request_jsonb JSONB,
+                    response_jsonb JSONB,
+                    event_jsonb JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(portal_submission_id, event_index)
+                )
+            `);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_session_events_submission_id ON portal_session_events(portal_submission_id, event_index ASC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_session_events_case_id ON portal_session_events(case_id, occurred_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_session_events_browser_session_id ON portal_session_events(browser_session_id, event_index ASC)`);
+
             // Enforce at most one active proposal per case scope (case_agency_id-aware).
             // Keeps one active proposal per case_agency, while still allowing multiple
             // agencies on the same case to each carry their own pending proposal.
@@ -696,6 +757,121 @@ class DatabaseService {
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_active_per_case_scope
                     ON proposals (case_id, COALESCE(case_agency_id, -1))
                     WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+            `);
+
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_workers (
+                    id SERIAL PRIMARY KEY,
+                    worker_id VARCHAR(255) UNIQUE NOT NULL,
+                    worker_type VARCHAR(100) NOT NULL DEFAULT 'playwright',
+                    display_name VARCHAR(255),
+                    host_name VARCHAR(255),
+                    platform VARCHAR(100),
+                    app_version VARCHAR(100),
+                    accepts_jobs BOOLEAN NOT NULL DEFAULT TRUE,
+                    status VARCHAR(50) NOT NULL DEFAULT 'idle',
+                    current_task_type VARCHAR(100),
+                    current_case_id INTEGER REFERENCES cases(id) ON DELETE SET NULL,
+                    current_portal_task_id INTEGER REFERENCES portal_tasks(id) ON DELETE SET NULL,
+                    current_job_label VARCHAR(255),
+                    last_error TEXT,
+                    last_screenshot_url TEXT,
+                    last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_started_at TIMESTAMPTZ,
+                    last_completed_at TIMESTAMPTZ,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            `);
+            await this.query(`ALTER TABLE portal_workers ADD COLUMN IF NOT EXISTS accepts_jobs BOOLEAN NOT NULL DEFAULT TRUE`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_workers_status ON portal_workers(status)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_workers_last_heartbeat_at ON portal_workers(last_heartbeat_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_workers_accepts_jobs ON portal_workers(accepts_jobs, last_heartbeat_at DESC)`);
+
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_worker_jobs (
+                    id SERIAL PRIMARY KEY,
+                    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+                    portal_task_id INTEGER REFERENCES portal_tasks(id) ON DELETE SET NULL,
+                    agent_run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+                    worker_id VARCHAR(255),
+                    mode VARCHAR(50) NOT NULL DEFAULT 'submit',
+                    status VARCHAR(50) NOT NULL DEFAULT 'queued',
+                    provider VARCHAR(100),
+                    portal_url TEXT NOT NULL,
+                    instructions TEXT,
+                    payload_jsonb JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    result_jsonb JSONB,
+                    error_message TEXT,
+                    fallback_safe BOOLEAN NOT NULL DEFAULT TRUE,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    claimed_at TIMESTAMPTZ,
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            `);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_worker_jobs_status ON portal_worker_jobs(status, created_at)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_worker_jobs_case_id ON portal_worker_jobs(case_id, created_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_worker_jobs_worker_id ON portal_worker_jobs(worker_id, updated_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_worker_jobs_portal_task_id ON portal_worker_jobs(portal_task_id)`);
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_scout_runs (
+                    id SERIAL PRIMARY KEY,
+                    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+                    portal_submission_id INTEGER REFERENCES portal_submissions(id) ON DELETE SET NULL,
+                    worker_job_id INTEGER REFERENCES portal_worker_jobs(id) ON DELETE SET NULL,
+                    portal_url TEXT NOT NULL,
+                    provider VARCHAR(100),
+                    portal_fingerprint VARCHAR(255),
+                    engine VARCHAR(100) NOT NULL DEFAULT 'lightpanda_scout',
+                    status VARCHAR(100) NOT NULL,
+                    page_kind VARCHAR(100),
+                    final_url TEXT,
+                    title TEXT,
+                    error_message TEXT,
+                    scout_jsonb JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ
+                )
+            `);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_scout_runs_case_id ON portal_scout_runs(case_id, created_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_scout_runs_fingerprint ON portal_scout_runs(portal_fingerprint, created_at DESC)`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_scout_runs_status ON portal_scout_runs(status, created_at DESC)`);
+            await this.query(`
+                CREATE OR REPLACE FUNCTION enforce_portal_worker_job_claim()
+                RETURNS TRIGGER AS $$
+                DECLARE
+                    worker_accepts_jobs BOOLEAN;
+                BEGIN
+                    IF COALESCE(OLD.status, '') = 'queued' AND COALESCE(NEW.status, '') = 'running' THEN
+                        IF OLD.worker_id IS NOT NULL AND NEW.worker_id IS DISTINCT FROM OLD.worker_id THEN
+                            RAISE EXCEPTION 'portal worker job % is reserved for worker %', OLD.id, OLD.worker_id;
+                        END IF;
+
+                        SELECT COALESCE(accepts_jobs, TRUE)
+                          INTO worker_accepts_jobs
+                          FROM portal_workers
+                         WHERE worker_id = NEW.worker_id
+                         LIMIT 1;
+
+                        IF worker_accepts_jobs IS DISTINCT FROM TRUE THEN
+                            RAISE EXCEPTION 'portal worker % is not accepting jobs', NEW.worker_id;
+                        END IF;
+                    END IF;
+
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+            `);
+            await this.query(`DROP TRIGGER IF EXISTS trg_enforce_portal_worker_job_claim ON portal_worker_jobs`);
+            await this.query(`
+                CREATE TRIGGER trg_enforce_portal_worker_job_claim
+                BEFORE UPDATE ON portal_worker_jobs
+                FOR EACH ROW
+                EXECUTE FUNCTION enforce_portal_worker_job_claim()
             `);
 
             console.log('Database schema initialized successfully');
@@ -753,14 +929,21 @@ class DatabaseService {
             })));
         }
 
+        const normalizedRequestChannels = normalizeRequestChannelFields({
+            portal_url: caseData.portal_url || null,
+            portal_provider: caseData.portal_provider || null,
+            manual_request_url: caseData.manual_request_url || null,
+            pdf_form_url: caseData.pdf_form_url || null,
+        });
+
         const query = `
             INSERT INTO cases (
                 notion_page_id, case_name, subject_name, agency_name, agency_email,
                 state, incident_date, incident_location, requested_records,
                 additional_details, status, deadline_date, agency_id, scope_items_jsonb,
-                portal_url, portal_provider, alternate_agency_email,
+                portal_url, portal_provider, manual_request_url, pdf_form_url, alternate_agency_email,
                 tags, priority, user_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (notion_page_id) DO UPDATE
             SET notion_page_id = EXCLUDED.notion_page_id
             RETURNING *, (xmax = 0) AS _inserted
@@ -780,8 +963,10 @@ class DatabaseService {
             caseData.deadline_date,
             agencyId,
             scopeItemsJsonb,
-            caseData.portal_url || null,
-            caseData.portal_provider || null,
+            normalizedRequestChannels.portal_url,
+            normalizedRequestChannels.portal_provider,
+            normalizedRequestChannels.manual_request_url,
+            normalizedRequestChannels.pdf_form_url,
             caseData.alternate_agency_email || null,
             caseData.tags || '{}',
             caseData.priority || 0,
@@ -1067,6 +1252,25 @@ class DatabaseService {
         const { __allowRestoreFromBugged = false, ...effectiveUpdates } = updates || {};
         if (!effectiveUpdates || Object.keys(effectiveUpdates).length === 0) {
             return await this.getCaseById(caseId);
+        }
+
+        if (
+            effectiveUpdates.portal_url !== undefined
+            || effectiveUpdates.portal_provider !== undefined
+            || effectiveUpdates.manual_request_url !== undefined
+            || effectiveUpdates.pdf_form_url !== undefined
+        ) {
+            const currentCase = await this.getCaseById(caseId);
+            Object.assign(
+                effectiveUpdates,
+                normalizeRequestChannelFields({
+                    portal_url: effectiveUpdates.portal_url !== undefined ? effectiveUpdates.portal_url : currentCase?.portal_url,
+                    portal_provider: effectiveUpdates.portal_provider !== undefined ? effectiveUpdates.portal_provider : currentCase?.portal_provider,
+                    manual_request_url: effectiveUpdates.manual_request_url !== undefined ? effectiveUpdates.manual_request_url : currentCase?.manual_request_url,
+                    pdf_form_url: effectiveUpdates.pdf_form_url !== undefined ? effectiveUpdates.pdf_form_url : currentCase?.pdf_form_url,
+                    last_portal_status: currentCase?.last_portal_status || null,
+                })
+            );
         }
 
         if (effectiveUpdates.status !== undefined && effectiveUpdates.status !== 'bugged') {
@@ -1966,6 +2170,51 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async updatePortalAccountBrowserbaseContext(accountId, {
+        contextId = undefined,
+        contextStatus = undefined,
+        authenticatedAt = undefined,
+        lastAuthAt = undefined,
+        metadata = undefined,
+    } = {}) {
+        if (!accountId) {
+            throw new Error('accountId is required');
+        }
+
+        const entries = [];
+        if (contextId !== undefined) entries.push(['browserbase_context_id', contextId]);
+        if (contextStatus !== undefined) entries.push(['browserbase_context_status', contextStatus]);
+        if (authenticatedAt !== undefined) entries.push(['browserbase_authenticated_at', authenticatedAt]);
+        if (lastAuthAt !== undefined) entries.push(['browserbase_last_auth_at', lastAuthAt]);
+        if (metadata !== undefined) {
+            entries.push([
+                'browserbase_auth_metadata',
+                metadata && typeof metadata !== 'string' ? JSON.stringify(metadata) : metadata,
+            ]);
+        }
+
+        if (entries.length === 0) {
+            const result = await this.query(
+                'SELECT * FROM portal_accounts WHERE id = $1 LIMIT 1',
+                [accountId]
+            );
+            return result.rows[0] || null;
+        }
+
+        const setClause = entries
+            .map(([key], index) => `${key} = $${index + 2}${key === 'browserbase_auth_metadata' ? '::jsonb' : ''}`)
+            .join(', ');
+        const result = await this.query(
+            `UPDATE portal_accounts
+             SET ${setClause},
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1
+             RETURNING *`,
+            [accountId, ...entries.map(([, value]) => value)]
+        );
+        return result.rows[0] || null;
+    }
+
     async getAllPortalAccounts() {
         const result = await this.query(
             'SELECT id, portal_url, portal_domain, portal_type, email, first_name, last_name, account_status, last_used_at, created_at FROM portal_accounts ORDER BY created_at DESC'
@@ -1998,6 +2247,373 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async createPortalScoutRun({
+        caseId,
+        portalSubmissionId = null,
+        workerJobId = null,
+        portalUrl,
+        provider = null,
+        status = 'started',
+        engine = 'lightpanda_scout',
+        pageKind = null,
+        finalUrl = null,
+        title = null,
+        errorMessage = null,
+        scoutData = {},
+    }) {
+        if (!caseId) throw new Error('caseId is required');
+        if (!portalUrl) throw new Error('portalUrl is required');
+
+        const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
+        const result = await this.query(
+            `INSERT INTO portal_scout_runs (
+                case_id,
+                portal_submission_id,
+                worker_job_id,
+                portal_url,
+                provider,
+                portal_fingerprint,
+                engine,
+                status,
+                page_kind,
+                final_url,
+                title,
+                error_message,
+                scout_jsonb,
+                created_at,
+                completed_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE($13::jsonb, '{}'::jsonb), NOW(), $14
+            )
+            RETURNING *`,
+            [
+                caseId,
+                portalSubmissionId || null,
+                workerJobId || null,
+                portalUrl,
+                provider || null,
+                fingerprintInfo?.fingerprint || null,
+                engine || 'lightpanda_scout',
+                status,
+                pageKind || null,
+                finalUrl || null,
+                title || null,
+                errorMessage || null,
+                scoutData ? JSON.stringify(scoutData) : null,
+                status === 'started' ? null : new Date(),
+            ]
+        );
+        return result.rows[0] || null;
+    }
+
+    async updatePortalScoutRun(id, updates = {}) {
+        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        if (entries.length === 0) return null;
+
+        const normalizedEntries = entries.map(([key, value]) => {
+            if (key === 'scout_jsonb' && value && typeof value !== 'string') {
+                return [key, JSON.stringify(value)];
+            }
+            return [key, value];
+        });
+
+        const setClause = normalizedEntries
+            .map(([key], index) => `${key} = $${index + 2}${key === 'scout_jsonb' ? '::jsonb' : ''}`)
+            .join(', ');
+        const result = await this.query(
+            `UPDATE portal_scout_runs
+                SET ${setClause}
+              WHERE id = $1
+              RETURNING *`,
+            [id, ...normalizedEntries.map(([, value]) => value)]
+        );
+        return result.rows[0] || null;
+    }
+
+    async getLatestPortalScoutRunForPortal(portalUrl, provider = null) {
+        const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
+        if (!fingerprintInfo?.fingerprint) return null;
+
+        const result = await this.query(
+            `SELECT *
+               FROM portal_scout_runs
+              WHERE portal_fingerprint = $1
+              ORDER BY created_at DESC
+              LIMIT 1`,
+            [fingerprintInfo.fingerprint]
+        );
+        return result.rows[0] || null;
+    }
+
+    async upsertPortalWorkerHeartbeat(workerData = {}) {
+        if (!workerData.worker_id) {
+            throw new Error('worker_id is required');
+        }
+
+        const result = await this.query(
+            `INSERT INTO portal_workers (
+                worker_id,
+                worker_type,
+                display_name,
+                host_name,
+                platform,
+                app_version,
+                status,
+                current_task_type,
+                current_case_id,
+                current_portal_task_id,
+                current_job_label,
+                last_error,
+                last_screenshot_url,
+                last_heartbeat_at,
+                last_started_at,
+                last_completed_at,
+                metadata,
+                created_at,
+                updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                COALESCE($14, NOW()),
+                $15,
+                $16,
+                COALESCE($17::jsonb, '{}'::jsonb),
+                NOW(),
+                NOW()
+            )
+            ON CONFLICT (worker_id) DO UPDATE SET
+                worker_type = EXCLUDED.worker_type,
+                display_name = EXCLUDED.display_name,
+                host_name = EXCLUDED.host_name,
+                platform = EXCLUDED.platform,
+                app_version = EXCLUDED.app_version,
+                status = EXCLUDED.status,
+                current_task_type = EXCLUDED.current_task_type,
+                current_case_id = EXCLUDED.current_case_id,
+                current_portal_task_id = EXCLUDED.current_portal_task_id,
+                current_job_label = EXCLUDED.current_job_label,
+                last_error = EXCLUDED.last_error,
+                last_screenshot_url = COALESCE(EXCLUDED.last_screenshot_url, portal_workers.last_screenshot_url),
+                last_heartbeat_at = COALESCE(EXCLUDED.last_heartbeat_at, NOW()),
+                last_started_at = COALESCE(EXCLUDED.last_started_at, portal_workers.last_started_at),
+                last_completed_at = COALESCE(EXCLUDED.last_completed_at, portal_workers.last_completed_at),
+                metadata = COALESCE(EXCLUDED.metadata, portal_workers.metadata, '{}'::jsonb),
+                updated_at = NOW()
+            RETURNING *`,
+            [
+                workerData.worker_id,
+                workerData.worker_type || 'playwright',
+                workerData.display_name || null,
+                workerData.host_name || null,
+                workerData.platform || null,
+                workerData.app_version || null,
+                workerData.status || 'idle',
+                workerData.current_task_type || null,
+                workerData.current_case_id ?? null,
+                workerData.current_portal_task_id ?? null,
+                workerData.current_job_label || null,
+                workerData.last_error || null,
+                workerData.last_screenshot_url || null,
+                workerData.last_heartbeat_at || null,
+                workerData.last_started_at || null,
+                workerData.last_completed_at || null,
+                workerData.metadata ? JSON.stringify(workerData.metadata) : null,
+            ]
+        );
+
+        return result.rows[0];
+    }
+
+    async updatePortalWorker(workerId, updates = {}) {
+        if (!workerId) {
+            throw new Error('workerId is required');
+        }
+
+        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        if (entries.length === 0) {
+            return await this.getPortalWorker(workerId);
+        }
+
+        const normalizedEntries = entries.map(([key, value]) => {
+            if (key === 'metadata' && value && typeof value !== 'string') {
+                return [key, JSON.stringify(value)];
+            }
+            return [key, value];
+        });
+        const setClause = normalizedEntries
+            .map(([key], index) => `${key} = $${index + 2}${key === 'metadata' ? '::jsonb' : ''}`)
+            .join(', ');
+        const result = await this.query(
+            `UPDATE portal_workers
+             SET ${setClause}, updated_at = NOW()
+             WHERE worker_id = $1
+             RETURNING *`,
+            [workerId, ...normalizedEntries.map(([, value]) => value)]
+        );
+
+        return result.rows[0] || null;
+    }
+
+    async listPortalWorkers({ staleAfterSeconds = 180 } = {}) {
+        const result = await this.query(
+            `SELECT *,
+                    (COALESCE(last_heartbeat_at, created_at) >= NOW() - ($1 * INTERVAL '1 second')) AS is_online
+             FROM portal_workers
+             ORDER BY COALESCE(last_heartbeat_at, created_at) DESC, worker_id ASC`,
+            [staleAfterSeconds]
+        );
+        return result.rows;
+    }
+
+    async getPortalWorker(workerId, { staleAfterSeconds = 180 } = {}) {
+        const result = await this.query(
+            `SELECT *,
+                    (COALESCE(last_heartbeat_at, created_at) >= NOW() - ($2 * INTERVAL '1 second')) AS is_online
+             FROM portal_workers
+             WHERE worker_id = $1
+             LIMIT 1`,
+            [workerId, staleAfterSeconds]
+        );
+        return result.rows[0] || null;
+    }
+
+    async createPortalWorkerJob({
+        caseId,
+        portalTaskId = null,
+        agentRunId = null,
+        workerId = null,
+        mode = 'submit',
+        provider = null,
+        portalUrl,
+        instructions = null,
+        payload = {},
+        fallbackSafe = true,
+    } = {}) {
+        if (!caseId) throw new Error('caseId is required');
+        if (!portalUrl) throw new Error('portalUrl is required');
+
+        const result = await this.query(
+            `INSERT INTO portal_worker_jobs (
+                case_id,
+                portal_task_id,
+                agent_run_id,
+                worker_id,
+                mode,
+                status,
+                provider,
+                portal_url,
+                instructions,
+                payload_jsonb,
+                fallback_safe,
+                created_at,
+                updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, 'queued', $6, $7, $8, COALESCE($9::jsonb, '{}'::jsonb), $10, NOW(), NOW()
+            )
+            RETURNING *`,
+            [
+                caseId,
+                portalTaskId || null,
+                agentRunId || null,
+                workerId || null,
+                mode || 'submit',
+                provider || null,
+                portalUrl,
+                instructions || null,
+                payload ? JSON.stringify(payload) : null,
+                fallbackSafe !== false,
+            ]
+        );
+        return result.rows[0] || null;
+    }
+
+    async claimNextPortalWorkerJob(workerId, { modes = ['submit'], providers = [] } = {}) {
+        if (!workerId) throw new Error('workerId is required');
+
+        const normalizedModes = Array.isArray(modes) && modes.length > 0
+            ? modes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+            : ['submit'];
+        const normalizedProviders = Array.isArray(providers)
+            ? providers.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+            : [];
+
+        const params = [workerId, normalizedModes];
+        let providerFilter = '';
+        if (normalizedProviders.length > 0) {
+            params.push(normalizedProviders);
+            providerFilter = `AND LOWER(COALESCE(job.provider, '')) = ANY($3::text[])`;
+        }
+
+        const result = await this.query(
+            `WITH candidate AS (
+                SELECT job.id
+                  FROM portal_worker_jobs job
+                  JOIN portal_workers worker
+                    ON worker.worker_id = $1
+                 WHERE job.status = 'queued'
+                   AND COALESCE(worker.accepts_jobs, TRUE) = TRUE
+                   AND LOWER(COALESCE(job.mode, 'submit')) = ANY($2::text[])
+                   AND (job.worker_id IS NULL OR job.worker_id = $1)
+                   ${providerFilter}
+                 ORDER BY job.created_at ASC
+                 FOR UPDATE SKIP LOCKED
+                 LIMIT 1
+            )
+            UPDATE portal_worker_jobs job
+               SET status = 'running',
+                   worker_id = $1,
+                   claimed_at = NOW(),
+                   started_at = NOW(),
+                   attempt_count = COALESCE(job.attempt_count, 0) + 1,
+                   updated_at = NOW()
+              FROM candidate
+             WHERE job.id = candidate.id
+             RETURNING job.*`,
+            params
+        );
+        return result.rows[0] || null;
+    }
+
+    async updatePortalWorkerJob(jobId, updates = {}) {
+        if (!jobId) throw new Error('jobId is required');
+
+        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        if (entries.length === 0) {
+            return this.getPortalWorkerJob(jobId);
+        }
+
+        const normalizedEntries = entries.map(([key, value]) => {
+            if ((key === 'payload_jsonb' || key === 'result_jsonb') && value && typeof value !== 'string') {
+                return [key, JSON.stringify(value)];
+            }
+            return [key, value];
+        });
+
+        const setClause = normalizedEntries
+            .map(([key], index) => `${key} = $${index + 2}${key.endsWith('_jsonb') ? '::jsonb' : ''}`)
+            .join(', ');
+
+        const result = await this.query(
+            `UPDATE portal_worker_jobs
+                SET ${setClause},
+                    updated_at = NOW()
+              WHERE id = $1
+              RETURNING *`,
+            [jobId, ...normalizedEntries.map(([, value]) => value)]
+        );
+        return result.rows[0] || null;
+    }
+
+    async getPortalWorkerJob(jobId) {
+        const result = await this.query(
+            `SELECT *
+               FROM portal_worker_jobs
+              WHERE id = $1
+              LIMIT 1`,
+            [jobId]
+        );
+        return result.rows[0] || null;
+    }
+
     async getPortalAutomationPolicy(portalUrl, provider = null, { allowHistoricalBackfill = true } = {}) {
         const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
         if (!fingerprintInfo?.fingerprint) return null;
@@ -2019,6 +2635,9 @@ class DatabaseService {
 
     async backfillPortalAutomationPolicyFromHistory(fingerprintInfo) {
         if (!fingerprintInfo?.fingerprint) return null;
+        if (fingerprintInfo.pathClass !== 'portal_entry') {
+            return null;
+        }
 
         const params = [];
         let providerWhere = '';
@@ -2058,7 +2677,8 @@ class DatabaseService {
                 row.portal_url,
                 row.portal_provider || fingerprintInfo.provider || null
             );
-            return candidateFingerprint?.fingerprint === fingerprintInfo.fingerprint;
+            return candidateFingerprint?.pathClass === 'portal_entry'
+                && candidateFingerprint?.fingerprint === fingerprintInfo.fingerprint;
         });
 
         if (matches.length === 0) {
@@ -2114,9 +2734,9 @@ class DatabaseService {
                 created_at,
                 updated_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9,
+                $1, $2, $3, $4, $5, $6, $7::varchar, $8::varchar, $9::text,
                 $10, $11, $12, $13,
-                CASE WHEN $7 IS NOT NULL THEN NOW() ELSE NULL END,
+                CASE WHEN $7::varchar IS NOT NULL THEN NOW() ELSE NULL END,
                 NOW(), NOW()
             )
             ON CONFLICT (portal_fingerprint) DO UPDATE
@@ -2231,6 +2851,96 @@ class DatabaseService {
         const result = await this.query(
             `SELECT * FROM portal_submissions WHERE case_id = $1 ORDER BY started_at DESC LIMIT $2`,
             [caseId, limit]
+        );
+        return result.rows;
+    }
+
+    async getPortalSubmissionById(id) {
+        const result = await this.query(
+            `SELECT * FROM portal_submissions WHERE id = $1 LIMIT 1`,
+            [id]
+        );
+        return result.rows[0] || null;
+    }
+
+    async replacePortalSessionEvents({
+        portalSubmissionId,
+        caseId,
+        browserSessionId,
+        events = [],
+    }) {
+        if (!portalSubmissionId) throw new Error('portalSubmissionId is required');
+        if (!caseId) throw new Error('caseId is required');
+        if (!browserSessionId) throw new Error('browserSessionId is required');
+
+        await this.query('BEGIN');
+        try {
+            await this.query(
+                `DELETE FROM portal_session_events WHERE portal_submission_id = $1`,
+                [portalSubmissionId]
+            );
+
+            for (const event of events) {
+                await this.query(
+                    `INSERT INTO portal_session_events (
+                        portal_submission_id,
+                        case_id,
+                        browser_session_id,
+                        event_index,
+                        method,
+                        page_id,
+                        level,
+                        url,
+                        status_code,
+                        message,
+                        occurred_at,
+                        request_jsonb,
+                        response_jsonb,
+                        event_jsonb,
+                        created_at,
+                        updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                        COALESCE($12::jsonb, '{}'::jsonb),
+                        COALESCE($13::jsonb, '{}'::jsonb),
+                        COALESCE($14::jsonb, '{}'::jsonb),
+                        NOW(),
+                        NOW()
+                    )`,
+                    [
+                        portalSubmissionId,
+                        caseId,
+                        browserSessionId,
+                        event.event_index,
+                        event.method,
+                        event.page_id ?? null,
+                        event.level ?? null,
+                        event.url ?? null,
+                        event.status_code ?? null,
+                        event.message ?? null,
+                        event.occurred_at ?? null,
+                        event.request_jsonb ? JSON.stringify(event.request_jsonb) : null,
+                        event.response_jsonb ? JSON.stringify(event.response_jsonb) : null,
+                        event.event_jsonb ? JSON.stringify(event.event_jsonb) : null,
+                    ]
+                );
+            }
+
+            await this.query('COMMIT');
+        } catch (error) {
+            await this.query('ROLLBACK').catch(() => {});
+            throw error;
+        }
+    }
+
+    async getPortalSessionEvents(portalSubmissionId, { limit = 300 } = {}) {
+        const result = await this.query(
+            `SELECT *
+               FROM portal_session_events
+              WHERE portal_submission_id = $1
+              ORDER BY event_index ASC
+              LIMIT $2`,
+            [portalSubmissionId, limit]
         );
         return result.rows;
     }
@@ -3563,6 +4273,9 @@ class DatabaseService {
             decisionPromptTokens: 'decision_prompt_tokens',
             decisionCompletionTokens: 'decision_completion_tokens',
             decisionLatencyMs: 'decision_latency_ms',
+            draftSubject: 'draft_subject',
+            draftBodyText: 'draft_body_text',
+            draftBodyHtml: 'draft_body_html',
             draftModelId: 'draft_model_id',
             draftPromptTokens: 'draft_prompt_tokens',
             draftCompletionTokens: 'draft_completion_tokens',
@@ -4274,6 +4987,14 @@ class DatabaseService {
             rows.find((row) => row.portal_provider)?.portal_provider ||
             canonicalRow.portal_provider ||
             null;
+        const mergedManualRequestUrl = choosePreferredChannelUrl([
+            incomingAgencyData?.manual_request_url,
+            ...rows.map((row) => row.manual_request_url),
+        ]) || canonicalRow.manual_request_url || null;
+        const mergedPdfFormUrl = choosePreferredChannelUrl([
+            incomingAgencyData?.pdf_form_url,
+            ...rows.map((row) => row.pdf_form_url),
+        ]) || canonicalRow.pdf_form_url || null;
         const mergedThreadId =
             canonicalRow.email_thread_id ||
             rows.find((row) => row.email_thread_id)?.email_thread_id ||
@@ -4306,6 +5027,12 @@ class DatabaseService {
             updatePayload.portal_url = mergedPortalUrl;
         }
         if ((canonicalRow.portal_provider || null) !== (mergedPortalProvider || null)) updatePayload.portal_provider = mergedPortalProvider;
+        if ((normalizePortalUrl(canonicalRow.manual_request_url) || null) !== (normalizePortalUrl(mergedManualRequestUrl) || null)) {
+            updatePayload.manual_request_url = mergedManualRequestUrl;
+        }
+        if ((normalizePortalUrl(canonicalRow.pdf_form_url) || null) !== (normalizePortalUrl(mergedPdfFormUrl) || null)) {
+            updatePayload.pdf_form_url = mergedPdfFormUrl;
+        }
         if ((canonicalRow.email_thread_id || null) !== (mergedThreadId || null)) updatePayload.email_thread_id = mergedThreadId;
         if ((canonicalRow.status || null) !== (mergedStatus || null)) updatePayload.status = mergedStatus;
         if ((canonicalRow.substatus || null) !== (mergedSubstatus || null)) updatePayload.substatus = mergedSubstatus;
@@ -4395,6 +5122,17 @@ class DatabaseService {
     }
 
     async addCaseAgency(caseId, agencyData) {
+        const normalizedRequestChannels = normalizeRequestChannelFields({
+            portal_url: agencyData.portal_url || null,
+            portal_provider: agencyData.portal_provider || null,
+            manual_request_url: agencyData.manual_request_url || null,
+            pdf_form_url: agencyData.pdf_form_url || null,
+        });
+        agencyData = {
+            ...agencyData,
+            ...normalizedRequestChannels,
+        };
+
         const activeRowsResult = await this.query(
             `SELECT *
                FROM case_agencies
@@ -4430,9 +5168,9 @@ class DatabaseService {
             if (caseRowHasIdentity && !matchesCurrentCaseRow) {
                 await this.query(`
                     INSERT INTO case_agencies (
-                        case_id, agency_id, agency_name, agency_email, portal_url, portal_provider,
+                        case_id, agency_id, agency_name, agency_email, portal_url, portal_provider, manual_request_url, pdf_form_url,
                         is_primary, is_active, added_source, status, notes
-                    ) VALUES ($1, $2, $3, $4, $5, $6, true, true, 'case_row_backfill', 'active', $7)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true, 'case_row_backfill', 'active', $9)
                 `, [
                     caseId,
                     currentCase?.agency_id || null,
@@ -4440,6 +5178,8 @@ class DatabaseService {
                     currentCase?.agency_email || null,
                     normalizedCasePortal,
                     currentCase?.portal_provider || detectPortalProviderByUrl(normalizedCasePortal)?.name || null,
+                    currentCase?.manual_request_url || null,
+                    currentCase?.pdf_form_url || null,
                     'Seeded from case row before adding additional agency',
                 ]);
                 hasSeededPrimaryFromCaseRow = true;
@@ -4452,9 +5192,9 @@ class DatabaseService {
 
         const result = await this.query(`
             INSERT INTO case_agencies (
-                case_id, agency_id, agency_name, agency_email, portal_url, portal_provider,
+                case_id, agency_id, agency_name, agency_email, portal_url, portal_provider, manual_request_url, pdf_form_url,
                 is_primary, is_active, added_source, status, notes
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11, $12)
             RETURNING *
         `, [
             caseId,
@@ -4463,6 +5203,8 @@ class DatabaseService {
             agencyData.agency_email || null,
             agencyData.portal_url || null,
             agencyData.portal_provider || null,
+            agencyData.manual_request_url || null,
+            agencyData.pdf_form_url || null,
             insertIsPrimary,
             agencyData.added_source || 'manual',
             agencyData.status || 'pending',
@@ -4534,6 +5276,8 @@ class DatabaseService {
             agency_email: agencyEmail || null,
             portal_url: portalUrl || null,
             portal_provider: currentCase.portal_provider || detectPortalProviderByUrl(portalUrl)?.name || null,
+            manual_request_url: currentCase.manual_request_url || null,
+            pdf_form_url: currentCase.pdf_form_url || null,
             is_primary: true,
             is_active: true,
             added_source: 'proposal_scope_backfill',
@@ -4648,11 +5392,23 @@ class DatabaseService {
             return this.getCaseAgencyById(caseAgencyId);
         }
 
-        if (updates.portal_url !== undefined) {
-            updates.portal_url = normalizePortalUrl(updates.portal_url);
-        }
-        if (updates.portal_url && !updates.portal_provider) {
-            updates.portal_provider = detectPortalProviderByUrl(updates.portal_url)?.name || null;
+        if (
+            updates.portal_url !== undefined
+            || updates.portal_provider !== undefined
+            || updates.manual_request_url !== undefined
+            || updates.pdf_form_url !== undefined
+        ) {
+            const currentRow = await this.getCaseAgencyById(caseAgencyId);
+            Object.assign(
+                updates,
+                normalizeRequestChannelFields({
+                    portal_url: updates.portal_url !== undefined ? updates.portal_url : currentRow?.portal_url,
+                    portal_provider: updates.portal_provider !== undefined ? updates.portal_provider : currentRow?.portal_provider,
+                    manual_request_url: updates.manual_request_url !== undefined ? updates.manual_request_url : currentRow?.manual_request_url,
+                    pdf_form_url: updates.pdf_form_url !== undefined ? updates.pdf_form_url : currentRow?.pdf_form_url,
+                    last_portal_status: currentRow?.last_portal_status || null,
+                })
+            );
         }
 
         const entries = Object.entries(updates).filter(([, v]) => v !== undefined);
@@ -4678,10 +5434,14 @@ class DatabaseService {
 
     async syncPrimaryAgencyToCase(caseId, primaryCaseAgency) {
         const currentCase = await this.getCaseById(caseId);
-        const normalizedPortalUrl =
-            normalizePortalUrl(primaryCaseAgency.portal_url) ||
-            normalizePortalUrl(currentCase?.portal_url) ||
-            null;
+        const normalizedRequestChannels = normalizeRequestChannelFields({
+            portal_url: primaryCaseAgency.portal_url || currentCase?.portal_url || null,
+            portal_provider: primaryCaseAgency.portal_provider || currentCase?.portal_provider || null,
+            manual_request_url: primaryCaseAgency.manual_request_url || currentCase?.manual_request_url || null,
+            pdf_form_url: primaryCaseAgency.pdf_form_url || currentCase?.pdf_form_url || null,
+            last_portal_status: primaryCaseAgency.last_portal_status || currentCase?.last_portal_status || null,
+        });
+        const normalizedPortalUrl = normalizedRequestChannels.portal_url;
         const currentAgencyEmail = String(currentCase?.agency_email || '').trim().toLowerCase();
         const fallbackAgencyEmail =
             !primaryCaseAgency.agency_email && !normalizedPortalUrl
@@ -4702,6 +5462,8 @@ class DatabaseService {
                 agency_email = $4,
                 portal_url = $5,
                 portal_provider = $6,
+                manual_request_url = $7,
+                pdf_form_url = $8,
                 updated_at = NOW()
             WHERE id = $1
         `, [
@@ -4710,7 +5472,9 @@ class DatabaseService {
             primaryCaseAgency.agency_name,
             primaryCaseAgency.agency_email || fallbackAgencyEmail,
             normalizedPortalUrl,
-            normalizedPortalProvider
+            normalizedPortalProvider,
+            normalizedRequestChannels.manual_request_url,
+            normalizedRequestChannels.pdf_form_url,
         ]);
     }
 
