@@ -5,7 +5,14 @@ const { chromium } = require('playwright');
 const database = require('./database');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 const { persistPortalScreenshot } = require('./portal-screenshot-store');
-const portalScout = require('./portal-scout-service-lightpanda');
+let portalScout = null;
+try {
+    portalScout = require('./portal-scout-service-lightpanda');
+} catch (error) {
+    if (error?.code !== 'MODULE_NOT_FOUND') {
+        throw error;
+    }
+}
 const {
     normalizePortalUrl,
     detectPortalProviderByUrl,
@@ -17,7 +24,9 @@ const DEFAULT_NAVIGATION_TIMEOUT_MS = parseInt(process.env.PLAYWRIGHT_PORTAL_TIM
 const DEFAULT_SLOW_MO_MS = parseInt(process.env.PLAYWRIGHT_PORTAL_SLOW_MO_MS || '0', 10);
 const DEFAULT_HEADLESS = process.env.PLAYWRIGHT_PORTAL_HEADLESS !== 'false';
 const DEFAULT_TRACK_IN_AUTOBOT = process.env.PLAYWRIGHT_PORTAL_TRACK_IN_AUTOBOT === 'true';
-const DEFAULT_SCOUT_ENABLED = String(process.env.LIGHTPANDA_PORTAL_SCOUT_ENABLED || 'true').toLowerCase() !== 'false';
+const DEFAULT_SCOUT_ENABLED =
+    portalScout &&
+    String(process.env.LIGHTPANDA_PORTAL_SCOUT_ENABLED || 'true').toLowerCase() !== 'false';
 const DEFAULT_BROWSERBASE_REGION = process.env.BROWSERBASE_REGION || 'us-east-1';
 const BROWSERBASE_SESSION_URL_PREFIX = 'https://www.browserbase.com/sessions/';
 const DEFAULT_PORTAL_VERIFICATION_CODE_PATTERN = '(\\d{4,8})';
