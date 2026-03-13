@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const pdContactService = require('../services/pd-contact-service');
+const portalAgentServicePlaywright = require('../services/portal-agent-service-playwright');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { normalizeAgencyEmailHint, findCanonicalAgency } = require('../services/canonical-agency');
 const {
@@ -670,6 +671,113 @@ router.post('/:id/agencies/:caId/portal/confirm', async (req, res) => {
 
         const [enrichedAgency] = await db.enrichCaseAgenciesWithPortalAutomationPolicies([{ ...caseAgency, portal_url: normalizedPortalUrl, portal_provider: provider }]);
         res.json({ success: true, case_agency: enrichedAgency, policy });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/cases/:id/agencies/:caId/portal/validate
+ * Open a needs_confirmation portal once in Browserbase/Playwright, persist evidence, and
+ * promote/block the portal fingerprint when the result is clear.
+ */
+router.post('/:id/agencies/:caId/portal/validate', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseAgencyId = parseInt(req.params.caId, 10);
+        if (!caseId || !caseAgencyId) return res.status(400).json({ success: false, error: 'Invalid ids' });
+
+        const [caseAgency, caseData] = await Promise.all([
+            db.getCaseAgencyById(caseAgencyId),
+            db.getCaseById(caseId),
+        ]);
+        if (!caseAgency || Number(caseAgency.case_id) !== Number(caseId)) {
+            return res.status(404).json({ success: false, error: 'Case agency not found' });
+        }
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const normalizedPortalUrl = normalizePortalUrl(caseAgency.portal_url || null);
+        if (!normalizedPortalUrl) {
+            return res.status(400).json({ success: false, error: 'Agency does not have a portal URL to validate' });
+        }
+
+        const provider = caseAgency.portal_provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || null;
+        const decision = await db.getPortalAutomationDecision(
+            normalizedPortalUrl,
+            provider,
+            caseAgency.last_portal_status || caseData.last_portal_status || null
+        );
+
+        if (decision?.status === 'blocked') {
+            return res.status(409).json({
+                success: false,
+                error: `Portal is already blocked for automation (${decision.reason || 'manual-only'})`,
+            });
+        }
+
+        if (decision?.status !== 'needs_confirmation') {
+            const [enrichedAgency] = await db.enrichCaseAgenciesWithPortalAutomationPolicies([
+                { ...caseAgency, portal_url: normalizedPortalUrl, portal_provider: provider },
+            ]);
+            return res.json({
+                success: true,
+                validated: false,
+                message: 'Portal does not require browser validation',
+                case_agency: enrichedAgency,
+                decision,
+            });
+        }
+
+        const validation = await portalAgentServicePlaywright.validatePortal(
+            { ...caseData, portal_provider: provider, portal_url: normalizedPortalUrl },
+            normalizedPortalUrl,
+            {
+                browserBackend: 'browserbase',
+                dryRun: true,
+                trackInAutobot: false,
+            }
+        );
+
+        const policy = await db.recordPortalBrowserValidation({
+            portalUrl: normalizedPortalUrl,
+            provider,
+            caseId,
+            validation,
+        });
+
+        const reason = policy?.policy_status === 'trusted'
+            ? 'Validated as a real portal in Browserbase'
+            : policy?.policy_status === 'blocked'
+                ? 'Validated as manual-only / non-portal in Browserbase'
+                : 'Browser validation completed; portal still needs operator confirmation';
+
+        await db.logActivity('portal_policy_validated', `Browser validation completed for \"${caseAgency.agency_name}\"`, {
+            case_id: caseId,
+            case_agency_id: caseAgencyId,
+            portal_url: normalizedPortalUrl,
+            portal_provider: provider,
+            portal_fingerprint: policy?.portal_fingerprint || decision?.portalFingerprint || null,
+            validation_status: validation?.status || null,
+            validation_page_kind: validation?.pageKind || validation?.extracted_data?.page_kind || null,
+            validation_url: validation?.final_url || null,
+            policy_status: policy?.policy_status || null,
+            policy_reason: policy?.decision_reason || null,
+        });
+
+        const [enrichedAgency] = await db.enrichCaseAgenciesWithPortalAutomationPolicies([
+            { ...caseAgency, portal_url: normalizedPortalUrl, portal_provider: provider },
+        ]);
+
+        res.json({
+            success: true,
+            validated: true,
+            message: reason,
+            case_agency: enrichedAgency,
+            policy,
+            validation,
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

@@ -42,6 +42,27 @@ const PORTAL_PROVIDERS = [
         domains: ['civicplus.com'],
         keywords: ['civicplus', 'civic plus', 'request tracker'],
         defaultPath: '/'
+    },
+    {
+        name: 'formcenter',
+        label: 'FormCenter',
+        domains: [],
+        keywords: ['formcenter'],
+        defaultPath: '/'
+    },
+    {
+        name: 'smartsheet',
+        label: 'Smartsheet',
+        domains: ['smartsheet.com'],
+        keywords: ['smartsheet'],
+        defaultPath: '/'
+    },
+    {
+        name: 'coplogic',
+        label: 'Coplogic',
+        domains: ['coplogic.com'],
+        keywords: ['coplogic'],
+        defaultPath: '/'
     }
 ];
 
@@ -74,7 +95,32 @@ const PORTAL_ENTRY_MARKERS = [
 const CONTACT_MARKERS = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
 const DOCUMENTATION_MARKERS = ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge'];
 const DOWNLOAD_EXTENSION_PATTERN = /\.(pdf|doc|docx|xls|xlsx|rtf|odt|zip|jpg|jpeg|png)$/i;
-const KNOWN_AUTOMATABLE_PROVIDERS = new Set(['govqa', 'nextrequest', 'justfoia', 'civicplus']);
+const KNOWN_AUTOMATABLE_PROVIDERS = new Set(['govqa', 'nextrequest', 'justfoia', 'civicplus', 'formcenter']);
+const NON_PORTAL_HOSTS = new Set([
+    'civicplus.help',
+    'uploads.govqa.us',
+]);
+const ASSET_PATH_MARKERS = ['/download/', '/downloads/', '/upload/', '/uploads/', '/files/', '/images/', '/image/'];
+const REQUEST_FORM_DOCUMENT_PATH_MARKERS = [
+    '/documentcenter/view/',
+    '/forms/',
+    '/form/',
+    '/openrec.',
+    '/open-record',
+    '/records-request',
+    '/public-records-request',
+];
+
+function isGenericJustFoiaRoot(hostname, pathname, providerName = '') {
+    const normalizedHost = String(hostname || '').toLowerCase();
+    const normalizedPath = String(pathname || '/').toLowerCase();
+    const normalizedProvider = String(providerName || '').toLowerCase();
+    return (
+        normalizedProvider === 'justfoia' &&
+        normalizedHost === 'request.justfoia.com' &&
+        (normalizedPath === '/' || normalizedPath === '')
+    );
+}
 
 function normalizePortalUrl(url) {
     if (!url) return null;
@@ -112,9 +158,30 @@ function detectPortalProviderByHostname(hostname) {
 }
 
 function detectPortalProviderByUrl(url) {
-    const hostname = getHostname(url);
+    const normalized = normalizePortalUrl(url);
+    const hostname = getHostname(normalized);
     if (!hostname) return null;
-    return detectPortalProviderByHostname(hostname);
+
+    const detectedByHost = detectPortalProviderByHostname(hostname);
+    if (detectedByHost?.name === 'civicplus' && String(normalized || '').toLowerCase().includes('/formcenter/')) {
+        return PORTAL_PROVIDERS.find(provider => provider.name === 'formcenter') || detectedByHost;
+    }
+    if (detectedByHost) return detectedByHost;
+
+    try {
+        const pathname = new URL(normalized).pathname.toLowerCase();
+        if (pathname.includes('/formcenter/')) {
+            return PORTAL_PROVIDERS.find(provider => provider.name === 'formcenter') || null;
+        }
+        if (hostname === 'app.smartsheet.com' && pathname.includes('/b/form/')) {
+            return PORTAL_PROVIDERS.find(provider => provider.name === 'smartsheet') || null;
+        }
+        if (hostname.includes('coplogic.com')) {
+            return PORTAL_PROVIDERS.find(provider => provider.name === 'coplogic') || null;
+        }
+    } catch (error) {}
+
+    return null;
 }
 
 /**
@@ -201,7 +268,67 @@ function isLikelyContactInfoUrl(url) {
 function isLikelyDocumentationPortalUrl(url) {
     if (!url) return false;
     const value = String(url).toLowerCase();
+    const providerName = detectPortalProviderByUrl(value)?.name || '';
+    if (providerName === 'govqa' && value.includes('supporthome.aspx')) {
+        return false;
+    }
+    if (providerName === 'formcenter' && value.includes('/formcenter/')) {
+        return false;
+    }
     return DOCUMENTATION_MARKERS.some((needle) => value.includes(needle));
+}
+
+function isLikelyAssetPortalUrl(url) {
+    if (!url) return false;
+    const value = String(url).toLowerCase();
+    return ASSET_PATH_MARKERS.some((needle) => value.includes(needle));
+}
+
+function classifyProviderPath(urlObj, providerName = '') {
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = (urlObj.pathname || '/').toLowerCase();
+
+    if (NON_PORTAL_HOSTS.has(hostname)) return 'documentation';
+    if (TRACKING_URL_PATTERNS.some((pattern) => pattern.test(urlObj.toString()))) return 'tracking';
+    if (DOWNLOAD_EXTENSION_PATTERN.test(pathname) || isLikelyAssetPortalUrl(urlObj.toString())) return 'download';
+    if (isLikelyDocumentationPortalUrl(urlObj.toString())) return 'documentation';
+    if (isLikelyContactInfoUrl(urlObj.toString())) return 'contact';
+
+    switch (providerName) {
+        case 'govqa':
+            if (hostname === 'uploads.govqa.us') return 'download';
+            if (pathname.includes('/webapp/') || pathname.includes('requestlogin.aspx') || pathname.includes('supporthome.aspx') || pathname.includes('customerhome.aspx') || pathname.includes('requestselect.aspx')) {
+                return 'portal_entry';
+            }
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
+        case 'nextrequest':
+            if (hostname === 'nextrequest.com' || hostname === 'www.nextrequest.com') return 'unknown_root';
+            if (hostname.endsWith('.nextrequest.com')) {
+                if (pathname === '/' || pathname === '' || pathname === '/requests' || pathname.startsWith('/requests/')) {
+                    return 'portal_entry';
+                }
+                return 'unknown_candidate';
+            }
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
+        case 'justfoia':
+            if (isGenericJustFoiaRoot(hostname, pathname, providerName)) return 'unknown_root';
+            if (pathname.includes('/publicportal') || pathname.includes('/forms/launch') || pathname.startsWith('/forms/')) {
+                return 'portal_entry';
+            }
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
+        case 'formcenter':
+            if (pathname.includes('/formcenter/')) return 'portal_entry';
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'documentation';
+        case 'smartsheet':
+            if (hostname === 'app.smartsheet.com' && pathname.includes('/b/form/')) return 'portal_entry';
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
+        case 'coplogic':
+            if (pathname.includes('/dors/') || pathname.includes('/publicreport')) return 'portal_entry';
+            return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
+        default:
+            if (pathname === '/' || pathname === '') return 'unknown_root';
+            return 'unknown_candidate';
+    }
 }
 
 function getPortalPathClass(url, provider = null) {
@@ -210,24 +337,15 @@ function getPortalPathClass(url, provider = null) {
 
     try {
         const urlObj = new URL(normalized);
-        const pathname = (urlObj.pathname || '/').toLowerCase();
-        const hostname = urlObj.hostname.toLowerCase();
         const providerName = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase();
-
-        if (TRACKING_URL_PATTERNS.some((pattern) => pattern.test(normalized))) return 'tracking';
-        if (DOWNLOAD_EXTENSION_PATTERN.test(pathname)) return 'download';
-        if (isLikelyDocumentationPortalUrl(normalized)) return 'documentation';
-        if (isLikelyContactInfoUrl(normalized)) return 'contact';
+        const classified = classifyProviderPath(urlObj, providerName);
+        if (classified) return classified;
+        const pathname = (urlObj.pathname || '/').toLowerCase();
         if (pathname.includes('/login') || pathname.includes('/signin') || pathname.includes('/requestlogin.aspx')) {
             return 'portal_entry';
         }
         if (PORTAL_ENTRY_MARKERS.some((needle) => pathname.includes(needle))) return 'portal_entry';
-        if (KNOWN_AUTOMATABLE_PROVIDERS.has(providerName)) return 'portal_entry';
-        if (hostname.includes('nextrequest.com') || hostname.includes('govqa.us') || hostname.includes('justfoia.com')) {
-            return 'portal_entry';
-        }
-        if (pathname === '/' || pathname === '') return 'unknown_root';
-        return 'unknown_candidate';
+        return pathname === '/' || pathname === '' ? 'unknown_root' : 'unknown_candidate';
     } catch (error) {
         return 'invalid';
     }
@@ -270,6 +388,161 @@ function buildPortalFingerprint(url, provider = null) {
     } catch (error) {
         return null;
     }
+}
+
+function isRequestFormDocumentUrl(url) {
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) return false;
+
+    try {
+        const urlObj = new URL(normalized);
+        const pathname = (urlObj.pathname || '/').toLowerCase();
+        if (/\.(pdf|doc|docx|xls|xlsx|rtf|odt)$/i.test(pathname)) {
+            return true;
+        }
+        return REQUEST_FORM_DOCUMENT_PATH_MARKERS.some((needle) => pathname.includes(needle));
+    } catch (error) {
+        return false;
+    }
+}
+
+function classifyRequestChannelUrl(url, provider = null, lastPortalStatus = null) {
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) {
+        return {
+            kind: 'discard',
+            normalizedUrl: null,
+            provider: provider || null,
+            pathClass: 'invalid',
+            reason: 'missing_or_invalid_url',
+        };
+    }
+
+    try {
+        const detectedProvider = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase() || null;
+        const pathClass = getPortalPathClass(normalized, detectedProvider);
+        const pathname = new URL(normalized).pathname.toLowerCase();
+
+        if (TRACKING_URL_PATTERNS.some((pattern) => pattern.test(normalized))) {
+            return {
+                kind: 'discard',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass: 'tracking',
+                reason: 'tracking_url',
+            };
+        }
+
+        if (isGenericJustFoiaRoot(getHostname(normalized), pathname, detectedProvider)) {
+            return {
+                kind: 'discard',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: 'generic_justfoia_root',
+            };
+        }
+
+        if (isNonAutomatablePortalProvider(provider)) {
+            return {
+                kind: isRequestFormDocumentUrl(normalized) ? 'pdf_form' : 'manual_request',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: 'non_automatable_provider',
+            };
+        }
+
+        if (isNonAutomatablePortalStatus(lastPortalStatus)) {
+            return {
+                kind: isRequestFormDocumentUrl(normalized) ? 'pdf_form' : 'manual_request',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: 'non_automatable_status',
+            };
+        }
+
+        if (isSupportedPortalUrl(normalized, detectedProvider, lastPortalStatus)) {
+            return {
+                kind: 'portal',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: 'real_portal_candidate',
+            };
+        }
+
+        if (pathClass === 'download') {
+            return {
+                kind: isRequestFormDocumentUrl(normalized) ? 'pdf_form' : 'discard',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: isRequestFormDocumentUrl(normalized) ? 'downloadable_request_form' : 'non_portal_download',
+            };
+        }
+
+        if (['contact', 'documentation'].includes(pathClass)) {
+            return {
+                kind: 'manual_request',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: pathClass,
+            };
+        }
+
+        return {
+            kind: 'discard',
+            normalizedUrl: normalized,
+            provider: detectedProvider,
+            pathClass,
+            reason: 'non_portal_candidate',
+        };
+    } catch (error) {
+        return {
+            kind: 'discard',
+            normalizedUrl: null,
+            provider: provider || null,
+            pathClass: 'invalid',
+            reason: 'invalid_url',
+        };
+    }
+}
+
+function normalizeRequestChannelFields(fields = {}) {
+    const result = {
+        portal_url: null,
+        portal_provider: null,
+        manual_request_url: null,
+        pdf_form_url: null,
+    };
+
+    const candidates = [
+        { url: fields.portal_url, provider: fields.portal_provider || null, source: 'portal_url' },
+        { url: fields.manual_request_url, provider: null, source: 'manual_request_url' },
+        { url: fields.pdf_form_url, provider: null, source: 'pdf_form_url' },
+    ];
+
+    for (const candidate of candidates) {
+        if (!candidate.url) continue;
+        const classified = classifyRequestChannelUrl(candidate.url, candidate.provider, fields.last_portal_status || null);
+        if (classified.kind === 'portal' && !result.portal_url) {
+            result.portal_url = classified.normalizedUrl;
+            result.portal_provider = classified.provider || detectPortalProviderByUrl(classified.normalizedUrl)?.name || null;
+            continue;
+        }
+        if (classified.kind === 'manual_request' && !result.manual_request_url) {
+            result.manual_request_url = classified.normalizedUrl;
+            continue;
+        }
+        if (classified.kind === 'pdf_form' && !result.pdf_form_url) {
+            result.pdf_form_url = classified.normalizedUrl;
+        }
+    }
+
+    return result;
 }
 
 function evaluatePortalAutomationDecision({
@@ -378,6 +651,94 @@ function evaluatePortalAutomationDecision({
     };
 }
 
+function derivePortalPolicyFromBrowserValidation({
+    portalUrl,
+    provider = null,
+    validation = {},
+} = {}) {
+    const normalizedPortalUrl = normalizePortalUrl(portalUrl);
+    const normalizedProvider = String(provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || '').toLowerCase() || 'unknown';
+    const validationUrl = normalizePortalUrl(validation.final_url || validation.portalUrl || normalizedPortalUrl);
+    const finalProvider = String(validation.provider || normalizedProvider || '').toLowerCase() || normalizedProvider;
+    const pathClass = getPortalPathClass(validationUrl || normalizedPortalUrl, finalProvider);
+    const pageKind = String(
+        validation.pageKind
+        || validation.page_kind
+        || validation?.extracted_data?.page_kind
+        || validation?.scout?.pageKind
+        || ''
+    ).toLowerCase() || null;
+    const status = String(validation.status || '').toLowerCase() || null;
+
+    if (['tracking', 'download', 'documentation', 'contact', 'invalid'].includes(pathClass)) {
+        return {
+            policyStatus: 'blocked',
+            decisionReason: pathClass,
+            pathClass,
+            validationStatus: status,
+            validationPageKind: pageKind,
+            validationUrl: validationUrl || normalizedPortalUrl,
+        };
+    }
+
+    if ([
+        'unsupported_portal',
+        'blocked_cloudflare',
+        'blocked_access_restricted',
+    ].includes(status)) {
+        return {
+            policyStatus: 'blocked',
+            decisionReason: status,
+            pathClass,
+            validationStatus: status,
+            validationPageKind: pageKind,
+            validationUrl: validationUrl || normalizedPortalUrl,
+        };
+    }
+
+    if (
+        ['portal_entry', 'unknown_candidate', 'unknown_root'].includes(pathClass)
+        && [
+            'dry_run_form_filled',
+            'dry_run_form_detected',
+            'dry_run_auth_ready',
+            'landing_page_detected',
+            'auth_ready',
+            'auth_not_required',
+            'request_form_public',
+        ].includes(status)
+    ) {
+        return {
+            policyStatus: 'trusted',
+            decisionReason: status || 'browser_validation_confirmed',
+            pathClass,
+            validationStatus: status,
+            validationPageKind: pageKind,
+            validationUrl: validationUrl || normalizedPortalUrl,
+        };
+    }
+
+    if (pageKind === 'request_form' && ['portal_entry', 'unknown_candidate', 'unknown_root'].includes(pathClass)) {
+        return {
+            policyStatus: 'trusted',
+            decisionReason: 'browser_validation_request_form',
+            pathClass,
+            validationStatus: status,
+            validationPageKind: pageKind,
+            validationUrl: validationUrl || normalizedPortalUrl,
+        };
+    }
+
+    return {
+        policyStatus: null,
+        decisionReason: status || 'browser_validation_inconclusive',
+        pathClass,
+        validationStatus: status,
+        validationPageKind: pageKind,
+        validationUrl: validationUrl || normalizedPortalUrl,
+    };
+}
+
 function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
     if (!url) return false;
 
@@ -390,14 +751,17 @@ function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
 
     try {
         const urlObj = new URL(normalized);
-        const pathname = urlObj.pathname.toLowerCase();
+        const providerName = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase();
+        const pathClass = getPortalPathClass(normalized, providerName);
 
-        // Reject document file URLs — these are downloads, not portals
-        if (DOWNLOAD_EXTENSION_PATTERN.test(pathname)) {
+        if (isGenericJustFoiaRoot(urlObj.hostname, (urlObj.pathname || '/').toLowerCase(), providerName)) {
             return false;
         }
 
-        // Accept all other URLs (let Skyvern attempt them)
+        if (['tracking', 'download', 'documentation', 'contact', 'invalid'].includes(pathClass)) {
+            return false;
+        }
+
         return true;
     } catch (error) {
         return false;
@@ -417,4 +781,7 @@ module.exports = {
     getPortalPathClass,
     buildPortalFingerprint,
     evaluatePortalAutomationDecision,
+    derivePortalPolicyFromBrowserValidation,
+    classifyRequestChannelUrl,
+    normalizeRequestChannelFields,
 };

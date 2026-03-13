@@ -98,6 +98,7 @@ import {
   Plus,
   Download,
   Bug,
+  FileText,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -203,6 +204,18 @@ function getDeliveryTarget(
     "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL"].includes(actionType)) {
     return { method: "EMAIL", target: request.agency_email || null };
   }
+  return null;
+}
+
+function resolveManualRequestUrl(caseUrl: string | null | undefined, agencyUrl?: string | null): string | null {
+  if (caseUrl) return caseUrl;
+  if (agencyUrl) return agencyUrl;
+  return null;
+}
+
+function resolvePdfFormUrl(caseUrl: string | null | undefined, agencyUrl?: string | null): string | null {
+  if (caseUrl) return caseUrl;
+  if (agencyUrl) return agencyUrl;
   return null;
 }
 
@@ -548,10 +561,59 @@ interface PortalSubmission {
   account_email: string | null;
   screenshot_url: string | null;
   recording_url: string | null;
+  browser_backend: string | null;
+  browser_session_id: string | null;
+  browser_session_url: string | null;
+  browser_debugger_url: string | null;
+  browser_debugger_fullscreen_url: string | null;
+  browser_region: string | null;
+  browser_status: string | null;
+  browser_metadata: Record<string, unknown> | null;
+  browser_live_urls_jsonb: Record<string, unknown> | null;
+  browser_logs_synced_at: string | null;
+  auth_context_id: string | null;
+  auth_intervention_status: string | null;
+  auth_intervention_reason: string | null;
+  auth_intervention_requested_at: string | null;
+  auth_intervention_completed_at: string | null;
+  browser_keep_alive: boolean | null;
+  browser_cost_policy: Record<string, unknown> | string | null;
   extracted_data: Record<string, unknown> | null;
   error_message: string | null;
   started_at: string;
   completed_at: string | null;
+}
+
+interface PortalSessionEvent {
+  id: number;
+  event_index: number;
+  method: string;
+  page_id: number | null;
+  level: string | null;
+  url: string | null;
+  status_code: number | null;
+  message: string | null;
+  occurred_at: string | null;
+}
+
+interface PortalSessionEventsResponse {
+  success: boolean;
+  case_id: number;
+  submission: PortalSubmission;
+  count: number;
+  refreshed: boolean;
+  events: PortalSessionEvent[];
+}
+
+function normalizeBrowserCostPolicy(value: PortalSubmission["browser_cost_policy"]): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function portalStatusBadge(status: string) {
@@ -567,10 +629,538 @@ function portalStatusBadge(status: string) {
   return <Badge variant="outline" className="text-[10px] px-1 py-0">{status}</Badge>;
 }
 
-function truncateJson(data: Record<string, unknown> | null, maxLen = 60): string {
-  if (!data) return "\u2014";
-  const str = JSON.stringify(data);
-  return str.length > maxLen ? str.slice(0, maxLen) + "\u2026" : str;
+function humanizePortalLabel(value: string | null | undefined, fallback = "\u2014"): string {
+  const normalized = String(value || "").trim();
+  if (!normalized) return fallback;
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getPortalSubmissionHeadline(submission: PortalSubmission): string {
+  if (submission.error_message) return submission.error_message;
+
+  const extracted = submission.extracted_data && typeof submission.extracted_data === "object"
+    ? submission.extracted_data
+    : null;
+
+  if (extracted) {
+    const preview = Object.entries(extracted)
+      .filter(([, value]) => value !== null && value !== undefined && value !== "")
+      .slice(0, 3)
+      .map(([key, value]) => `${humanizePortalLabel(key)}: ${String(value)}`);
+    if (preview.length > 0) return preview.join(" · ");
+  }
+
+  if (String(submission.status || "").toLowerCase().includes("dry_run")) {
+    return "Dry run completed without sending the real portal submission.";
+  }
+
+  return "Portal automation attempt recorded for this case.";
+}
+
+function isDryRunSubmission(submission: PortalSubmission): boolean {
+  const status = String(submission.status || "").toLowerCase();
+  const engine = String(submission.engine || "").toLowerCase();
+  return status.includes("dry_run") || engine.includes("dry run") || engine.includes("dry_run");
+}
+
+function PortalSubmissionScreenshot({
+  url,
+  alt,
+}: {
+  url: string;
+  alt: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (!url) return null;
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group relative block overflow-hidden rounded-2xl border border-border/60 bg-black/30"
+    >
+      {!failed ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={alt}
+            className="h-44 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+            onError={() => setFailed(true)}
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 text-xs text-white/85">
+            Portal screenshot
+          </div>
+        </>
+      ) : (
+        <div className="flex h-44 flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
+          <Paperclip className="h-4 w-4" />
+          <div>
+            <div className="font-medium text-foreground/80">Screenshot unavailable</div>
+            <div>The stored image link is no longer valid.</div>
+          </div>
+        </div>
+      )}
+    </a>
+  );
+}
+
+function PortalAuthResumeButton({
+  caseId,
+  submission,
+  onCompleted,
+}: {
+  caseId: string;
+  submission: PortalSubmission;
+  onCompleted: () => Promise<void> | void;
+}) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleClick = useCallback(async () => {
+    setIsSubmitting(true);
+    try {
+      await fetchAPI(`/requests/${caseId}/portal-submissions/${submission.id}/complete-auth`, {
+        method: "POST",
+      });
+      toast.success("Portal auth marked complete. The worker is resuming the submission now.");
+      await onCompleted();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to resume the portal submission");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [caseId, onCompleted, submission.id]);
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      className="h-8 rounded-full bg-cyan-500/20 px-3 text-[11px] text-cyan-100 hover:bg-cyan-500/30"
+      onClick={handleClick}
+      disabled={isSubmitting}
+    >
+      {isSubmitting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Play className="mr-1 h-3 w-3" />}
+      Complete Auth & Retry
+    </Button>
+  );
+}
+
+function BrowserbaseSessionDialog({
+  caseId,
+  submission,
+}: {
+  caseId: string;
+  submission: PortalSubmission;
+}) {
+  const [open, setOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const endpoint = open && submission.browser_session_id
+    ? `/requests/${caseId}/portal-submissions/${submission.id}/session-events`
+    : null;
+  const { data, error, isLoading, mutate } = useSWR<PortalSessionEventsResponse>(
+    endpoint,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+
+  const activeSubmission = data?.submission || submission;
+  const events = data?.events || [];
+  const liveViewUrl =
+    activeSubmission.browser_debugger_url ||
+    activeSubmission.browser_debugger_fullscreen_url ||
+    null;
+
+  const handleRefresh = useCallback(async () => {
+    if (!submission.browser_session_id) return;
+    setIsRefreshing(true);
+    try {
+      const refreshed = await fetchAPI<PortalSessionEventsResponse>(
+        `/requests/${caseId}/portal-submissions/${submission.id}/session-events?refresh=true`
+      );
+      await mutate(refreshed, false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [caseId, mutate, submission.browser_session_id, submission.id]);
+
+  if (!submission.browser_session_id) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="text-blue-400 hover:underline inline-flex items-center gap-1"
+        onClick={() => setOpen(true)}
+      >
+        <Activity className="h-2.5 w-2.5" /> Logs
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              Browser Session
+              <Badge variant="outline" className="capitalize">
+                {activeSubmission.browser_backend || "browser"}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription>
+              Session {activeSubmission.browser_session_id}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {activeSubmission.browser_session_url && (
+              <a
+                href={activeSubmission.browser_session_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline inline-flex items-center gap-1"
+              >
+                <ExternalLink className="h-3 w-3" /> Session
+              </a>
+            )}
+            {liveViewUrl && (
+              <a
+                href={liveViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline inline-flex items-center gap-1"
+              >
+                <Play className="h-3 w-3" /> Live View
+              </a>
+            )}
+            {activeSubmission.recording_url && (
+              <a
+                href={activeSubmission.recording_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline inline-flex items-center gap-1"
+              >
+                <ExternalLink className="h-3 w-3" /> Recording
+              </a>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="h-7 text-[11px]"
+            >
+              {isRefreshing ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+              Refresh logs
+            </Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+            <div className="rounded border border-border/50 p-2">
+              <div className="text-muted-foreground">Status</div>
+              <div className="font-medium">{activeSubmission.browser_status || activeSubmission.status || "unknown"}</div>
+            </div>
+            <div className="rounded border border-border/50 p-2">
+              <div className="text-muted-foreground">Region</div>
+              <div className="font-medium">{activeSubmission.browser_region || "n/a"}</div>
+            </div>
+            <div className="rounded border border-border/50 p-2">
+              <div className="text-muted-foreground">Logs synced</div>
+              <div className="font-medium">{activeSubmission.browser_logs_synced_at ? formatDate(activeSubmission.browser_logs_synced_at) : "not yet"}</div>
+            </div>
+            <div className="rounded border border-border/50 p-2">
+              <div className="text-muted-foreground">Events</div>
+              <div className="font-medium">{data?.count ?? events.length}</div>
+            </div>
+          </div>
+
+          <ScrollArea className="h-[420px] rounded border border-border/50">
+            <div className="divide-y divide-border/50">
+              {isLoading && (
+                <div className="p-4 text-sm text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading session events...
+                </div>
+              )}
+              {!isLoading && error && (
+                <div className="p-4 text-sm text-red-400">
+                  {error.message}
+                </div>
+              )}
+              {!isLoading && !error && events.length === 0 && (
+                <div className="p-4 text-sm text-muted-foreground">
+                  No Browserbase session events have been synced yet.
+                </div>
+              )}
+              {events.map((event) => (
+                <div key={event.id} className="p-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline" className="font-mono text-[10px]">
+                      {event.method}
+                    </Badge>
+                    {event.level && (
+                      <Badge variant="outline" className="capitalize text-[10px]">
+                        {event.level}
+                      </Badge>
+                    )}
+                    {event.status_code != null && (
+                      <Badge variant="outline" className="text-[10px]">
+                        {event.status_code}
+                      </Badge>
+                    )}
+                    <span className="text-muted-foreground">
+                      {event.occurred_at ? formatDate(event.occurred_at) : "Unknown time"}
+                    </span>
+                  </div>
+                  {event.message && (
+                    <div className="mt-2 whitespace-pre-wrap break-words text-sm">
+                      {event.message}
+                    </div>
+                  )}
+                  {event.url && (
+                    <div className="mt-1 break-all text-muted-foreground">
+                      {event.url}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function PortalSubmissionCard({
+  caseId,
+  submission,
+  onUpdated,
+}: {
+  caseId: string;
+  submission: PortalSubmission;
+  onUpdated: () => Promise<void> | void;
+}) {
+  const liveUrl = submission.browser_debugger_url || submission.browser_debugger_fullscreen_url || null;
+  const needsAuthResume = String(submission.auth_intervention_status || "").toLowerCase() === "requested"
+    || String(submission.status || "").toLowerCase() === "auth_intervention_required";
+  const costPolicy = normalizeBrowserCostPolicy(submission.browser_cost_policy);
+  const blockedTypes = Array.isArray(costPolicy.blockResourceTypes)
+    ? costPolicy.blockResourceTypes.filter(Boolean).map((value) => String(value))
+    : [];
+  const captchaSolveEnabled = Boolean(costPolicy.solveCaptchas);
+  const proxyPolicyActive = Boolean(costPolicy.proxies);
+  const detailItems = [
+    { label: "Engine", value: humanizePortalLabel(submission.engine, "Unknown") },
+    { label: "Backend", value: humanizePortalLabel(submission.browser_backend, "Local browser") },
+    { label: "Account", value: submission.account_email || "Not captured" },
+    { label: "Region", value: humanizePortalLabel(submission.browser_region, "n/a") },
+  ];
+  const extractedPreview = submission.extracted_data && typeof submission.extracted_data === "object"
+    ? Object.entries(submission.extracted_data)
+        .filter(([, value]) => value !== null && value !== undefined && value !== "")
+        .slice(0, 4)
+    : [];
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-[linear-gradient(180deg,rgba(14,20,24,0.96),rgba(8,12,15,0.98))] p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {portalStatusBadge(submission.status)}
+            {isDryRunSubmission(submission) && (
+              <Badge variant="outline" className="text-[10px] border-blue-500/30 bg-blue-500/10 text-blue-300">
+                Dry Run
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+              {formatRelativeTime(submission.started_at)}
+            </Badge>
+          </div>
+          <div className="mt-3 text-sm font-semibold text-foreground">
+            {getPortalSubmissionHeadline(submission)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            Started {formatDate(submission.started_at)}
+            {submission.completed_at ? ` · Finished ${formatDate(submission.completed_at)}` : ""}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {submission.screenshot_url && (
+            <a
+              href={submission.screenshot_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Screenshot
+            </a>
+          )}
+          {submission.browser_session_url && (
+            <a
+              href={submission.browser_session_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
+            >
+              <Activity className="h-3 w-3" />
+              Session
+            </a>
+          )}
+          {liveUrl && (
+            <a
+              href={liveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
+            >
+              <Play className="h-3 w-3" />
+              Live
+            </a>
+          )}
+          {submission.recording_url && (
+            <a
+              href={submission.recording_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-black/20 px-3 py-1.5 text-xs text-foreground/85 transition-colors hover:border-cyan-400/30 hover:text-cyan-200"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Recording
+            </a>
+          )}
+          {submission.browser_session_id && (
+            <BrowserbaseSessionDialog caseId={caseId} submission={submission} />
+          )}
+        </div>
+      </div>
+
+      {needsAuthResume && (
+        <div className="mt-4 rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-sm font-semibold text-cyan-100">
+                <UserCheck className="h-4 w-4" />
+                Manual portal auth required
+              </div>
+              <div className="mt-1 text-xs text-cyan-50/80">
+                {submission.auth_intervention_reason || "Complete the portal login or 2FA step in Browserbase, then resume the same submission."}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-cyan-50/70">
+                {submission.auth_context_id && (
+                  <span className="rounded-full border border-cyan-400/20 bg-black/20 px-2 py-1">
+                    Context {submission.auth_context_id}
+                  </span>
+                )}
+                {submission.auth_intervention_requested_at && (
+                  <span className="rounded-full border border-cyan-400/20 bg-black/20 px-2 py-1">
+                    Requested {formatDate(submission.auth_intervention_requested_at)}
+                  </span>
+                )}
+                {submission.browser_keep_alive && (
+                  <span className="rounded-full border border-cyan-400/20 bg-black/20 px-2 py-1">
+                    Session kept alive
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {liveUrl && (
+                <a
+                  href={liveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-black/20 px-3 py-1.5 text-xs text-cyan-100 transition-colors hover:border-cyan-300/50 hover:text-white"
+                >
+                  <Play className="h-3 w-3" />
+                  Open Live View
+                </a>
+              )}
+              <PortalAuthResumeButton caseId={caseId} submission={submission} onCompleted={onUpdated} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {detailItems.map((item) => (
+          <div key={item.label} className="rounded-xl border border-white/5 bg-black/20 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{item.label}</div>
+            <div className="mt-1 truncate text-sm font-medium text-foreground/90" title={item.value}>
+              {item.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {(submission.auth_context_id || submission.browser_keep_alive || blockedTypes.length > 0 || proxyPolicyActive || captchaSolveEnabled) && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {submission.auth_context_id && (
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-foreground/80">
+              Auth context enabled
+            </div>
+          )}
+          {submission.browser_keep_alive && (
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-foreground/80">
+              Keep alive
+            </div>
+          )}
+          {captchaSolveEnabled && (
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-foreground/80">
+              CAPTCHA solve on
+            </div>
+          )}
+          {proxyPolicyActive && (
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-foreground/80">
+              Proxy policy active
+            </div>
+          )}
+          {blockedTypes.length > 0 && (
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-foreground/80">
+              Blocked assets: {blockedTypes.join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+
+      {submission.error_message && (
+        <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div className="mb-1 flex items-center gap-1 font-medium">
+            <AlertTriangle className="h-3 w-3" />
+            Run issue
+          </div>
+          <div className="whitespace-pre-wrap break-words">{submission.error_message}</div>
+        </div>
+      )}
+
+      {extractedPreview.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {extractedPreview.map(([key, value]) => (
+            <div key={key} className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200">
+              <span className="mr-1 text-emerald-100/70">{humanizePortalLabel(key)}</span>
+              <span className="font-medium">{String(value)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {submission.screenshot_url && (
+        <div className="mt-4">
+          <PortalSubmissionScreenshot
+            url={submission.screenshot_url}
+            alt={`Portal screenshot for submission ${submission.id}`}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PortalSubmissionsSection({ caseId }: { caseId: string }) {
@@ -580,23 +1170,27 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadSubmissions = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetcher<{ success: boolean; count: number; submissions: PortalSubmission[] }>(
+        `/requests/${caseId}/portal-submissions`
+      );
+      setSubmissions(data.submissions || []);
+      setHasLoaded(true);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load portal submissions");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [caseId]);
+
   const handleToggle = async () => {
     const willOpen = !isOpen;
     setIsOpen(willOpen);
     if (willOpen && !hasLoaded) {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const data = await fetcher<{ success: boolean; count: number; submissions: PortalSubmission[] }>(
-          `/requests/${caseId}/portal-submissions`
-        );
-        setSubmissions(data.submissions || []);
-        setHasLoaded(true);
-      } catch (err: any) {
-        setError(err?.message || "Failed to load portal submissions");
-      } finally {
-        setIsLoading(false);
-      }
+      await loadSubmissions();
     }
   };
 
@@ -624,70 +1218,11 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
           <div className="text-[10px] text-muted-foreground py-2">No portal submissions recorded</div>
         )}
         {hasLoaded && submissions.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="text-[10px] h-6 px-1">Status</TableHead>
-                <TableHead className="text-[10px] h-6 px-1">Engine</TableHead>
-                <TableHead className="text-[10px] h-6 px-1">Result</TableHead>
-                <TableHead className="text-[10px] h-6 px-1">Links</TableHead>
-                <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {submissions.map((sub) => (
-                <TableRow key={sub.id} className="hover:bg-muted/30">
-                  <TableCell className="text-[10px] px-1 py-1">
-                    {portalStatusBadge(sub.status)}
-                  </TableCell>
-                  <TableCell className="text-[10px] px-1 py-1 text-muted-foreground">
-                    {sub.engine || "\u2014"}
-                  </TableCell>
-                  <TableCell className="text-[10px] px-1 py-1 max-w-[160px]">
-                    {sub.error_message ? (
-                      <span className="text-red-400 truncate block" title={sub.error_message}>
-                        {sub.error_message.length > 60 ? sub.error_message.slice(0, 60) + "\u2026" : sub.error_message}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground truncate block" title={truncateJson(sub.extracted_data, 200)}>
-                        {truncateJson(sub.extracted_data)}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-[10px] px-1 py-1 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      {sub.screenshot_url && (
-                        <a
-                          href={sub.screenshot_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:underline inline-flex items-center gap-1"
-                        >
-                          <ExternalLink className="h-2.5 w-2.5" /> Screenshot
-                        </a>
-                      )}
-                      {sub.recording_url && (
-                        <a
-                          href={sub.recording_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:underline inline-flex items-center gap-1"
-                        >
-                          <ExternalLink className="h-2.5 w-2.5" /> Recording
-                        </a>
-                      )}
-                      {!sub.screenshot_url && !sub.recording_url && (
-                        <span className="text-muted-foreground">\u2014</span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
-                    {formatRelativeTime(sub.started_at)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className="space-y-3">
+            {submissions.map((sub) => (
+              <PortalSubmissionCard key={sub.id} caseId={caseId} submission={sub} onUpdated={loadSubmissions} />
+            ))}
+          </div>
         )}
       </div>
     </details>
@@ -1491,7 +2026,7 @@ function DetailV2Content() {
   // Multi-agency state
   const [agencyActionLoading, setAgencyActionLoading] = useState<{
     id: number;
-    action: "primary" | "research" | "confirm-portal" | "block-portal";
+    action: "primary" | "research" | "confirm-portal" | "validate-portal" | "block-portal";
   } | null>(null);
   const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
@@ -2134,8 +2669,15 @@ function DetailV2Content() {
     if (!id) return;
     setIsResolving(true);
     try {
-      if (action === "submit_manually" && data?.request?.portal_url) {
-        window.open(data.request.portal_url, "_blank");
+      if (action === "submit_manually") {
+        const primaryAgency = data?.case_agencies?.find((agency) => agency.is_primary) || null;
+        const manualTarget =
+          resolvePortalUrl(data?.request?.portal_url ?? null, agency_summary?.portal_url ?? null) ||
+          resolveManualRequestUrl(data?.request?.manual_request_url ?? null, primaryAgency?.manual_request_url ?? null) ||
+          resolvePdfFormUrl(data?.request?.pdf_form_url ?? null, primaryAgency?.pdf_form_url ?? null);
+        if (manualTarget) {
+          window.open(manualTarget, "_blank");
+        }
       }
       await requestsAPI.resolveReview(id, action, instruction);
       optimisticClear();
@@ -2423,6 +2965,22 @@ function DetailV2Content() {
       toast.success("Portal marked manual-only");
     } catch (e: any) {
       toast.error(e.message || "Failed to mark portal manual-only");
+    } finally {
+      setAgencyActionLoading(null);
+    }
+  };
+
+  const handleValidatePortal = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoading({ id: caseAgencyId, action: "validate-portal" });
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/portal/validate`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to validate portal");
+      await mutate();
+      toast.success(json.message || "Portal validation complete");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to validate portal");
     } finally {
       setAgencyActionLoading(null);
     }
@@ -3566,6 +4124,9 @@ function DetailV2Content() {
                       const isBlockingPortal =
                         agencyActionLoading?.id === ca.id &&
                         agencyActionLoading.action === "block-portal";
+                      const isValidatingPortal =
+                        agencyActionLoading?.id === ca.id &&
+                        agencyActionLoading.action === "validate-portal";
                       const portalAutomationLabel =
                         ca.portal_automation_status === "trusted"
                           ? "Trusted portal"
@@ -3596,6 +4157,18 @@ function DetailV2Content() {
                               <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
                             </div>
                           )}
+                          {ca.manual_request_url && (
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                              <a href={ca.manual_request_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Manual page</a>
+                            </div>
+                          )}
+                          {ca.pdf_form_url && (
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <FileText className="h-2.5 w-2.5 text-muted-foreground" />
+                              <a href={ca.pdf_form_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">PDF form</a>
+                            </div>
+                          )}
                           {portalAutomationLabel && (
                             <div className="flex flex-wrap items-center gap-1 text-[10px]">
                               <Badge
@@ -3608,6 +4181,63 @@ function DetailV2Content() {
                                 <span className="text-muted-foreground">
                                   {ca.portal_automation_reason.replace(/_/g, " ")}
                                 </span>
+                              )}
+                            </div>
+                          )}
+                          {(ca.portal_automation_last_validation_status || ca.portal_automation_last_validated_at) && (
+                            <div className="space-y-1 rounded border border-dashed p-2 text-[10px] text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="font-medium text-foreground">Last browser validation</span>
+                                {ca.portal_automation_last_validation_status && (
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                    {ca.portal_automation_last_validation_status.replace(/_/g, " ")}
+                                  </Badge>
+                                )}
+                                {ca.portal_automation_last_validation_page_kind && (
+                                  <span>{ca.portal_automation_last_validation_page_kind.replace(/_/g, " ")}</span>
+                                )}
+                                {ca.portal_automation_last_validated_at && (
+                                  <span>· {formatRelativeTime(ca.portal_automation_last_validated_at)}</span>
+                                )}
+                              </div>
+                              {ca.portal_automation_last_validation_title && (
+                                <div className="truncate">{ca.portal_automation_last_validation_title}</div>
+                              )}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {ca.portal_automation_last_validation_url && (
+                                  <a
+                                    href={ca.portal_automation_last_validation_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-400 hover:underline"
+                                  >
+                                    Observed URL
+                                  </a>
+                                )}
+                                {ca.portal_automation_last_validation_session_url && (
+                                  <a
+                                    href={ca.portal_automation_last_validation_session_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-400 hover:underline"
+                                  >
+                                    Browser session
+                                  </a>
+                                )}
+                              </div>
+                              {ca.portal_automation_last_validation_screenshot_url && (
+                                <a
+                                  href={ca.portal_automation_last_validation_screenshot_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block overflow-hidden rounded border"
+                                >
+                                  <img
+                                    src={ca.portal_automation_last_validation_screenshot_url}
+                                    alt={`Portal validation screenshot for ${ca.agency_name}`}
+                                    className="max-h-40 w-full object-cover"
+                                  />
+                                </a>
                               )}
                             </div>
                           )}
@@ -3659,6 +4289,21 @@ function DetailV2Content() {
                                   </>
                                 ) : (
                                   "Confirm Portal"
+                                )}
+                              </Button>
+                            )}
+                            {ca.portal_url && ca.portal_automation_status === "needs_confirmation" && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleValidatePortal(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                                {isValidatingPortal ? (
+                                  <>
+                                    <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                    Validating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Search className="h-2.5 w-2.5 mr-1" />
+                                    Validate in Browser
+                                  </>
                                 )}
                               </Button>
                             )}
@@ -3757,14 +4402,36 @@ function DetailV2Content() {
                   )}
                   {(() => {
                     const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
-                    return portalUrl ? (
-                      <div className="flex items-center gap-1 text-[10px]">
-                        <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                        <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
-                          {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                        </a>
-                      </div>
-                    ) : null;
+                    const manualRequestUrl = resolveManualRequestUrl(request.manual_request_url, null);
+                    const pdfFormUrl = resolvePdfFormUrl(request.pdf_form_url, null);
+                    return (
+                      <>
+                        {portalUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
+                              {request.portal_provider || agency_summary?.portal_provider || "Portal"}
+                            </a>
+                          </div>
+                        )}
+                        {manualRequestUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a href={manualRequestUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
+                              Manual request page
+                            </a>
+                          </div>
+                        )}
+                        {pdfFormUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <FileText className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a href={pdfFormUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
+                              PDF / request form
+                            </a>
+                          </div>
+                        )}
+                      </>
+                    );
                   })()}
                   {agency_summary?.submission_method && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0">{agency_summary.submission_method}</Badge>
@@ -3884,19 +4551,51 @@ function DetailV2Content() {
                   )}
                   {(() => {
                     const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
-                    return portalUrl ? (
-                      <div className="flex items-center gap-1 text-[10px]">
-                        <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                        <a
-                          href={portalUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:underline truncate"
-                        >
-                          {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                        </a>
-                      </div>
-                    ) : null;
+                    const manualRequestUrl = resolveManualRequestUrl(request.manual_request_url, null);
+                    const pdfFormUrl = resolvePdfFormUrl(request.pdf_form_url, null);
+                    return (
+                      <>
+                        {portalUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a
+                              href={portalUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:underline truncate"
+                            >
+                              {request.portal_provider || agency_summary?.portal_provider || "Portal"}
+                            </a>
+                          </div>
+                        )}
+                        {manualRequestUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a
+                              href={manualRequestUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:underline truncate"
+                            >
+                              Manual request page
+                            </a>
+                          </div>
+                        )}
+                        {pdfFormUrl && (
+                          <div className="flex items-center gap-1 text-[10px]">
+                            <FileText className="h-2.5 w-2.5 text-muted-foreground" />
+                            <a
+                              href={pdfFormUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:underline truncate"
+                            >
+                              PDF / request form
+                            </a>
+                          </div>
+                        )}
+                      </>
+                    );
                   })()}
                   {agency_summary?.submission_method && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0">

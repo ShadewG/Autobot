@@ -10,6 +10,7 @@ const {
     detectPortalProviderByUrl,
     buildPortalFingerprint,
     evaluatePortalAutomationDecision,
+    derivePortalPolicyFromBrowserValidation,
 } = require('../utils/portal-utils');
 const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
 const canonicalAgency = require('./canonical-agency');
@@ -722,6 +723,35 @@ class DatabaseService {
             await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_case_id ON portal_submissions(case_id)`);
             await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_status ON portal_submissions(status)`);
             await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_submissions_browser_session_id ON portal_submissions(browser_session_id)`);
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS portal_automation_policies (
+                    id SERIAL PRIMARY KEY,
+                    portal_fingerprint VARCHAR(500) UNIQUE NOT NULL,
+                    host VARCHAR(255) NOT NULL,
+                    provider VARCHAR(100) NOT NULL,
+                    path_class VARCHAR(100) NOT NULL,
+                    path_hint VARCHAR(255) NOT NULL,
+                    sample_portal_url TEXT,
+                    policy_status VARCHAR(20),
+                    decision_source VARCHAR(100),
+                    decision_reason TEXT,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    failure_count INTEGER NOT NULL DEFAULT 0,
+                    last_case_id INTEGER REFERENCES cases(id) ON DELETE SET NULL,
+                    last_submission_id INTEGER REFERENCES portal_submissions(id) ON DELETE SET NULL,
+                    decided_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            `);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_status VARCHAR(100)`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_page_kind VARCHAR(100)`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_url TEXT`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_title TEXT`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_screenshot_url TEXT`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validation_session_url TEXT`);
+            await this.query(`ALTER TABLE portal_automation_policies ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ`);
+            await this.query(`CREATE INDEX IF NOT EXISTS idx_portal_automation_policies_host_provider ON portal_automation_policies(host, provider)`);
 
             await this.query(`
                 CREATE TABLE IF NOT EXISTS portal_session_events (
@@ -2063,6 +2093,17 @@ class DatabaseService {
                 portal_url, portal_domain, portal_type, email, password_encrypted,
                 first_name, last_name, additional_info, account_status, user_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (portal_domain, email)
+            DO UPDATE SET
+                portal_url = EXCLUDED.portal_url,
+                portal_type = COALESCE(EXCLUDED.portal_type, portal_accounts.portal_type),
+                password_encrypted = EXCLUDED.password_encrypted,
+                first_name = COALESCE(EXCLUDED.first_name, portal_accounts.first_name),
+                last_name = COALESCE(EXCLUDED.last_name, portal_accounts.last_name),
+                additional_info = COALESCE(EXCLUDED.additional_info, portal_accounts.additional_info),
+                account_status = COALESCE(EXCLUDED.account_status, portal_accounts.account_status),
+                user_id = COALESCE(EXCLUDED.user_id, portal_accounts.user_id),
+                updated_at = CURRENT_TIMESTAMP
             RETURNING id, portal_url, portal_domain, portal_type, email, first_name, last_name,
                       additional_info, account_status, user_id, created_at, updated_at
         `;
@@ -2396,7 +2437,7 @@ class DatabaseService {
                 last_heartbeat_at = COALESCE(EXCLUDED.last_heartbeat_at, NOW()),
                 last_started_at = COALESCE(EXCLUDED.last_started_at, portal_workers.last_started_at),
                 last_completed_at = COALESCE(EXCLUDED.last_completed_at, portal_workers.last_completed_at),
-                metadata = COALESCE(EXCLUDED.metadata, portal_workers.metadata, '{}'::jsonb),
+                metadata = COALESCE($17::jsonb, portal_workers.metadata, '{}'::jsonb),
                 updated_at = NOW()
             RETURNING *`,
             [
@@ -2709,6 +2750,12 @@ class DatabaseService {
         submissionId = null,
         successDelta = 0,
         failureDelta = 0,
+        validationStatus = null,
+        validationPageKind = null,
+        validationUrl = null,
+        validationTitle = null,
+        validationScreenshotUrl = null,
+        validationSessionUrl = null,
     }) {
         const fingerprintInfo = buildPortalFingerprint(portalUrl, provider);
         if (!fingerprintInfo?.fingerprint) {
@@ -2730,12 +2777,24 @@ class DatabaseService {
                 failure_count,
                 last_case_id,
                 last_submission_id,
+                last_validation_status,
+                last_validation_page_kind,
+                last_validation_url,
+                last_validation_title,
+                last_validation_screenshot_url,
+                last_validation_session_url,
+                last_validated_at,
                 decided_at,
                 created_at,
                 updated_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7::varchar, $8::varchar, $9::text,
                 $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19,
+                CASE
+                    WHEN $14::varchar IS NOT NULL OR $16::text IS NOT NULL OR $18::text IS NOT NULL OR $19::text IS NOT NULL THEN NOW()
+                    ELSE NULL
+                END,
                 CASE WHEN $7::varchar IS NOT NULL THEN NOW() ELSE NULL END,
                 NOW(), NOW()
             )
@@ -2752,6 +2811,20 @@ class DatabaseService {
                 failure_count = COALESCE(portal_automation_policies.failure_count, 0) + EXCLUDED.failure_count,
                 last_case_id = COALESCE(EXCLUDED.last_case_id, portal_automation_policies.last_case_id),
                 last_submission_id = COALESCE(EXCLUDED.last_submission_id, portal_automation_policies.last_submission_id),
+                last_validation_status = COALESCE(EXCLUDED.last_validation_status, portal_automation_policies.last_validation_status),
+                last_validation_page_kind = COALESCE(EXCLUDED.last_validation_page_kind, portal_automation_policies.last_validation_page_kind),
+                last_validation_url = COALESCE(EXCLUDED.last_validation_url, portal_automation_policies.last_validation_url),
+                last_validation_title = COALESCE(EXCLUDED.last_validation_title, portal_automation_policies.last_validation_title),
+                last_validation_screenshot_url = COALESCE(EXCLUDED.last_validation_screenshot_url, portal_automation_policies.last_validation_screenshot_url),
+                last_validation_session_url = COALESCE(EXCLUDED.last_validation_session_url, portal_automation_policies.last_validation_session_url),
+                last_validated_at = CASE
+                    WHEN EXCLUDED.last_validation_status IS NOT NULL
+                        OR EXCLUDED.last_validation_url IS NOT NULL
+                        OR EXCLUDED.last_validation_screenshot_url IS NOT NULL
+                        OR EXCLUDED.last_validation_session_url IS NOT NULL
+                    THEN NOW()
+                    ELSE portal_automation_policies.last_validated_at
+                END,
                 decided_at = CASE
                     WHEN EXCLUDED.policy_status IS NOT NULL THEN NOW()
                     ELSE portal_automation_policies.decided_at
@@ -2772,10 +2845,49 @@ class DatabaseService {
                 Number(failureDelta) || 0,
                 caseId,
                 submissionId,
+                validationStatus,
+                validationPageKind,
+                validationUrl,
+                validationTitle,
+                validationScreenshotUrl,
+                validationSessionUrl,
             ]
         );
 
         return result.rows[0] || null;
+    }
+
+    async recordPortalBrowserValidation({
+        portalUrl,
+        provider = null,
+        caseId = null,
+        validation = {},
+    }) {
+        const derived = derivePortalPolicyFromBrowserValidation({
+            portalUrl,
+            provider,
+            validation,
+        });
+
+        const resolvedProvider = provider
+            || validation?.provider
+            || detectPortalProviderByUrl(validation?.final_url || portalUrl)?.name
+            || null;
+
+        return this.upsertPortalAutomationPolicy({
+            portalUrl,
+            provider: resolvedProvider,
+            policyStatus: derived.policyStatus,
+            decisionSource: 'browser_validation',
+            decisionReason: derived.decisionReason,
+            caseId,
+            validationStatus: derived.validationStatus,
+            validationPageKind: derived.validationPageKind,
+            validationUrl: derived.validationUrl,
+            validationTitle: validation?.final_title || validation?.page_title || null,
+            validationScreenshotUrl: validation?.screenshot_url || null,
+            validationSessionUrl: validation?.browser_session_url || null,
+        });
     }
 
     async getPortalAutomationDecision(portalUrl, provider = null, lastPortalStatus = null) {
@@ -2812,6 +2924,13 @@ class DatabaseService {
                     portal_automation_decided_at: null,
                     portal_automation_success_count: 0,
                     portal_automation_failure_count: 0,
+                    portal_automation_last_validation_status: null,
+                    portal_automation_last_validation_page_kind: null,
+                    portal_automation_last_validation_url: null,
+                    portal_automation_last_validation_title: null,
+                    portal_automation_last_validation_screenshot_url: null,
+                    portal_automation_last_validation_session_url: null,
+                    portal_automation_last_validated_at: null,
                 });
                 continue;
             }
@@ -2841,6 +2960,13 @@ class DatabaseService {
                 portal_automation_decided_at: decision?.policy?.decided_at || null,
                 portal_automation_success_count: Number(decision?.policy?.success_count || 0),
                 portal_automation_failure_count: Number(decision?.policy?.failure_count || 0),
+                portal_automation_last_validation_status: decision?.policy?.last_validation_status || null,
+                portal_automation_last_validation_page_kind: decision?.policy?.last_validation_page_kind || null,
+                portal_automation_last_validation_url: decision?.policy?.last_validation_url || null,
+                portal_automation_last_validation_title: decision?.policy?.last_validation_title || null,
+                portal_automation_last_validation_screenshot_url: decision?.policy?.last_validation_screenshot_url || null,
+                portal_automation_last_validation_session_url: decision?.policy?.last_validation_session_url || null,
+                portal_automation_last_validated_at: decision?.policy?.last_validated_at || null,
             });
         }
 

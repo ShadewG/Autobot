@@ -5,6 +5,7 @@ const supertest = require('supertest');
 
 const router = require('../routes/case-agencies');
 const db = require('../services/database');
+const portalAgentServicePlaywright = require('../services/portal-agent-service-playwright');
 
 describe('case agency portal policy routes', function () {
   afterEach(function () {
@@ -110,5 +111,86 @@ describe('case agency portal policy routes', function () {
       decisionSource: 'operator_blocked',
     }));
     assert.ok(queryStub.calledOnce);
+  });
+
+  it('validates a needs_confirmation portal in the browser and persists evidence', async function () {
+    sinon.stub(db, 'getCaseAgencyById').resolves({
+      id: 46,
+      case_id: 7003,
+      agency_name: 'Mystery Records Portal',
+      agency_email: null,
+      portal_url: 'https://records.example.gov/openrecords/start',
+      portal_provider: null,
+      last_portal_status: null,
+    });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 7003,
+      agency_name: 'Mystery Records Portal',
+      portal_provider: null,
+      last_portal_status: null,
+    });
+    sinon.stub(db, 'getPortalAutomationDecision').resolves({
+      decision: 'review',
+      status: 'needs_confirmation',
+      reason: 'operator_confirmation_required',
+      portalFingerprint: 'unknown|records.example.gov|unknown_candidate|/openrecords/start',
+      policy: null,
+    });
+    sinon.stub(portalAgentServicePlaywright, 'validatePortal').resolves({
+      status: 'dry_run_form_detected',
+      pageKind: 'request_form',
+      provider: 'generic',
+      final_url: 'https://records.example.gov/openrecords/start',
+      final_title: 'Open Records Request',
+      screenshot_url: 'https://example.com/validation.png',
+      browser_session_url: 'https://www.browserbase.com/sessions/abc123',
+      extracted_data: { page_kind: 'request_form' },
+    });
+    const recordStub = sinon.stub(db, 'recordPortalBrowserValidation').resolves({
+      id: 3,
+      portal_fingerprint: 'unknown|records.example.gov|unknown_candidate|/openrecords/start',
+      policy_status: 'trusted',
+      decision_source: 'browser_validation',
+      decision_reason: 'dry_run_form_detected',
+      last_validation_status: 'dry_run_form_detected',
+      last_validation_page_kind: 'request_form',
+      last_validation_url: 'https://records.example.gov/openrecords/start',
+      last_validation_title: 'Open Records Request',
+      last_validation_screenshot_url: 'https://example.com/validation.png',
+      last_validation_session_url: 'https://www.browserbase.com/sessions/abc123',
+    });
+    sinon.stub(db, 'enrichCaseAgenciesWithPortalAutomationPolicies').resolves([{
+      id: 46,
+      case_id: 7003,
+      agency_name: 'Mystery Records Portal',
+      portal_url: 'https://records.example.gov/openrecords/start',
+      portal_provider: null,
+      portal_automation_status: 'trusted',
+      portal_automation_decision: 'allow',
+      portal_automation_policy_status: 'trusted',
+      portal_automation_last_validation_status: 'dry_run_form_detected',
+      portal_automation_last_validation_page_kind: 'request_form',
+      portal_automation_last_validation_screenshot_url: 'https://example.com/validation.png',
+      portal_automation_last_validation_session_url: 'https://www.browserbase.com/sessions/abc123',
+    }]);
+    sinon.stub(db, 'logActivity').resolves();
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/cases', router);
+
+    const response = await supertest(app)
+      .post('/api/cases/7003/agencies/46/portal/validate')
+      .send({});
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.validated, true);
+    assert.strictEqual(response.body.case_agency.portal_automation_status, 'trusted');
+    sinon.assert.calledOnce(recordStub);
+    sinon.assert.calledWithMatch(recordStub, sinon.match({
+      portalUrl: 'https://records.example.gov/openrecords/start',
+      caseId: 7003,
+    }));
   });
 });

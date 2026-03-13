@@ -118,6 +118,8 @@ export interface RequestDetail extends RequestListItem {
   fee_quote?: FeeQuote;
   portal_url: string | null;
   portal_provider: string | null;
+  manual_request_url: string | null;
+  pdf_form_url: string | null;
   portal_request_number: string | null;
   last_portal_task_url: string | null;
   last_portal_status: string | null;
@@ -209,6 +211,7 @@ export interface ThreadMessage {
   sentiment?: string;
   call_contact_info?: string | null;
   call_phone?: string | null;
+  metadata?: Record<string, unknown> | null;
   attachments: Attachment[];
 }
 
@@ -281,6 +284,8 @@ export interface CaseAgency {
   agency_email: string | null;
   portal_url: string | null;
   portal_provider: string | null;
+  manual_request_url?: string | null;
+  pdf_form_url?: string | null;
   is_primary: boolean;
   is_active: boolean;
   added_source: string | null;
@@ -305,6 +310,13 @@ export interface CaseAgency {
   portal_automation_decided_at?: string | null;
   portal_automation_success_count?: number;
   portal_automation_failure_count?: number;
+  portal_automation_last_validation_status?: string | null;
+  portal_automation_last_validation_page_kind?: string | null;
+  portal_automation_last_validation_url?: string | null;
+  portal_automation_last_validation_title?: string | null;
+  portal_automation_last_validation_screenshot_url?: string | null;
+  portal_automation_last_validation_session_url?: string | null;
+  portal_automation_last_validated_at?: string | null;
 }
 
 export interface AgencyCandidate {
@@ -367,6 +379,7 @@ export type PauseReason =
   | 'email_send_failed'
   | 'portal_failed'
   | 'portal_timed_out'
+  | 'PORTAL_AUTH_INTERVENTION_REQUIRED'
   | 'escalated'
   | 'agent_run_failed'
   | 'stuck_portal_task'
