@@ -26,6 +26,7 @@ import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, Actio
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 const recordsDeliveryService = require("../../services/records-delivery-service");
+const { recoverInboundRunFailureToProposal } = require("../../services/inbound-run-failure-recovery");
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SUBMIT_PORTAL", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -122,6 +123,13 @@ export const processInbound = task({
         case_id: caseId,
         actor_type: "system",
         source_service: "trigger.dev",
+      });
+      await recoverInboundRunFailureToProposal({
+        caseId,
+        messageId: Number.isFinite(Number((payload as any).messageId)) ? Number((payload as any).messageId) : null,
+        runId: Number.isFinite(Number((payload as any).runId)) ? Number((payload as any).runId) : null,
+        error: String(error),
+        sourceService: "trigger.dev",
       });
     } catch {}
   },

@@ -15,6 +15,7 @@ const errorTrackingService = require('./error-tracking-service');
 const portalStatusMonitorService = require('./portal-status-monitor-service');
 const feeWorkflowService = require('./fee-workflow-service');
 const staleProposalRecoveryService = require('./stale-proposal-recovery-service');
+const { recoverInboundRunFailureToProposal } = require('./inbound-run-failure-recovery');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const { countsTowardDismissCircuitBreaker } = require('./proposal-lifecycle');
 const { tasks } = require('@trigger.dev/sdk');
@@ -127,6 +128,7 @@ class CronService {
         staleInboundRecovery:    100023,
         staleProposalRecovery:   100024,
         staleReprocessRecovery:  100025,
+        failedInboundRecovery:   100026,
     };
 
     constructor() {
@@ -805,6 +807,19 @@ class CronService {
             });
         }, null, true, 'America/New_York');
 
+        this.jobs.failedInboundRecovery = new CronJob('5,15,25,35,45,55 * * * *', () => {
+            this.runWithDbLock(CronService.LOCK_IDS.failedInboundRecovery, async () => {
+                try {
+                    const result = await this.runWithoutOverlap('failed_inbound_recovery', () => this.runFailedInboundRecoverySweep());
+                    if (result && (result.recovered > 0 || result.failed > 0)) {
+                        console.log(`[failed-inbound-recovery] scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed}`);
+                    }
+                } catch (error) {
+                    console.error('Error in failed inbound recovery cron:', error);
+                }
+            });
+        }, null, true, 'America/New_York');
+
         this.jobs.staleReprocessRecovery = new CronJob('11,21,31,41,51 * * * *', () => {
             this.runWithDbLock(CronService.LOCK_IDS.staleReprocessRecovery, async () => {
                 try {
@@ -834,6 +849,7 @@ class CronService {
         console.log('✓ Portal submission dispatch: Every 3 min (:01,:04,:07,...)');
         console.log('✓ Stale inbound recovery: ~10 min (:02,:12,:22,...)');
         console.log('✓ Stale proposal recovery: ~10 min (:08,:18,:28,...)');
+        console.log('✓ Failed inbound recovery: ~10 min (:05,:15,:25,...)');
         console.log('✓ Stale reprocess recovery: ~10 min (:11,:21,:31,...)');
         if (process.env.ENABLE_PORTAL_STATUS_MONITORING === 'true') {
             console.log('✓ Portal status monitoring: Every 6 hours');
@@ -2418,6 +2434,7 @@ class CronService {
                 m.last_error,
                 c.status AS case_status,
                 c.pause_reason AS case_pause_reason,
+                c.substatus AS case_substatus,
                 c.autopilot_mode,
                 c.case_name,
                 (
@@ -2507,6 +2524,7 @@ class CronService {
             scanned: result.rows.length,
             markedProcessed: 0,
             retried: 0,
+            recoveredFailures: 0,
             failed: 0,
             skippedActive: 0,
             details: [],
@@ -2547,6 +2565,41 @@ class CronService {
                 summary.skippedActive += 1;
                 summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'skipped_active_run' });
                 continue;
+            }
+
+            if (String(row.last_run_status || '').toLowerCase() === 'failed' && Number(row.failed_run_count || 0) > 0) {
+                try {
+                    const recovery = await recoverInboundRunFailureToProposal({
+                        caseId: row.case_id,
+                        messageId: row.message_id,
+                        runId: row.last_run_id || null,
+                        error: row.last_error || row.case_substatus || 'Agent run failed while processing inbound message',
+                        sourceService: 'cron_service',
+                    }, { db });
+
+                    if (recovery.recovered) {
+                        summary.recoveredFailures += 1;
+                        summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'recovered_failure', proposalId: recovery.proposalId });
+                    } else {
+                        summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'skipped_failed_recovery', reason: recovery.reason });
+                    }
+                    continue;
+                } catch (error) {
+                    summary.failed += 1;
+                    summary.details.push({ messageId: row.message_id, caseId: row.case_id, outcome: 'failed_recovery', error: error.message });
+                    await db.logActivity(
+                        'stale_inbound_recovery_failed',
+                        `Failed to recover previously failed inbound #${row.message_id}: ${error.message}`,
+                        {
+                            case_id: row.case_id,
+                            message_id: row.message_id,
+                            run_id: row.last_run_id || null,
+                            actor_type: 'system',
+                            source_service: 'cron_service',
+                        }
+                    );
+                    continue;
+                }
             }
 
             try {
@@ -2614,6 +2667,98 @@ class CronService {
 
     async runStaleProposalRecoverySweep({ minAgeMinutes = 15, limit = 25 } = {}) {
         return staleProposalRecoveryService.runStaleProposalRecoverySweep({ minAgeMinutes, limit });
+    }
+
+    async runFailedInboundRecoverySweep({ maxAgeMinutes = 5, limit = 25 } = {}) {
+        const result = await db.query(`
+            WITH latest_inbound AS (
+                SELECT DISTINCT ON (m.case_id)
+                    m.case_id,
+                    m.id AS message_id,
+                    COALESCE(m.received_at, m.created_at) AS inbound_at,
+                    m.processed_at,
+                    m.processed_run_id,
+                    m.last_error
+                FROM messages m
+                WHERE m.case_id IS NOT NULL
+                  AND m.direction = 'inbound'
+                  AND m.thread_id IS NOT NULL
+                ORDER BY m.case_id, COALESCE(m.received_at, m.created_at) DESC, m.id DESC
+            ),
+            active_proposals AS (
+                SELECT case_id, COUNT(*)::int AS proposal_count
+                FROM proposals
+                WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                GROUP BY case_id
+            ),
+            latest_failed_run AS (
+                SELECT DISTINCT ON (ar.case_id)
+                    ar.case_id,
+                    ar.id AS run_id,
+                    ar.error
+                FROM agent_runs ar
+                WHERE ar.status = 'failed'
+                ORDER BY ar.case_id, COALESCE(ar.ended_at, ar.updated_at, ar.started_at) DESC NULLS LAST, ar.id DESC
+            )
+            SELECT
+                c.id AS case_id,
+                li.message_id,
+                li.inbound_at,
+                COALESCE(lfr.run_id, li.processed_run_id) AS run_id,
+                COALESCE(lfr.error, li.last_error, c.substatus, 'Agent run failed while processing inbound message') AS failure_error
+            FROM cases c
+            JOIN latest_inbound li ON li.case_id = c.id
+            LEFT JOIN active_proposals ap ON ap.case_id = c.id
+            LEFT JOIN latest_failed_run lfr ON lfr.case_id = c.id
+            WHERE c.status = 'needs_human_review'
+              AND c.pause_reason = 'AGENT_RUN_FAILED'
+              AND COALESCE(ap.proposal_count, 0) = 0
+              AND li.inbound_at < NOW() - ($1::text || ' minutes')::interval
+            ORDER BY li.inbound_at ASC
+            LIMIT $2
+        `, [String(maxAgeMinutes), limit]);
+
+        const summary = {
+            scanned: result.rows.length,
+            recovered: 0,
+            failed: 0,
+            details: [],
+        };
+
+        for (const row of result.rows) {
+            try {
+                const recovery = await recoverInboundRunFailureToProposal({
+                    caseId: row.case_id,
+                    messageId: row.message_id,
+                    runId: row.run_id || null,
+                    error: row.failure_error,
+                    sourceService: 'cron_service',
+                }, { db });
+
+                if (recovery.recovered) {
+                    summary.recovered += 1;
+                    summary.details.push({ caseId: row.case_id, messageId: row.message_id, outcome: 'recovered', proposalId: recovery.proposalId });
+                } else {
+                    summary.details.push({ caseId: row.case_id, messageId: row.message_id, outcome: 'skipped', reason: recovery.reason });
+                }
+            } catch (error) {
+                summary.failed += 1;
+                summary.details.push({ caseId: row.case_id, messageId: row.message_id, outcome: 'failed', error: error.message });
+                await db.logActivity(
+                    'failed_inbound_recovery_failed',
+                    `Failed to create manual review proposal for inbound #${row.message_id}: ${error.message}`,
+                    {
+                        case_id: row.case_id,
+                        message_id: row.message_id,
+                        run_id: row.run_id || null,
+                        actor_type: 'system',
+                        source_service: 'cron_service',
+                    }
+                );
+            }
+        }
+
+        return summary;
     }
 
     async runStaleReprocessRecoverySweep({ minAgeMinutes = 15, limit = 25 } = {}) {

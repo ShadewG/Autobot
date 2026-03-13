@@ -2,7 +2,7 @@ const assert = require('assert');
 const path = require('path');
 const sinon = require('sinon');
 
-function loadCronService({ dbStub, triggerDispatchStub }) {
+function loadCronService({ dbStub, triggerDispatchStub, inboundFailureRecoveryStub }) {
   const cronServicePath = path.resolve(__dirname, '../services/cron-service.js');
   const cronPath = require.resolve('cron');
   const notionPath = path.resolve(__dirname, '../services/notion-service.js');
@@ -19,6 +19,7 @@ function loadCronService({ dbStub, triggerDispatchStub }) {
   const errorTrackingPath = path.resolve(__dirname, '../services/error-tracking-service.js');
   const portalStatusMonitorPath = path.resolve(__dirname, '../services/portal-status-monitor-service.js');
   const feeWorkflowPath = path.resolve(__dirname, '../services/fee-workflow-service.js');
+  const inboundFailureRecoveryPath = path.resolve(__dirname, '../services/inbound-run-failure-recovery.js');
   const caseRuntimePath = path.resolve(__dirname, '../services/case-runtime.js');
   const triggerSdkPath = require.resolve('@trigger.dev/sdk');
 
@@ -39,6 +40,7 @@ function loadCronService({ dbStub, triggerDispatchStub }) {
     errorTracking: require.cache[errorTrackingPath],
     portalStatusMonitor: require.cache[portalStatusMonitorPath],
     feeWorkflow: require.cache[feeWorkflowPath],
+    inboundFailureRecovery: require.cache[inboundFailureRecoveryPath],
     caseRuntime: require.cache[caseRuntimePath],
     triggerSdk: require.cache[triggerSdkPath],
   };
@@ -58,6 +60,12 @@ function loadCronService({ dbStub, triggerDispatchStub }) {
   require.cache[errorTrackingPath] = { id: errorTrackingPath, filename: errorTrackingPath, loaded: true, exports: { captureException: sinon.stub().resolves() } };
   require.cache[portalStatusMonitorPath] = { id: portalStatusMonitorPath, filename: portalStatusMonitorPath, loaded: true, exports: {} };
   require.cache[feeWorkflowPath] = { id: feeWorkflowPath, filename: feeWorkflowPath, loaded: true, exports: {} };
+  require.cache[inboundFailureRecoveryPath] = {
+    id: inboundFailureRecoveryPath,
+    filename: inboundFailureRecoveryPath,
+    loaded: true,
+    exports: inboundFailureRecoveryStub || { recoverInboundRunFailureToProposal: sinon.stub().resolves({ recovered: false, reason: 'not_configured' }) },
+  };
   require.cache[caseRuntimePath] = {
     id: caseRuntimePath,
     filename: caseRuntimePath,
@@ -89,6 +97,7 @@ function loadCronService({ dbStub, triggerDispatchStub }) {
         errorTracking: errorTrackingPath,
         portalStatusMonitor: portalStatusMonitorPath,
         feeWorkflow: feeWorkflowPath,
+        inboundFailureRecovery: inboundFailureRecoveryPath,
         caseRuntime: caseRuntimePath,
         triggerSdk: triggerSdkPath,
       })) {
@@ -147,7 +156,7 @@ describe('Stale inbound recovery sweep', function () {
     }
   });
 
-  it('retries substantive stale inbound messages that have no active proposal or progress evidence', async function () {
+  it('creates a manual-review proposal when a matched inbound already failed processing', async function () {
     const dbStub = {
       query: sinon.stub().resolves({
         rows: [
@@ -176,23 +185,26 @@ describe('Stale inbound recovery sweep', function () {
       createAgentRunFull: sinon.stub().resolves({ id: 3001 }),
     };
     const triggerDispatchStub = { triggerTask: sinon.stub().resolves({ handle: { id: 'run_abc' } }) };
+    const inboundFailureRecoveryStub = {
+      recoverInboundRunFailureToProposal: sinon.stub().resolves({ recovered: true, proposalId: 9001 }),
+    };
 
-    const { cronService, restore } = loadCronService({ dbStub, triggerDispatchStub });
+    const { cronService, restore } = loadCronService({ dbStub, triggerDispatchStub, inboundFailureRecoveryStub });
     try {
       const result = await cronService.runStaleInboundRecoverySweep({ maxAgeMinutes: 15, limit: 10 });
 
       assert.strictEqual(result.markedProcessed, 0);
-      assert.strictEqual(result.retried, 1);
-      sinon.assert.calledOnce(dbStub.createAgentRunFull);
-      sinon.assert.calledOnce(triggerDispatchStub.triggerTask);
-      sinon.assert.notCalled(dbStub.markMessageProcessed);
+      assert.strictEqual(result.recoveredFailures, 1);
+      assert.strictEqual(result.retried, 0);
+      sinon.assert.notCalled(dbStub.createAgentRunFull);
+      sinon.assert.notCalled(triggerDispatchStub.triggerTask);
+      sinon.assert.calledOnce(inboundFailureRecoveryStub.recoverInboundRunFailureToProposal);
       sinon.assert.calledWithMatch(
-        triggerDispatchStub.triggerTask,
-        'process-inbound',
+        inboundFailureRecoveryStub.recoverInboundRunFailureToProposal,
         sinon.match({
           caseId: 26682,
           messageId: 2721,
-          triggerType: 'STALE_INBOUND_RECOVERY',
+          runId: 2829,
         })
       );
     } finally {
@@ -242,6 +254,40 @@ describe('Stale inbound recovery sweep', function () {
         1478,
         sinon.match('marked processed during cleanup: duplicate_inbound_burst')
       );
+      sinon.assert.notCalled(triggerDispatchStub.triggerTask);
+    } finally {
+      restore();
+    }
+  });
+
+  it('recovers already-processed inbound failures that still have no proposal', async function () {
+    const dbStub = {
+      query: sinon.stub().resolves({
+        rows: [
+          {
+            case_id: 25204,
+            message_id: 730,
+            inbound_at: new Date().toISOString(),
+            run_id: 2860,
+            failure_error: '429 You exceeded your current quota',
+          },
+        ],
+      }),
+      logActivity: sinon.stub().resolves(),
+    };
+    const triggerDispatchStub = { triggerTask: sinon.stub().resolves() };
+    const inboundFailureRecoveryStub = {
+      recoverInboundRunFailureToProposal: sinon.stub().resolves({ recovered: true, proposalId: 9004 }),
+    };
+
+    const { cronService, restore } = loadCronService({ dbStub, triggerDispatchStub, inboundFailureRecoveryStub });
+    try {
+      const result = await cronService.runFailedInboundRecoverySweep({ maxAgeMinutes: 5, limit: 10 });
+
+      assert.strictEqual(result.scanned, 1);
+      assert.strictEqual(result.recovered, 1);
+      assert.strictEqual(result.failed, 0);
+      sinon.assert.calledOnce(inboundFailureRecoveryStub.recoverInboundRunFailureToProposal);
       sinon.assert.notCalled(triggerDispatchStub.triggerTask);
     } finally {
       restore();
