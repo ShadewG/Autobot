@@ -1863,8 +1863,7 @@ router.get('/:id/workspace', async (req, res) => {
         const importSafetyBlocked = hasImportSafetyBlock(importSafety, importSafetyContext);
         const importSafetyBlockedProposal = Boolean(
             importSafetyBlocked &&
-            pendingProposal &&
-            ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(pendingProposal.action_type || '').toUpperCase())
+            pendingProposal
         );
         const importSafetyBlockedCase = Boolean(
             importSafetyBlocked &&

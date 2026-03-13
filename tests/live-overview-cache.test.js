@@ -210,6 +210,95 @@ describe('Live overview cache fallback', function () {
     }
   });
 
+  it('filters import-blocked RESEARCH_AGENCY proposals out of pending approvals', async function () {
+    const dbStub = {
+      query: async (sql) => {
+        if (sql.includes('COUNT(*) FILTER') && sql.includes('FROM messages m')) {
+          return { rows: [{ inbound_24h: '0', unmatched_inbound_total: '0', unprocessed_inbound_total: '0' }] };
+        }
+        if (sql.includes('portal_hard_timeout_total_1h')) {
+          return { rows: [{ portal_hard_timeout_total_1h: 0, portal_soft_timeout_total_1h: 0 }] };
+        }
+        if (sql.includes('process_inbound_superseded_total_1h')) {
+          return { rows: [{ process_inbound_superseded_total_1h: 0 }] };
+        }
+        if (sql.includes('FROM proposals p') && sql.includes('LEFT JOIN cases c ON c.id = p.case_id')) {
+          return {
+            rows: [{
+              id: 2099,
+              case_id: 26694,
+              action_type: 'RESEARCH_AGENCY',
+              proposal_status: 'PENDING_APPROVAL',
+              confidence: '0.70',
+              created_at: '2026-03-13T00:00:00.000Z',
+              trigger_message_id: null,
+              reasoning: ['Research the agency to determine the correct PD to contact.'],
+              draft_subject: null,
+              draft_body_text: null,
+              proposal_pause_reason: null,
+              risk_flags: [],
+              warnings: [],
+              gate_options: null,
+              case_name: 'Multi agency homicide import',
+              subject_name: 'Victim Name',
+              agency_name: 'Police Department',
+              agency_id: null,
+              state: 'GA',
+              case_status: 'needs_human_review',
+              case_substatus: 'Imported case needs human review before sending',
+              portal_url: null,
+              agency_email: null,
+              additional_details: 'Police Departments Involved: Atlanta Police Department; GBI',
+              import_warnings: [
+                { type: 'MULTI_AGENCY_UNSCOPED', message: 'Multiple agencies attached without per-agency scoping' },
+                { type: 'POSSIBLE_DUPLICATE_CASE', message: 'Possible duplicate imported case' },
+              ],
+              deadline_date: null,
+              contact_research_notes: null,
+              effective_agency_email: null,
+              user_id: null,
+              case_pause_reason: 'INITIAL_REQUEST',
+              last_fee_quote_amount: null,
+              message_count: '0',
+              inbound_count: 0,
+              last_inbound_preview: null,
+              last_inbound_subject: null,
+              last_inbound_from_email: null,
+              last_inbound_date: null,
+            }],
+          };
+        }
+        if (sql.includes('SELECT DISTINCT ON (p.case_id)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT DISTINCT ON (ca.case_id)')) {
+          return { rows: [] };
+        }
+        if (sql.includes('FROM agent_runs r') || sql.includes('FROM messages m') || sql.includes('FROM cases c') || sql.includes('FROM attachments a')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL in blocked research proposal queue test: ${sql}`);
+      },
+      getUserById: async () => null,
+    };
+
+    const { router, restore } = loadOverviewRouter(dbStub, {
+      evaluateImportAutoDispatchSafety: actualNormalization.evaluateImportAutoDispatchSafety,
+    });
+    try {
+      const app = express();
+      app.use('/api/monitor', router);
+
+      const response = await supertest(app).get('/api/monitor/live-overview');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.summary.pending_approvals_total, 0);
+      assert.deepStrictEqual(response.body.pending_approvals, []);
+    } finally {
+      restore();
+    }
+  });
+
   it('suppresses stale AGENCY_NOT_IN_DIRECTORY warnings in pending approvals when a canonical agency is linked', async function () {
     const dbStub = {
       query: async (sql) => {

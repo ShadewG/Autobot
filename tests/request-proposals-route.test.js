@@ -187,4 +187,53 @@ describe('Request proposals route regressions', function () {
       ['Research completed but no new channels were found.']
     );
   });
+
+  it('suppresses import-blocked research proposals for unscoped multi-agency cases', async function () {
+    db.getCaseById = async () => ({
+      id: 26694,
+      status: 'needs_human_review',
+      case_name: 'Multi agency homicide import',
+      subject_name: 'Victim Name',
+      agency_name: 'Police Department',
+      state: 'GA',
+      additional_details: 'Police Departments Involved: Atlanta Police Department; GBI',
+      import_warnings: [
+        { type: 'MULTI_AGENCY_UNSCOPED', message: 'Multiple agencies attached without per-agency scoping' },
+        { type: 'POSSIBLE_DUPLICATE_CASE', message: 'Possible duplicate imported case' },
+      ],
+      agency_email: null,
+      portal_url: null,
+      pause_reason: 'INITIAL_REQUEST',
+      substatus: 'Imported case needs human review before sending',
+      notion_page_id: '31f87c20070a81088063c8b82dfd6c04',
+    });
+    db.getPendingProposalsByCaseId = async () => ([
+      {
+        id: 2099,
+        proposal_key: '26694:research:RESEARCH_AGENCY:0',
+        action_type: 'RESEARCH_AGENCY',
+        status: 'PENDING_APPROVAL',
+        draft_subject: null,
+        draft_body_text: null,
+        reasoning: ['Research the agency to determine the correct PD to contact.'],
+        warnings: [],
+        risk_flags: [],
+        can_auto_execute: false,
+        requires_human: true,
+        adjustment_count: 0,
+        created_at: '2026-03-13T00:00:00.000Z',
+      },
+    ]);
+    db.getThreadsByCaseId = async () => ([]);
+    db.getMessagesByThreadId = async () => ([]);
+
+    const app = express();
+    app.use('/api/requests', proposalsRouter);
+
+    const response = await supertest(app).get('/api/requests/26694/proposals');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.count, 0);
+    assert.deepStrictEqual(response.body.proposals, []);
+  });
 });

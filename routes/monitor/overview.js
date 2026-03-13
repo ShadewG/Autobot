@@ -776,10 +776,7 @@ router.get('/live-overview', async (req, res) => {
                 agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
                 portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
             });
-            if (
-                importSafety.shouldBlockAutoDispatch &&
-                ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(row.action_type || '').toUpperCase())
-            ) {
+            if (importSafety.shouldBlockAutoDispatch) {
                 return null;
             }
             if (

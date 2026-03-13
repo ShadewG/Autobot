@@ -6,6 +6,7 @@ const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/
 const { buildHumanDecision, buildDismissHumanDecision } = proposalLifecycle;
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 const {
+  evaluateImportAutoDispatchSafety,
   sanitizeStaleResearchHandoffDraft,
   sanitizeStaleResearchHandoffReasoning,
 } = require('../../utils/request-normalization');
@@ -31,6 +32,37 @@ function isContradictoryNoResponseProposal(proposal) {
     if (!proposal) return false;
     return CONTRADICTORY_NO_RESPONSE_ACTIONS.has(String(proposal.action_type || '').toUpperCase())
         && proposalSignalsNoResponseDraft(proposal.draft_body_text);
+}
+
+function hasImportReviewSignals(caseData = {}) {
+    const importWarnings = Array.isArray(caseData?.import_warnings) ? caseData.import_warnings : [];
+    const warningTypes = new Set(
+        importWarnings
+            .map((warning) => String(warning?.type || '').trim().toUpperCase())
+            .filter(Boolean)
+    );
+    return Boolean(
+        caseData?.notion_page_id ||
+        warningTypes.size > 0 ||
+        String(caseData?.pause_reason || '').trim().toUpperCase() === 'IMPORT_REVIEW' ||
+        /imported case/i.test(String(caseData?.substatus || ''))
+    );
+}
+
+function isImportBlockedProposal(caseData, proposal) {
+    if (!caseData || !proposal) return false;
+    const importSafety = evaluateImportAutoDispatchSafety({
+        caseName: caseData.case_name,
+        subjectName: caseData.subject_name,
+        agencyName: caseData.agency_name,
+        state: caseData.state,
+        additionalDetails: caseData.additional_details,
+        importWarnings: caseData.import_warnings,
+        agencyEmail: caseData.agency_email,
+        portalUrl: caseData.portal_url,
+    });
+
+    return Boolean(importSafety?.shouldBlockAutoDispatch && hasImportReviewSignals(caseData));
 }
 
 async function detectLatestInboundManualPasteMismatch(caseId) {
@@ -150,12 +182,14 @@ router.get('/:id/proposals', async (req, res) => {
                   }
                 : proposal
             ));
+            proposals = proposals.filter((proposal) => !isImportBlockedProposal(caseData, proposal));
             proposals = proposals.filter((proposal) => !isContradictoryNoResponseProposal(proposal));
         }
 
         const transformedProposals = proposals.map(p => ({
             id: p.id,
             proposal_key: p.proposal_key,
+            case_agency_id: p.case_agency_id || null,
             action_type: p.action_type,
             status: p.status,
             draft_subject: p.draft_subject,
@@ -216,6 +250,7 @@ router.get('/:id/proposals/:proposalId', async (req, res) => {
                 id: proposal.id,
                 proposal_key: proposal.proposal_key,
                 case_id: proposal.case_id,
+                case_agency_id: proposal.case_agency_id || null,
                 trigger_message_id: proposal.trigger_message_id,
                 action_type: proposal.action_type,
                 status: proposal.status,
