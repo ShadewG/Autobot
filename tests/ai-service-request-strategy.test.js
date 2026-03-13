@@ -111,6 +111,114 @@ describe('AI service request strategy path', function () {
     assert.notStrictEqual(draft.should_auto_reply, false);
   });
 
+  it('replaces meta clarification output with a deterministic not-reasonably-described reply', async function () {
+    sinon.stub(aiService, 'callAI').resolves({
+      text: 'Is a response needed? Yes.\nHello Mr. Records,\nPlease clarify.',
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+      address: {
+        street: '123 Main St',
+        city: 'Seattle',
+        state: 'WA',
+        zip: '98101',
+      },
+    });
+
+    const draft = await aiService.generateClarificationResponse(
+      {
+        subject: 'Your request has been closed',
+        normalized_body_text: 'Your request is not sufficiently clear. Please reasonably describe an identifiable record or contact us to make a focused and effective request.',
+      },
+      { intent: 'more_info_needed' },
+      {
+        agency_name: 'San Francisco Police Department',
+        subject_name: 'Jordan Example',
+        incident_date: '2024-01-05',
+        incident_location: 'San Francisco, CA',
+        requested_records: ['Body camera footage', '911 audio', 'City : should be ignored'],
+        constraints_jsonb: ['REQUEST_NOT_REASONABLY_DESCRIBED'],
+      }
+    );
+
+    assert.doesNotMatch(draft.body_text, /Is a response needed\?/i);
+    assert.match(draft.body_text, /Helpful identifying details:/i);
+    assert.match(draft.body_text, /If this request can be reopened with the clarification above, please do so\./i);
+    assert.match(draft.body_text, /Jordan Example/);
+    assert.doesNotMatch(draft.body_text, /City : should be ignored/);
+  });
+
+  it('replaces weak certification-barrier rebuttals with a deterministic certification template', async function () {
+    sinon.stub(aiService, 'researchStateLaws').resolves('');
+    sinon.stub(aiService, 'callAI').resolves({
+      text: 'Records Custodian,\n\nCan you help?\n\nSamuel Hylton',
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'Wisconsin' });
+
+    const draft = await aiService.generateDenialRebuttal(
+      {
+        subject: 'Request closed',
+        normalized_body_text: 'Before we can release the audio or video, we need a certification under Wis. Stat. § 19.35(3)(h)3.a. We also need a correlation to the videos and may assess fees.',
+      },
+      { denial_subtype: 'denial_strong' },
+      {
+        state: 'WI',
+        agency_name: 'Winnebago County Sheriff\'s Office, Wisconsin',
+        requested_records: ['body camera video', 'dispatch audio'],
+      },
+      { forceDraft: true }
+    );
+
+    assert.match(draft.body_text, /exact certification form or language/i);
+    assert.match(draft.body_text, /itemized written estimate/i);
+    assert.match(draft.body_text, /process and release those records now/i);
+  });
+
+  it('replaces weak no-contact closure rebuttals with a deterministic reopen request', async function () {
+    sinon.stub(aiService, 'researchStateLaws').resolves('');
+    sinon.stub(aiService, 'callAI').resolves({
+      text: 'Records Custodian,\n\nPlease help.\n\nSamuel Hylton',
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'Illinois' });
+
+    const draft = await aiService.generateDenialRebuttal(
+      {
+        subject: 'Request closed',
+        normalized_body_text: 'We were unable to contact you to make a focused and effective request. The request has been closed because it was not sufficiently clear.',
+      },
+      { denial_subtype: 'not_reasonably_described' },
+      {
+        state: 'IL',
+        agency_name: 'Rockford Police Department, Illinois',
+        subject_name: 'Jordan Example',
+        incident_date: '2024-01-05',
+        incident_location: 'Rockford, Illinois',
+        requested_records: ['body camera footage'],
+      },
+      { forceDraft: true }
+    );
+
+    assert.match(draft.body_text, /reopened and processed/i);
+    assert.match(draft.body_text, /This request seeks/i);
+    assert.match(draft.body_text, /Subject\/person: Jordan Example/i);
+    assert.match(draft.body_text, /case number or another specific identifier/i);
+  });
+
   it('does not write adaptive learning outcomes anymore', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
 

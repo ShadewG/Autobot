@@ -408,6 +408,8 @@ class AIService {
         if (!combinedText) return 'overly_broad';
         if (/wrong agency|not the custodian|not our records|contact .* instead|maintained by another agency/.test(combinedText)) return 'wrong_agency';
         if (/no responsive records|no records exist|no records were found/.test(combinedText)) return 'no_records';
+        if (/not sufficiently clear|specify an identifiable record|reasonably describe(?:s)? an identifiable record|focused and effective request/.test(combinedText)) return 'not_reasonably_described';
+        if (/do not require .*create documents|no duty to create|not a public records request|not require departments .* create documents/.test(combinedText)) return 'no_duty_to_create';
         if (/ongoing investigation|active investigation|open investigation|pending prosecution|criminal investigative information/.test(combinedText)) return 'ongoing_investigation';
         if (/too broad|overly broad|undue burden|voluminous|narrow your request|narrow the request/.test(combinedText)) return 'overly_broad';
         if (/fee|invoice|estimate|deposit|cost to fulfill/.test(combinedText)) return 'excessive_fees';
@@ -546,6 +548,203 @@ class AIService {
 
         result = result.replace(/\n{3,}/g, '\n\n');
         return result.trim();
+    }
+
+    stripDraftMetaPreamble(text) {
+        const lines = String(text || '')
+            .replace(/\r\n/g, '\n')
+            .split('\n');
+
+        const metaLinePatterns = [
+            /^\s*is a response needed\??\s*(yes|no)?\.?\s*$/i,
+            /^\s*is a response needed\??\s*yes\b.*$/i,
+            /^\s*(analysis|reasoning|recommended action|suggested action|draft note)\s*:\s*.*$/i,
+            /^\s*response needed\??\s*(yes|no)?\.?\s*$/i,
+            /^\s*can draft\??\s*(yes|no)?\.?\s*$/i,
+        ];
+
+        const cleaned = lines.filter((line) => !metaLinePatterns.some((pattern) => pattern.test(line.trim())));
+        return cleaned.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    isSyntheticRequestedRecordLine(value) {
+        const text = String(value || '').trim();
+        if (!text) return true;
+        const metadataLinePatterns = [
+            /^(city|state|county|agency|agencies|police department|police departments involved|agencies involved|incident date|incident location|subject name|subject|request type|request strategy|status)\s*:\s*.+$/i,
+            /^---\s*notion fields\s*---$/i,
+        ];
+        return /\b(e2e|synthetic|scenario|localhost qa)\b/i.test(text)
+            || /^various records$/i.test(text)
+            || metadataLinePatterns.some((pattern) => pattern.test(text));
+    }
+
+    buildRequestedRecordSummary(caseData) {
+        const requested = Array.isArray(caseData?.requested_records)
+            ? caseData.requested_records.filter((item) => !this.isSyntheticRequestedRecordLine(item))
+            : [];
+
+        if (requested.length > 0) {
+            const firstThree = requested.slice(0, 3);
+            return firstThree.join('; ');
+        }
+
+        if (caseData?.subject_name) {
+            return `records concerning ${caseData.subject_name}`;
+        }
+
+        return 'the responsive public records described in my request';
+    }
+
+    buildReasonablyDescribedClarificationTemplate(messageData, caseData, userSignature) {
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+        const reference = this.extractMessageReference(messageData);
+        const recordSummary = this.buildRequestedRecordSummary(caseData);
+        const incidentDate = caseData?.incident_date
+            ? new Date(caseData.incident_date).toISOString().split('T')[0]
+            : null;
+        const lines = [
+            'Hello Records Custodian,',
+            '',
+            `Thank you for the notice regarding my public records request${reference ? ` (#${reference})` : ''}. To clarify, I am seeking ${recordSummary}.`,
+        ];
+
+        const details = [];
+        if (caseData?.subject_name) details.push(`Subject/person: ${caseData.subject_name}`);
+        if (incidentDate) details.push(`Incident date: ${incidentDate}`);
+        if (caseData?.incident_location) details.push(`Location: ${caseData.incident_location}`);
+        if (Array.isArray(caseData?.requested_records)) {
+            const requested = caseData.requested_records.filter((item) => !this.isSyntheticRequestedRecordLine(item));
+            if (requested.length > 0) {
+                details.push(`Requested record types: ${requested.slice(0, 4).join('; ')}`);
+            }
+        }
+
+        if (details.length > 0) {
+            lines.push('', 'Helpful identifying details:');
+            for (const detail of details) {
+                lines.push(`- ${detail}`);
+            }
+        }
+
+        lines.push(
+            '',
+            'If this request can be reopened with the clarification above, please do so. If your office instead requires a new portal submission, please let me know and I will resubmit it there.',
+            'If a case number or another identifier would help you locate the records more efficiently, please tell me what would be most useful and I will provide it if available.',
+            '',
+            requesterName,
+        );
+
+        if (requesterTitle) lines.push(requesterTitle);
+        if (phone) lines.push(phone);
+
+        return lines.join('\n').trim();
+    }
+
+    shouldUseClarificationTemplateFallback(text, messageData, caseData) {
+        const cleaned = this.stripDraftMetaPreamble(this.sanitizeClarificationDraft(text, null));
+        const messageText = this.getMessageBodyForPrompt(messageData).toLowerCase();
+        const constraints = Array.isArray(caseData?.constraints_jsonb)
+            ? caseData.constraints_jsonb.filter((item) => typeof item === 'string')
+            : [];
+        const hasReasonablyDescribedClosure = /not sufficiently clear|specify an identifiable record|reasonably describe(?:s)? an identifiable record|making a focused and effective request/i.test(messageText)
+            || constraints.includes('REQUEST_NOT_REASONABLY_DESCRIBED');
+
+        if (!hasReasonablyDescribedClosure) return false;
+        if (!cleaned) return true;
+        if (/^hello\s+mr\./i.test(cleaned) && /is a response needed\?/i.test(String(text || ''))) return true;
+        if (cleaned.length < 220) return true;
+        if (!/reopen|resubmit|clarify|identifier|incident date|requested record/i.test(cleaned)) return true;
+        return false;
+    }
+
+    buildCertificationBarrierRebuttalTemplate(messageData, caseData, userSignature) {
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+        const reference = this.extractMessageReference(messageData);
+        const recordSummary = this.buildRequestedRecordSummary(caseData);
+        const lines = [
+            'Dear Records Custodian,',
+            '',
+            `Thank you for your response regarding my public records request${reference ? ` (Ref. ${reference})` : ''}. I want to proceed with this request, but I need the exact steps and legal basis for the conditions you described.`,
+            '',
+            'If Wisconsin law requires a written certification for any requested audio or video records under Wis. Stat. § 19.35(3)(h)3.a, please send the exact certification form or language your office requires.',
+            'Please also provide an itemized written estimate for any redaction or production fees before closing the request.',
+            `To the extent any responsive non-video records or other segregable portions of ${recordSummary} are not subject to that certification requirement, please process and release those records now.`,
+            'If any requested records are being withheld or delayed, please identify the specific legal basis for each withheld category and explain what additional information you need from me to proceed.',
+            '',
+            requesterName,
+        ];
+
+        if (requesterTitle) lines.push(requesterTitle);
+        if (phone) lines.push(phone);
+
+        return lines.join('\n').trim();
+    }
+
+    buildNoContactClosureRebuttalTemplate(messageData, caseData, userSignature) {
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+        const reference = this.extractMessageReference(messageData);
+        const recordSummary = this.buildRequestedRecordSummary(caseData);
+        const incidentDate = caseData?.incident_date
+            ? new Date(caseData.incident_date).toISOString().split('T')[0]
+            : null;
+        const lines = [
+            'Dear Records Custodian,',
+            '',
+            `Thank you for the closure notice regarding my public records request${reference ? ` (Ref. ${reference})` : ''}. I want to continue pursuing this request and am providing a clearer description so the request can be reopened and processed.`,
+            '',
+            `This request seeks ${recordSummary}.`,
+        ];
+
+        if (caseData?.subject_name || incidentDate || caseData?.incident_location) {
+            lines.push('', 'Helpful identifying details:');
+            if (caseData?.subject_name) lines.push(`- Subject/person: ${caseData.subject_name}`);
+            if (incidentDate) lines.push(`- Incident date: ${incidentDate}`);
+            if (caseData?.incident_location) lines.push(`- Location: ${caseData.incident_location}`);
+        }
+
+        lines.push(
+            '',
+            'Please reopen the request and process it using the clarification above. If a case number or another specific identifier is required before you can search for responsive records, please tell me exactly what information would be most useful and I will provide it if available.',
+            '',
+            requesterName,
+        );
+
+        if (requesterTitle) lines.push(requesterTitle);
+        if (phone) lines.push(phone);
+
+        return lines.join('\n').trim();
+    }
+
+    shouldUseNoContactClosureTemplate(messageText, denialSubtype, generatedText) {
+        if (denialSubtype !== 'not_reasonably_described') return false;
+        const normalizedMessage = String(messageText || '').toLowerCase();
+        if (!/unable to contact|not sufficiently clear|reasonably describe(?:s)? an identifiable record|focused and effective request/i.test(normalizedMessage)) {
+            return false;
+        }
+        const normalizedGenerated = String(generatedText || '').trim().toLowerCase();
+        if (!normalizedGenerated) return true;
+        if (normalizedGenerated.length < 260) return true;
+        if (!/reopen|process it|case number|identifier/i.test(normalizedGenerated)) return true;
+        return false;
+    }
+
+    shouldUseCertificationBarrierTemplate(messageText, generatedText) {
+        const normalizedMessage = String(messageText || '').toLowerCase();
+        if (!/certification|19\.35\(3\)\(h\)3a|correlation to the videos|for financial gain/i.test(normalizedMessage)) {
+            return false;
+        }
+        const normalizedGenerated = String(generatedText || '').trim().toLowerCase();
+        if (!normalizedGenerated) return true;
+        if (normalizedGenerated.length < 240) return true;
+        if (!/certification|itemized|estimate|legal basis/i.test(normalizedGenerated)) return true;
+        return false;
     }
 
     /**
@@ -1518,6 +1717,14 @@ Return ONLY the email body text, no subject line.`;
             );
             const rebuttalText = rebuttalResult.text;
             let normalizedRebuttalText = this.normalizeGeneratedDraftSignature(rebuttalText, userSignature, { includeEmail: false, includeAddress: false });
+
+            if (this.shouldUseNoContactClosureTemplate(agencyResponseText, denialSubtype, normalizedRebuttalText)) {
+                normalizedRebuttalText = this.buildNoContactClosureRebuttalTemplate(messageData, caseData, userSignature);
+            }
+
+            if (this.shouldUseCertificationBarrierTemplate(agencyResponseText, normalizedRebuttalText)) {
+                normalizedRebuttalText = this.buildCertificationBarrierRebuttalTemplate(messageData, caseData, userSignature);
+            }
 
             if (denialSubtype === 'privacy_exemption' && this.shouldUsePrivacyExemptionTemplateFallback(normalizedRebuttalText)) {
                 normalizedRebuttalText = this.buildPrivacyExemptionTemplate(messageData, caseData, userSignature);
@@ -2518,6 +2725,7 @@ Generate a professional, helpful response that:
 7. Do NOT use placeholders like "[INSERT REQUESTER MAILING ADDRESS]" or "[Your Address]".
 8. If a mailing address is requested and one is on file, include the exact mailing address from above. If none is on file, do not invent one and do not leave a placeholder.
 9. Do NOT say a request form has already been completed, attached, or sent unless this reply is actually sending that form.
+10. Do NOT include analysis/meta text like "Is a response needed?", "Suggested action", or any explanation to the operator. Output only the sendable email.
 
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
@@ -2529,6 +2737,10 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
             const bodyText = clarificationResult.text;
             let normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
             normalizedBodyText = this.sanitizeClarificationDraft(normalizedBodyText, userSignature);
+            normalizedBodyText = this.stripDraftMetaPreamble(normalizedBodyText);
+            if (this.shouldUseClarificationTemplateFallback(normalizedBodyText, message, caseData)) {
+                normalizedBodyText = this.buildReasonablyDescribedClarificationTemplate(message, caseData, userSignature);
+            }
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
 
             return {

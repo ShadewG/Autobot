@@ -125,13 +125,18 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
         } else if (actionType === 'SEND_REBUTTAL' || actionType === 'SEND_APPEAL') {
             draft = await aiService.generateDenialRebuttal(latestInbound, latestAnalysis, caseData, {
                 scopeItems: p.metadata?.scope_items || [],
+                forceDraft: true,
             });
         } else if (actionType === 'ACCEPT_FEE' || actionType === 'NEGOTIATE_FEE' || actionType === 'DECLINE_FEE' || actionType === 'SEND_FEE_WAIVER_REQUEST') {
             const feeAmt = p.metadata?.fee_amount || caseData.fee_amount || 0;
             const actionMap = { ACCEPT_FEE: 'accept', NEGOTIATE_FEE: 'negotiate', DECLINE_FEE: 'decline', SEND_FEE_WAIVER_REQUEST: 'waiver' };
             draft = await aiService.generateFeeResponse(caseData, { feeAmount: feeAmt, recommendedAction: actionMap[actionType], agencyMessage: latestInbound, agencyAnalysis: latestAnalysis });
         } else if (actionType === 'SEND_CLARIFICATION') {
-            draft = await aiService.generateAutoReply(latestInbound, latestAnalysis, caseData);
+            draft = await aiService.generateClarificationResponse(
+                latestInbound,
+                latestAnalysis,
+                caseData
+            );
         } else {
             return res.status(400).json({ success: false, error: `Draft generation not supported for action type: ${actionType}` });
         }

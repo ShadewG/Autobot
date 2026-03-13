@@ -19,7 +19,11 @@ import type { ActionType, ExecutionResult } from "../lib/types";
 import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 // @ts-ignore
-const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
+const {
+  detectCaseMetadataAgencyMismatch,
+  sanitizeStaleResearchHandoffDraft,
+  sanitizeStaleResearchHandoffReasoning,
+} = require("../../utils/request-normalization");
 // @ts-ignore
 const { isTestAgencyEmail } = require("../../services/canonical-agency");
 
@@ -826,6 +830,12 @@ export async function executeAction(
         opts?: { subject?: string; gateOptions?: string[] }
       ) => {
         try {
+          const sanitizedBody = typeof sanitizeStaleResearchHandoffDraft === "function"
+            ? sanitizeStaleResearchHandoffDraft(body)
+            : body;
+          const sanitizedReasoning = typeof sanitizeStaleResearchHandoffReasoning === "function"
+            ? sanitizeStaleResearchHandoffReasoning([handoffReason])
+            : [handoffReason];
           // Include runId so a previously auto-dismissed handoff proposal from an older
           // run cannot block creation of a fresh, actionable handoff proposal.
           const handoffProposalKey = `${caseId}:research:handoff:${handoffKey}:${runId || "no-run"}`;
@@ -836,8 +846,8 @@ export async function executeAction(
             actionType: "ESCALATE",
             disableResearchAutoDismiss: true,
             draftSubject: opts?.subject || `Human action needed - case ${caseId}`,
-            draftBodyText: body,
-            reasoning: [handoffReason],
+            draftBodyText: sanitizedBody,
+            reasoning: sanitizedReasoning,
             confidence: 0.4,
             requiresHuman: true,
             canAutoExecute: false,
