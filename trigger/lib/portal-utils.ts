@@ -3,9 +3,13 @@ export function isNonAutomatablePortalProvider(provider: string | null | undefin
   const value = String(provider).toLowerCase();
   return (
     value.includes("no online portal") ||
+    value.includes("no online submission portal") ||
     value.includes("paper form required") ||
     value.includes("paper form") ||
-    value.includes("mail-in form")
+    value.includes("mail-in form") ||
+    value.includes("manual page") ||
+    value.includes("pdf form download") ||
+    value.includes("download only")
   );
 }
 

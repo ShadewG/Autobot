@@ -268,9 +268,11 @@ export interface AgencySummary {
   id: string;
   name: string;
   state: string;
-  submission_method: 'EMAIL' | 'PORTAL' | 'MAIL';
+  submission_method: 'EMAIL' | 'PORTAL' | 'MAIL' | 'MANUAL';
   portal_url?: string;
   portal_provider?: string; // e.g., "GovQA", "NextRequest"
+  manual_request_url?: string | null;
+  pdf_form_url?: string | null;
   default_autopilot_mode: string;
   notes?: string;
   rules?: AgencyRules;

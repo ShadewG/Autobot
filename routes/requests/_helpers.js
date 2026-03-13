@@ -6,7 +6,12 @@ const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { getCanonicalMessageText } = require('../../lib/message-normalization');
 const { resolveReviewState } = require('../../lib/resolve-review-state');
-const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
+const {
+    normalizePortalUrl,
+    isSupportedPortalUrl,
+    detectPortalProviderByUrl,
+    classifyRequestChannelUrl,
+} = require('../../utils/portal-utils');
 const {
     normalizePortalTimeoutSubstatus,
     deriveDisplayState,
@@ -563,33 +568,65 @@ function filterExistingAgencyCandidates(candidates = [], caseAgencies = [], requ
     });
 }
 
-function extractLatestSupportedPortalUrl(activityRows = [], caseAgencies = [], ...rawValues) {
-    const candidates = [];
+function extractLatestRecoveredRequestChannels(activityRows = [], caseAgencies = [], caseData = {}) {
+    const result = {
+        portal_url: null,
+        portal_provider: null,
+        manual_request_url: null,
+        pdf_form_url: null,
+    };
+
+    const candidates = [
+        { url: caseData?.portal_url, provider: caseData?.portal_provider || null },
+        { url: caseData?.manual_request_url, provider: null },
+        { url: caseData?.pdf_form_url, provider: null },
+    ];
 
     for (const row of activityRows) {
         if (!row) continue;
         const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : row.meta_jsonb;
-        if (metadata && typeof metadata === 'object' && metadata.portal_url) {
-            candidates.push(metadata.portal_url);
+        if (!metadata || typeof metadata !== 'object') continue;
+        if (metadata.portal_url) {
+            candidates.push({ url: metadata.portal_url, provider: metadata.portal_provider || null });
+        }
+        if (metadata.manual_request_url) {
+            candidates.push({ url: metadata.manual_request_url, provider: null });
+        }
+        if (metadata.pdf_form_url) {
+            candidates.push({ url: metadata.pdf_form_url, provider: null });
         }
     }
 
     for (const agency of caseAgencies) {
         if (agency?.portal_url) {
-            candidates.push(agency.portal_url);
+            candidates.push({ url: agency.portal_url, provider: agency.portal_provider || null });
+        }
+        if (agency?.manual_request_url) {
+            candidates.push({ url: agency.manual_request_url, provider: null });
+        }
+        if (agency?.pdf_form_url) {
+            candidates.push({ url: agency.pdf_form_url, provider: null });
         }
     }
 
-    candidates.push(...rawValues);
-
-    for (const rawValue of candidates) {
-        const normalized = normalizePortalUrl(rawValue);
-        if (normalized && isSupportedPortalUrl(normalized)) {
-            return normalized;
+    for (const candidate of candidates) {
+        if (!candidate?.url) continue;
+        const classified = classifyRequestChannelUrl(candidate.url, candidate.provider, caseData?.last_portal_status || null);
+        if (classified.kind === 'portal' && !result.portal_url) {
+            result.portal_url = classified.normalizedUrl;
+            result.portal_provider = classified.provider || detectPortalProviderByUrl(classified.normalizedUrl)?.name || null;
+            continue;
+        }
+        if (classified.kind === 'manual_request' && !result.manual_request_url) {
+            result.manual_request_url = classified.normalizedUrl;
+            continue;
+        }
+        if (classified.kind === 'pdf_form' && !result.pdf_form_url) {
+            result.pdf_form_url = classified.normalizedUrl;
         }
     }
 
-    return null;
+    return result;
 }
 
 function normalizeThreadBody(text, caseData = null) {
@@ -1862,7 +1899,7 @@ module.exports = {
     // Functions
     generateOutcomeSummary, deriveCostStatus, buildDueInfo, parseScopeItems, safeJsonParse,
     extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates,
-    extractLatestSupportedPortalUrl, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
+    extractLatestRecoveredRequestChannels, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
     detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
     toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones, hasMissingImportDeliveryPath,

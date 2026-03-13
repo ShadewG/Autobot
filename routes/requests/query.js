@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestRecoveredRequestChannels, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
 const { buildPortalSubmissionThreadMessages } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
@@ -1255,17 +1255,22 @@ router.get('/:id/workspace', async (req, res) => {
             ? primaryCaseAgency
             : null;
         const researchSuggestedAgency = extractResearchSuggestedAgency(caseData.contact_research_notes);
-        const recoveredPortalUrl = extractLatestSupportedPortalUrl(activityRows, caseAgencies, caseData.portal_url);
-        if (recoveredPortalUrl && recoveredPortalUrl !== caseData.portal_url) {
+        const recoveredRequestChannels = extractLatestRecoveredRequestChannels(activityRows, caseAgencies, caseData);
+        const normalizedCurrentPortalUrl = normalizePortalUrl(caseData.portal_url);
+        const normalizedCurrentManualRequestUrl = normalizePortalUrl(caseData.manual_request_url);
+        const normalizedCurrentPdfFormUrl = normalizePortalUrl(caseData.pdf_form_url);
+        if (
+            normalizedCurrentPortalUrl !== recoveredRequestChannels.portal_url ||
+            (caseData.portal_provider || null) !== (recoveredRequestChannels.portal_provider || null) ||
+            normalizedCurrentManualRequestUrl !== recoveredRequestChannels.manual_request_url ||
+            normalizedCurrentPdfFormUrl !== recoveredRequestChannels.pdf_form_url
+        ) {
             caseData = {
                 ...caseData,
-                portal_url: recoveredPortalUrl,
-                portal_provider: caseData.portal_provider || detectPortalProviderByUrl(recoveredPortalUrl)?.name || null,
-            };
-        } else if (!normalizePortalUrl(caseData.portal_url) && caseData.portal_url) {
-            caseData = {
-                ...caseData,
-                portal_url: null,
+                portal_url: recoveredRequestChannels.portal_url,
+                portal_provider: recoveredRequestChannels.portal_provider || null,
+                manual_request_url: recoveredRequestChannels.manual_request_url,
+                pdf_form_url: recoveredRequestChannels.pdf_form_url,
             };
         }
 
@@ -1513,10 +1518,14 @@ router.get('/:id/workspace', async (req, res) => {
             state: deriveDisplayState(caseData.state, resolvedAgencyName || caseData.agency_name) || '—',
             submission_method: resolvedPortalUrl
                 ? 'PORTAL'
+                : caseData.manual_request_url || caseData.pdf_form_url
+                ? 'MANUAL'
                 : resolvedAgencyEmail
                 ? 'EMAIL'
                 : 'UNKNOWN',
             portal_url: resolvedPortalUrl || undefined,
+            manual_request_url: caseData.manual_request_url || undefined,
+            pdf_form_url: caseData.pdf_form_url || undefined,
             default_autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
             notes: caseData.contact_research_notes || undefined,
             // Agency rules (derived or default - in full implementation these would be stored)

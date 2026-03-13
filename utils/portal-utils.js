@@ -93,6 +93,7 @@ const PORTAL_ENTRY_MARKERS = [
 ];
 
 const CONTACT_MARKERS = ['/contact', '/contacts', '/staff', '/directory', '/about', '/pio'];
+const MANUAL_REQUEST_MARKERS = ['/records-reports', '/recordsreports', '/records-report'];
 const DOCUMENTATION_MARKERS = ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge'];
 const DOWNLOAD_EXTENSION_PATTERN = /\.(pdf|doc|docx|xls|xlsx|rtf|odt|zip|jpg|jpeg|png)$/i;
 const KNOWN_AUTOMATABLE_PROVIDERS = new Set(['govqa', 'nextrequest', 'justfoia', 'civicplus', 'formcenter']);
@@ -231,10 +232,14 @@ function isNonAutomatablePortalProvider(provider) {
     const value = String(provider).toLowerCase();
     return (
         value.includes('no online portal') ||
+        value.includes('no online submission portal') ||
         value.includes('paper form required') ||
         value.includes('paper form') ||
         value.includes('mail-in form') ||
-        value.includes('custom form')
+        value.includes('custom form') ||
+        value.includes('manual page') ||
+        value.includes('pdf form download') ||
+        value.includes('download only')
     );
 }
 
@@ -259,10 +264,11 @@ function isLikelyContactInfoUrl(url) {
         firstPathSegment = pathname.toLowerCase().split('/').filter(Boolean)[0] || '';
     } catch (error) {}
     const hasContactMarker = CONTACT_MARKERS.some((needle) => value.includes(needle));
+    const hasManualRequestMarker = MANUAL_REQUEST_MARKERS.some((needle) => value.includes(needle));
     const hasPortalMarker = PORTAL_ENTRY_MARKERS.some((needle) => value.includes(needle))
         || value.includes('nextrequest');
     const startsWithContactRoot = ['contact', 'contacts', 'staff', 'directory', 'about', 'pio'].includes(firstPathSegment);
-    return startsWithContactRoot || (hasContactMarker && !hasPortalMarker);
+    return startsWithContactRoot || hasManualRequestMarker || (hasContactMarker && !hasPortalMarker);
 }
 
 function isLikelyDocumentationPortalUrl(url) {

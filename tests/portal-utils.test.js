@@ -145,6 +145,23 @@ describe('portal utils', function () {
     assert.strictEqual(normalized.manual_request_url, 'https://www.co.warren.ms.us/contact-us/');
   });
 
+  it('moves provider-labeled no-online-submission pages into the manual request channel', function () {
+    const url = 'https://www.perry-ga.gov/police-department/records-reports';
+    const provider = 'pdf form download (no online submission portal)';
+    const classified = classifyRequestChannelUrl(url, provider, null);
+    assert.strictEqual(classified.kind, 'manual_request');
+
+    const normalized = normalizeRequestChannelFields({
+      portal_url: url,
+      portal_provider: provider,
+      manual_request_url: null,
+      pdf_form_url: null,
+    });
+    assert.strictEqual(normalized.portal_url, null);
+    assert.strictEqual(normalized.portal_provider, null);
+    assert.strictEqual(normalized.manual_request_url, url);
+  });
+
   it('drops junk tracking and generic root URLs instead of keeping them in request channels', function () {
     const sendgrid = normalizeRequestChannelFields({
       portal_url: 'https://u8387778.ct.sendgrid.net/ls/click?upn=test',
