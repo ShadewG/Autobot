@@ -50,6 +50,16 @@ async function main() {
   await db.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS pdf_form_url TEXT');
   await db.query('ALTER TABLE IF EXISTS case_agencies ADD COLUMN IF NOT EXISTS manual_request_url TEXT');
   await db.query('ALTER TABLE IF EXISTS case_agencies ADD COLUMN IF NOT EXISTS pdf_form_url TEXT');
+  await db.query('ALTER TABLE cases DROP CONSTRAINT IF EXISTS email_or_portal_required');
+  await db.query('ALTER TABLE cases DROP CONSTRAINT IF EXISTS email_or_request_channel_required');
+  await db.query(`ALTER TABLE cases
+    ADD CONSTRAINT email_or_request_channel_required
+    CHECK (
+      agency_email IS NOT NULL
+      OR portal_url IS NOT NULL
+      OR manual_request_url IS NOT NULL
+      OR pdf_form_url IS NOT NULL
+    )`);
 
   const cases = await backfillTable({ tableName: 'cases' });
   const caseAgencies = await backfillTable({ tableName: 'case_agencies' });

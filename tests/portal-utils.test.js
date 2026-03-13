@@ -162,6 +162,42 @@ describe('portal utils', function () {
     assert.strictEqual(normalized.manual_request_url, url);
   });
 
+  it('falls back to URL detection when the stored provider hint is auto-detected', function () {
+    const url = 'https://www.roanokeva.gov/FormCenter/Police-26/FOIA-Request-Form-Police-Department-Only-154';
+    const classified = classifyRequestChannelUrl(url, 'auto-detected', null);
+    assert.strictEqual(classified.kind, 'portal');
+    assert.strictEqual(classified.provider, 'formcenter');
+
+    const normalized = normalizeRequestChannelFields({
+      portal_url: url,
+      portal_provider: 'auto-detected',
+      manual_request_url: null,
+      pdf_form_url: null,
+    });
+    assert.strictEqual(normalized.portal_url, url);
+    assert.strictEqual(normalized.portal_provider, 'formcenter');
+  });
+
+  it('falls back to URL detection when the stored provider hint is none', function () {
+    const url = 'https://hardeevillesc.nextrequest.com/requests/new';
+    const decision = evaluatePortalAutomationDecision({
+      portalUrl: url,
+      provider: 'none',
+      lastPortalStatus: null,
+      policyStatus: null,
+    });
+
+    assert.strictEqual(decision.decision, 'allow');
+    assert.strictEqual(decision.provider, 'nextrequest');
+    assert.strictEqual(decision.status, 'auto_supported');
+  });
+
+  it('classifies records-and-reports pages as manual even without a stored provider hint', function () {
+    const url = 'https://www.perry-ga.gov/police-department/records-reports';
+    const classified = classifyRequestChannelUrl(url, null, null);
+    assert.strictEqual(classified.kind, 'manual_request');
+  });
+
   it('drops junk tracking and generic root URLs instead of keeping them in request channels', function () {
     const sendgrid = normalizeRequestChannelFields({
       portal_url: 'https://u8387778.ct.sendgrid.net/ls/click?upn=test',

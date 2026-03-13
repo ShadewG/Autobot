@@ -97,9 +97,20 @@ const MANUAL_REQUEST_MARKERS = ['/records-reports', '/recordsreports', '/records
 const DOCUMENTATION_MARKERS = ['/docs', '/documentation', '/help', '/support', '/faq', '/kb', '/knowledge'];
 const DOWNLOAD_EXTENSION_PATTERN = /\.(pdf|doc|docx|xls|xlsx|rtf|odt|zip|jpg|jpeg|png)$/i;
 const KNOWN_AUTOMATABLE_PROVIDERS = new Set(['govqa', 'nextrequest', 'justfoia', 'civicplus', 'formcenter']);
+const KNOWN_PROVIDER_NAMES = new Set(PORTAL_PROVIDERS.map((provider) => provider.name));
 const NON_PORTAL_HOSTS = new Set([
     'civicplus.help',
     'uploads.govqa.us',
+]);
+const PLACEHOLDER_PROVIDER_HINTS = new Set([
+    '',
+    'auto-detected',
+    'auto detected',
+    'none',
+    'unknown',
+    'n/a',
+    'na',
+    'null',
 ]);
 const ASSET_PATH_MARKERS = ['/download/', '/downloads/', '/upload/', '/uploads/', '/files/', '/images/', '/image/'];
 const REQUEST_FORM_DOCUMENT_PATH_MARKERS = [
@@ -243,6 +254,31 @@ function isNonAutomatablePortalProvider(provider) {
     );
 }
 
+function normalizePortalProviderHint(provider, url = null) {
+    const rawValue = String(provider || '').trim();
+    const normalizedValue = rawValue.toLowerCase();
+    const detectedProvider = detectPortalProviderByUrl(url)?.name || null;
+
+    if (!normalizedValue || PLACEHOLDER_PROVIDER_HINTS.has(normalizedValue)) {
+        return detectedProvider;
+    }
+
+    if (isNonAutomatablePortalProvider(normalizedValue)) {
+        return normalizedValue;
+    }
+
+    if (detectedProvider) {
+        if (!KNOWN_PROVIDER_NAMES.has(normalizedValue)) {
+            return detectedProvider;
+        }
+        if (normalizedValue === 'civicplus' && detectedProvider === 'formcenter') {
+            return detectedProvider;
+        }
+    }
+
+    return normalizedValue;
+}
+
 function isNonAutomatablePortalStatus(status) {
     if (!status) return false;
     const value = String(status).toLowerCase();
@@ -380,7 +416,7 @@ function buildPortalFingerprint(url, provider = null) {
 
     try {
         const normalizedUrl = new URL(normalized);
-        const detectedProvider = provider || detectPortalProviderByUrl(normalized)?.name || 'unknown';
+        const detectedProvider = normalizePortalProviderHint(provider, normalized) || 'unknown';
         const pathClass = getPortalPathClass(normalized, detectedProvider);
         const pathHint = buildPortalPathHint(normalized);
         return {
@@ -425,7 +461,7 @@ function classifyRequestChannelUrl(url, provider = null, lastPortalStatus = null
     }
 
     try {
-        const detectedProvider = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase() || null;
+        const detectedProvider = normalizePortalProviderHint(provider, normalized);
         const pathClass = getPortalPathClass(normalized, detectedProvider);
         const pathname = new URL(normalized).pathname.toLowerCase();
 
@@ -466,6 +502,26 @@ function classifyRequestChannelUrl(url, provider = null, lastPortalStatus = null
                 provider: detectedProvider,
                 pathClass,
                 reason: 'non_automatable_status',
+            };
+        }
+
+        if (isRequestFormDocumentUrl(normalized)) {
+            return {
+                kind: 'pdf_form',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: 'request_form_document',
+            };
+        }
+
+        if (isLikelyContactInfoUrl(normalized) || isLikelyDocumentationPortalUrl(normalized)) {
+            return {
+                kind: 'manual_request',
+                normalizedUrl: normalized,
+                provider: detectedProvider,
+                pathClass,
+                reason: isLikelyContactInfoUrl(normalized) ? 'manual_request_page' : 'documentation',
             };
         }
 
@@ -536,7 +592,10 @@ function normalizeRequestChannelFields(fields = {}) {
         const classified = classifyRequestChannelUrl(candidate.url, candidate.provider, fields.last_portal_status || null);
         if (classified.kind === 'portal' && !result.portal_url) {
             result.portal_url = classified.normalizedUrl;
-            result.portal_provider = classified.provider || detectPortalProviderByUrl(classified.normalizedUrl)?.name || null;
+            result.portal_provider = normalizePortalProviderHint(
+                classified.provider,
+                classified.normalizedUrl
+            ) || null;
             continue;
         }
         if (classified.kind === 'manual_request' && !result.manual_request_url) {
@@ -571,7 +630,9 @@ function evaluatePortalAutomationDecision({
         };
     }
 
-    const normalizedProvider = String(provider || fingerprint.provider || '').toLowerCase();
+    const normalizedProvider = normalizePortalProviderHint(provider, fingerprint.normalizedUrl)
+        || String(fingerprint.provider || '').toLowerCase()
+        || null;
     const normalizedPolicyStatus = String(policyStatus || '').toLowerCase() || null;
 
     if (isNonAutomatablePortalProvider(provider)) {
@@ -663,9 +724,10 @@ function derivePortalPolicyFromBrowserValidation({
     validation = {},
 } = {}) {
     const normalizedPortalUrl = normalizePortalUrl(portalUrl);
-    const normalizedProvider = String(provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || '').toLowerCase() || 'unknown';
+    const normalizedProvider = normalizePortalProviderHint(provider, normalizedPortalUrl) || 'unknown';
     const validationUrl = normalizePortalUrl(validation.final_url || validation.portalUrl || normalizedPortalUrl);
-    const finalProvider = String(validation.provider || normalizedProvider || '').toLowerCase() || normalizedProvider;
+    const finalProvider = normalizePortalProviderHint(validation.provider || normalizedProvider, validationUrl || normalizedPortalUrl)
+        || normalizedProvider;
     const pathClass = getPortalPathClass(validationUrl || normalizedPortalUrl, finalProvider);
     const pageKind = String(
         validation.pageKind
@@ -757,7 +819,7 @@ function isSupportedPortalUrl(url, provider = null, lastPortalStatus = null) {
 
     try {
         const urlObj = new URL(normalized);
-        const providerName = String(provider || detectPortalProviderByUrl(normalized)?.name || '').toLowerCase();
+        const providerName = normalizePortalProviderHint(provider, normalized);
         const pathClass = getPortalPathClass(normalized, providerName);
 
         if (isGenericJustFoiaRoot(urlObj.hostname, (urlObj.pathname || '/').toLowerCase(), providerName)) {

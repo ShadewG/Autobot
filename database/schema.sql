@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS cases (
     case_name VARCHAR(500) NOT NULL,
     subject_name VARCHAR(255),
     agency_name VARCHAR(255),
-    agency_email VARCHAR(255) NOT NULL,
+    agency_email VARCHAR(255),
     state VARCHAR(2),
     incident_date DATE,
     incident_location TEXT,
@@ -38,7 +38,13 @@ CREATE TABLE IF NOT EXISTS cases (
     days_overdue INTEGER DEFAULT 0,
     deadline_date DATE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT email_or_request_channel_required CHECK (
+        agency_email IS NOT NULL
+        OR portal_url IS NOT NULL
+        OR manual_request_url IS NOT NULL
+        OR pdf_form_url IS NOT NULL
+    )
 );
 
 -- Email threads (one per case/agency)
