@@ -548,7 +548,9 @@ export const processInbound = task({
       }
     }
 
-    const inboundMessageContext = await reconcileInboundMessageCaseOwnership(caseId, messageId);
+    const inboundMessageContext = messageId
+      ? await reconcileInboundMessageCaseOwnership(caseId, messageId)
+      : { message: null, thread: null, repaired: false };
     if (inboundMessageContext.repaired) {
       logger.info("Repaired inbound message case ownership from thread", {
         caseId,
@@ -649,7 +651,7 @@ export const processInbound = task({
       };
     } else {
       await markStep("classify_inbound", `Run #${runId}: classifying inbound message`, { message_id: messageId });
-      classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");
+      classification = await classifyInbound(context, messageId, triggerType || "INBOUND_MESSAGE");
     }
 
     // Step 2b: Classification safety gates (before constraint mutation)
