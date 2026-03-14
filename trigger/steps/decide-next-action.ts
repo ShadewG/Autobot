@@ -2614,11 +2614,13 @@ export async function decideNextAction(
   try {
     // === requires_response gate ===
     const isFollowupTrigger = ["SCHEDULED_FOLLOWUP", "time_based_followup", "followup_trigger"].includes(triggerType);
+    const isHumanReviewResolutionTrigger =
+      triggerType === "HUMAN_REVIEW_RESOLUTION" && Boolean(reviewAction);
     const responseRequiringActions = ["send_rebuttal", "negotiate_fee", "pay_fee", "challenge"];
     const actionOverrides = responseRequiringActions.includes(suggestedAction || "") ||
       (suggestedAction === "respond" && classification === "DENIAL");
 
-    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL" || classification === "PARTIAL_DELIVERY" || classification === "FEE_QUOTE" || classification === "WRONG_AGENCY")) {
+    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || isHumanReviewResolutionTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL" || classification === "PARTIAL_DELIVERY" || classification === "FEE_QUOTE" || classification === "WRONG_AGENCY")) {
       reasoning.push(`No response needed: ${reasonNoResponse || "Analysis determined no email required"}`);
 
       // Check for unanswered clarification on denial
@@ -2717,8 +2719,6 @@ export async function decideNextAction(
     // Overdue / scheduled follow-up policy:
     // Route through research first so we can propose the best *new* channel
     // (new portal/new email/phone/fax) instead of repeatedly emailing stale contacts.
-    const isHumanReviewResolutionTrigger =
-      triggerType === "HUMAN_REVIEW_RESOLUTION" && Boolean(reviewAction);
     if ((classification === "NO_RESPONSE" || isFollowupTrigger) && !isHumanReviewResolutionTrigger) {
       const [followupSchedule, caseSnapshot] = await Promise.all([
         db.getFollowUpScheduleByCaseId(caseId),

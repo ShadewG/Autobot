@@ -97,6 +97,37 @@ describe("HUMAN_REVIEW_RESOLUTION retry research routing", function () {
     );
   });
 
+  it("does not let requiresResponse=false bypass human review send_via_email routing", async function () {
+    queryStub.callsFake(async (sql) => {
+      if (/outbound_count/i.test(String(sql))) {
+        return { rows: [{ outbound_count: 3 }] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await decideNextAction(
+      25243,
+      "HUMAN_REVIEW_RESOLUTION",
+      [],
+      null,
+      "neutral",
+      "SUPERVISED",
+      "HUMAN_REVIEW_RESOLUTION",
+      false,
+      null,
+      null,
+      null,
+      null,
+      "send_via_email",
+      "Send it by email instead.",
+      null,
+      null
+    );
+
+    assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
+    assert.strictEqual(result.researchLevel, "light");
+  });
+
   it("keeps send_via_email as SEND_INITIAL_REQUEST when no prior submission exists", async function () {
     queryStub.callsFake(async (sql) => {
       if (/outbound_count/i.test(String(sql))) {
