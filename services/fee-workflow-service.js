@@ -253,6 +253,8 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
     console.warn('[fee-workflow] Failed to fetch attachments for Notion links:', err.message);
   }
 
+  const appBaseUrl = (process.env.APP_BASE_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost:3000'}`).replace(/\/$/, '');
+
   await notionService.updatePage(pageId, {
     fee_amount: paymentContext.feeAmount,
     payment_notes: buildPaymentNotes(existingNotes, noteLines),
@@ -267,6 +269,7 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
     labels,
     invoice_due_date: paymentContext.invoiceDueDate,
     download_links: downloadLinks,
+    autobot_link: `${appBaseUrl}/requests/detail-v2?id=${caseData.id}`,
   });
 
   return { pageId, paymentContext };

@@ -2683,6 +2683,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             setMultiSelect('Invoice Status', updates.invoice_status);
             setDate('Date Payment Sent', updates.date_payment_sent);
             setDate('Invoice Due Date', updates.invoice_due_date);
+            setUrl('Autobot Link', updates.autobot_link);
             if (Array.isArray(updates.download_links)) {
                 const linkNames = ['Download Link', ...Array.from({ length: 8 }, (_, i) => `Download Link (${i + 2})`)];
                 updates.download_links.forEach((url, i) => {
@@ -3040,6 +3041,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 updates.portal_login_email = caseData.last_portal_account_email;
             }
             updates.needs_human_review = ['needs_human_review', 'needs_human_fee_approval'].includes(caseData.status);
+
+            // Autobot dashboard link
+            const appBaseUrl = (process.env.APP_BASE_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost:3000'}`).replace(/\/$/, '');
+            updates.autobot_link = `${appBaseUrl}/requests/detail-v2?id=${caseId}`;
 
             // Request number (portal reference)
             if (caseData.portal_request_number) {
@@ -3928,8 +3933,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             // Update Notion status
             try {
+                const importAppBaseUrl = (process.env.APP_BASE_URL || `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost:3000'}`).replace(/\/$/, '');
                 await this.updatePage(notionCase.notion_page_id, {
-                    live_status: this.mapStatusToNotion(newCase.status)
+                    live_status: this.mapStatusToNotion(newCase.status),
+                    autobot_link: `${importAppBaseUrl}/requests/detail-v2?id=${newCase.id}`,
                 });
                 const availableProps = await this.getPagePropertyNames(notionCase.notion_page_id);
                 if (availableProps.includes(this.legacyStatusProperty)) {
