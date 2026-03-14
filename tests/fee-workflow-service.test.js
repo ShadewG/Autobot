@@ -269,6 +269,17 @@ describe('fee workflow service', function () {
       assert.strictEqual(result, null);
     });
 
+    it('parses spelled-out number "within ten business days"', function () {
+      const result = feeWorkflowService.extractInvoiceDueDate(
+        'Your request will be considered automatically withdrawn if you do not notify us in writing within ten business days from the date of this letter.'
+      );
+      assert.ok(result, 'should return a date');
+      const parsed = new Date(result);
+      assert.ok(!isNaN(parsed.getTime()), 'should be valid date');
+      const diff = (parsed - new Date()) / 86400000;
+      assert.ok(diff >= 11 && diff <= 15, `expected 12-14 days out, got ${diff.toFixed(1)}`);
+    });
+
     it('returns null for empty/null input', function () {
       assert.strictEqual(feeWorkflowService.extractInvoiceDueDate(null), null);
       assert.strictEqual(feeWorkflowService.extractInvoiceDueDate(''), null);

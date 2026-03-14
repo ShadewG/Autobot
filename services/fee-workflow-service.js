@@ -92,18 +92,27 @@ function addBusinessDays(startDate, days) {
   return result;
 }
 
+function parseWordNumber(str) {
+  const words = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, twenty: 20, thirty: 30, forty: 40, forty5: 45, sixty: 60, ninety: 90 };
+  const n = parseInt(str, 10);
+  if (!isNaN(n)) return n;
+  return words[str.toLowerCase()] || null;
+}
+
 function extractInvoiceDueDate(text) {
   if (!text) return null;
 
-  // "within N (business) days"
-  const withinMatch = text.match(/within\s+(\d+)\s+(business\s+)?days/i);
+  // "within N (business) days" — supports digits or spelled-out numbers
+  const withinMatch = text.match(/within\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty)\s+(business\s+)?days/i);
   if (withinMatch) {
-    const n = parseInt(withinMatch[1], 10);
-    const isBusiness = Boolean(withinMatch[2]);
-    const target = isBusiness
-      ? addBusinessDays(new Date(), n)
-      : new Date(Date.now() + n * 86400000);
-    return target.toISOString().slice(0, 10);
+    const n = parseWordNumber(withinMatch[1]);
+    if (n) {
+      const isBusiness = Boolean(withinMatch[2]);
+      const target = isBusiness
+        ? addBusinessDays(new Date(), n)
+        : new Date(Date.now() + n * 86400000);
+      return target.toISOString().slice(0, 10);
+    }
   }
 
   // "due by/on [date]" or "must be received by [date]"
