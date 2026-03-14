@@ -594,6 +594,71 @@ describe("Pipeline E2E: Safety Check Step", function () {
         expect(result.riskFlags).to.include("CONTRADICTS_FEE_ACCEPTANCE");
         expect(result.canAutoExecute).to.equal(false);
       });
+
+      it("flags acknowledgment-shell rebuttals as invalid action drafts", async function () {
+        const { safetyCheck } = require("../../trigger/steps/safety-check.ts");
+
+        const result = await safetyCheck(
+          [
+            "Hello Officer Alley,",
+            "",
+            "Thank you for your March 6, 2026 response to TPIA request W028334-021626 regarding the June 2, 2019 homicide at the Village of Telluride apartments.",
+            "",
+            "Samuel Hylton",
+          ].join("\n"),
+          "RE: Public Records Request - Jon Jervis",
+          "SEND_REBUTTAL",
+          [],
+          [],
+          "local",
+          "TX"
+        );
+
+        expect(result.riskFlags).to.include("INVALID_ACTION_DRAFT");
+        expect(result.canAutoExecute).to.equal(false);
+        expect(result.requiresHuman).to.equal(true);
+      });
+
+      it("accepts structured mixed-denial rebuttals as valid rebuttal drafts", async function () {
+        const mocks = installMocks("denial_weak");
+        try {
+          const { safetyCheck } = require("../../trigger/steps/safety-check.ts");
+
+          const result = await safetyCheck(
+            [
+              "Dear Records Custodian,",
+              "",
+              "I received your response regarding my public records request (Ref. W028334-021626), and I am continuing to pursue body camera footage; 911 audio; surveillance video.",
+              "",
+              "For clarity, this request still covers:",
+              "- body camera footage",
+              "- 911 audio",
+              "- surveillance video",
+              "",
+              "To address the body-worn-camera issue you raised, please treat this message as providing the identifying information you requested: date 2019-06-02; location Village of Telluride apartment, San Marcos, Texas; subjects/persons Jon Jervis, Lapear Willrich.",
+              "Please process the body-worn-camera and interrogation-video portions of the request using those identifiers, or tell me exactly what additional identifier is still required before your office will search for responsive footage.",
+              "",
+              "You indicated that some responsive material was transferred to the District Attorney. Please identify which records were transferred, whether your office retains any copy, evidence log, or chain-of-custody record for those materials, and the proper custodian or contact information for the office now holding them.",
+              "",
+              "If any requested audio or video is unavailable because of retention, please identify the applicable retention authority, the date the material became unavailable, and whether related CAD, dispatch, evidence-log, or call-history records still exist.",
+              "If your office contends that no other responsive records exist, please describe the record systems or files that were searched and release any reasonably segregable non-exempt responsive records that remain available.",
+              "For each category your office is withholding or treating as non-responsive, please identify the specific legal basis for that position.",
+              "",
+              "Samuel Hylton",
+            ].join("\n"),
+            "RE: Public Records Request - Jon Jervis",
+            "SEND_REBUTTAL",
+            [],
+            [],
+            "local",
+            "TX"
+          );
+
+          expect(result.riskFlags).to.not.include("INVALID_ACTION_DRAFT");
+        } finally {
+          mocks.restore();
+        }
+      });
     });
   });
 
@@ -735,6 +800,40 @@ describe("Pipeline E2E: Gate Step", function () {
       expect(proposalArgs.requiresHuman).to.equal(true);
       expect(proposalArgs.draftBodyText).to.be.a("string");
       expect(proposalArgs.draftBodyText).to.include("fallback");
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it("replaces semantically invalid rebuttal drafts with a fallback review draft", async function () {
+    const mocks = installMocks("denial_weak");
+    try {
+      const { createProposalAndGate } = require("../../trigger/steps/gate-or-execute.ts");
+
+      await createProposalAndGate(
+        1014, 1, "SEND_REBUTTAL", 9014,
+        {
+          subject: "RE: Public Records Request - Example",
+          bodyText: "Hello Officer Alley,\n\nThank you for your response.\n\nSamuel Hylton",
+          bodyHtml: null,
+        },
+        {
+          riskFlags: ["INVALID_ACTION_DRAFT"],
+          warnings: ["Rebuttal draft does not actually rebut the denial or make a concrete next-step ask."],
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "SENSITIVE",
+        },
+        false, true, "DENIAL",
+        ["Denial requires a rebuttal."],
+        0.9, 0, null, null
+      );
+
+      const proposalArgs = mocks.dbStub.upsertProposal.firstCall.args[0];
+      expect(proposalArgs.status).to.equal("PENDING_APPROVAL");
+      expect(proposalArgs.requiresHuman).to.equal(true);
+      expect(proposalArgs.draftBodyText).to.include("System fallback draft generated.");
+      expect(proposalArgs.warnings).to.include("Generated SEND_REBUTTAL draft failed semantic validation; fallback draft generated automatically.");
     } finally {
       mocks.restore();
     }

@@ -219,6 +219,58 @@ describe('AI service request strategy path', function () {
     assert.match(draft.body_text, /case number or another specific identifier/i);
   });
 
+  it('replaces weak generic no-records rebuttals with a deterministic substantive template', async function () {
+    sinon.stub(aiService, 'researchStateLaws').resolves('');
+    sinon.stub(aiService, 'callAI').resolves({
+      text: [
+        'Hello Officer Alley,',
+        '',
+        'Thank you for your March 6, 2026 response to TPIA request W028334-021626 regarding the June 2, 2019 homicide at the Village of Telluride apartments.',
+        '',
+        'Samuel Hylton',
+      ].join('\n'),
+      modelMetadata: { modelId: 'test-model' },
+    });
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      title: '',
+      phone: '209-800-7702',
+    });
+    sinon.stub(db, 'getStateDeadline').resolves({ state_name: 'Texas' });
+
+    const draft = await aiService.generateDenialRebuttal(
+      {
+        subject: 'Public Information Request :: W028334-021626',
+        normalized_body_text: [
+          'The City has no response because this is not a valid public information request for body worn camera footage.',
+          'Please refer to Code of Criminal Procedure Art. 2B.0112.',
+          'The 911 call is no longer available as it has passed the retention period.',
+          'The interior surveillance video was turned over to the DA\'s office.',
+          'The City has reviewed its files and has determined there are no responsive documents.',
+        ].join(' '),
+      },
+      { denial_subtype: 'no_records' },
+      {
+        state: 'TX',
+        agency_name: 'San Marcos Police Department, Texas',
+        subject_name: 'Jon Jervis, Lapear Willrich',
+        incident_date: '2019-06-02T04:00:00.000Z',
+        incident_location: 'Village of Telluride apartment, San Marcos, Texas',
+        requested_records: ['body camera footage', '911 audio', 'surveillance video'],
+      },
+      { forceDraft: true }
+    );
+
+    assert.match(draft.body_text, /treat this message as providing the identifying information/i);
+    assert.match(draft.body_text, /For clarity, this request still covers:/i);
+    assert.match(draft.body_text, /body camera footage/i);
+    assert.match(draft.body_text, /district attorney/i);
+    assert.match(draft.body_text, /retention authority/i);
+    assert.match(draft.body_text, /record systems or files that were searched/i);
+    assert.match(draft.body_text, /specific legal basis/i);
+    assert.doesNotMatch(draft.body_text, /209-800-7702/);
+  });
+
   it('sanitizes status-update drafts so they do not echo security keys or requester phone numbers', async function () {
     sinon.stub(aiService, 'callAI').resolves({
       text: [

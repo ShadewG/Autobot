@@ -12,7 +12,7 @@ import type { SafetyResult, ScopeItem } from "../lib/types";
 
 const CRITICAL_RISK_FLAGS = [
   "REQUESTS_EXEMPT_ITEM", "CONTRADICTS_FEE_ACCEPTANCE", "CONTAINS_PII",
-  "LAW_JURISDICTION_MISMATCH", "CONTRADICTS_SCOPE_NARROWING",
+  "LAW_JURISDICTION_MISMATCH", "CONTRADICTS_SCOPE_NARROWING", "INVALID_ACTION_DRAFT",
 ];
 
 function hasExplicitSensitivePii(text: string): boolean {
@@ -28,6 +28,18 @@ function hasExplicitSensitivePii(text: string): boolean {
 function isHeuristicPhoneOrAddressWarning(warning: string): boolean {
   return /(personal phone number|mailing address|physical address|releasable to others|concrete narrowing|narrower subset)/i.test(
     String(warning || "")
+  );
+}
+
+function hasConcreteActionRequest(text: string): boolean {
+  return /\b(?:please|kindly)\s+(?:treat|confirm|identify|provide|release|reopen|process|advise|explain)\b|\b(?:can|could|would)\s+you\b|\bi\s+(?:request|ask)\b/i.test(
+    String(text || "")
+  );
+}
+
+function hasRebuttalSubstance(text: string): boolean {
+  return /legal basis|exemption|withhold|withheld|segregable|redact|retention|custodian|responsive records|non-exempt|district attorney|body[- ]worn camera|body camera|reopen|process/i.test(
+    String(text || "")
   );
 }
 
@@ -146,6 +158,18 @@ function runRegexSafetyChecks(
     }
   }
 
+  if (proposalActionType === "SEND_REBUTTAL") {
+    const hasConcreteAsk = hasConcreteActionRequest(draftBodyText);
+    const hasSubstantiveRebuttal = hasRebuttalSubstance(draftBodyText);
+    const looksLikeAcknowledgmentOnly = /thank you/i.test(draftBodyText)
+      && !/\b(?:please|kindly|however|but|confirm|identify|provide|release|reopen|process|withhold|retention|custodian)\b/i.test(draftBodyText);
+
+    if (!hasConcreteAsk || !hasSubstantiveRebuttal || looksLikeAcknowledgmentOnly) {
+      riskFlags.push("INVALID_ACTION_DRAFT");
+      warnings.push("Rebuttal draft does not actually rebut the denial or make a concrete next-step ask.");
+    }
+  }
+
   return {
     riskFlags,
     warnings,
@@ -210,6 +234,10 @@ ${JSON.stringify(scopeItems, null, 2)}
 ### 6. Requester Consistency
 - Does the draft contradict prior positions? (e.g., FEE_ACCEPTED but now negotiating, SCOPE_NARROWED but now expanding)
 - Set requester_consistency_valid=false and list issues in requester_consistency_issues if inconsistencies found
+
+### 7. Action-Type Alignment
+- If action type is SEND_REBUTTAL, verify the draft actually rebuts the denial and makes a concrete ask
+- If the draft is just a thank-you note, acknowledgment, or placeholder shell, return risk flag INVALID_ACTION_DRAFT
 
 Return critical risk flags in riskFlags and non-critical issues in warnings.`,
   });
@@ -318,11 +346,30 @@ export async function safetyCheck(
     mergedWarnings.push(...filteredWarnings);
   }
 
-  const aiHasCriticalRisk = aiResult
-    ? (!aiResult.safe || aiResult.riskFlags.length > 0)
-    : false;
+  const regexInvalidActionDraft = regexResult.riskFlags.includes("INVALID_ACTION_DRAFT");
+  const aiOnlyInvalidActionDraft = mergedRiskFlags.includes("INVALID_ACTION_DRAFT") && !regexInvalidActionDraft;
+  const looksLikeAcknowledgmentOnly = /thank you/i.test(String(draftBodyText || ""))
+    && !/\b(?:please|kindly|however|but|confirm|identify|provide|release|reopen|process|withhold|retention|custodian)\b/i.test(String(draftBodyText || ""));
+  if (
+    proposalActionType === "SEND_REBUTTAL"
+    && aiOnlyInvalidActionDraft
+    && hasConcreteActionRequest(draftBodyText)
+    && hasRebuttalSubstance(draftBodyText)
+    && !looksLikeAcknowledgmentOnly
+  ) {
+    const filteredFlags = mergedRiskFlags.filter((flag) => flag !== "INVALID_ACTION_DRAFT");
+    const filteredWarnings = mergedWarnings.filter(
+      (warning) => !/does not actually rebut the denial or make a concrete next-step ask/i.test(String(warning))
+    );
+    mergedRiskFlags.length = 0;
+    mergedRiskFlags.push(...filteredFlags);
+    mergedWarnings.length = 0;
+    mergedWarnings.push(...filteredWarnings);
+  }
 
-  if (regexResult.hasCriticalRisk || aiHasCriticalRisk) {
+  const hasCriticalRisk = mergedRiskFlags.some((flag) => CRITICAL_RISK_FLAGS.includes(flag));
+
+  if (hasCriticalRisk) {
     return {
       riskFlags: mergedRiskFlags,
       warnings: mergedWarnings,

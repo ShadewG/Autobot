@@ -766,6 +766,98 @@ class AIService {
         return false;
     }
 
+    shouldUseGenericDenialRebuttalTemplate(messageData, generatedText) {
+        const normalizedGenerated = String(generatedText || '').replace(/\s+/g, ' ').trim();
+        if (!normalizedGenerated) return true;
+
+        const hasConcreteAsk = /\b(?:please|kindly)\s+(?:treat|confirm|identify|provide|release|reopen|process|advise|explain)\b|\b(?:can|could|would)\s+you\b|\bi\s+(?:request|ask)\b/i.test(normalizedGenerated);
+        const hasRebuttalContent = /legal basis|exemption|withhold|withheld|segregable|redact|retention|custodian|responsive records|non-exempt|district attorney|body[- ]worn camera|body camera|reopen|process/i.test(normalizedGenerated);
+        const looksLikeAcknowledgmentOnly = /thank you/i.test(normalizedGenerated)
+            && !/\b(?:please|kindly|however|but|confirm|identify|provide|release|reopen|process|withhold|retention|custodian)\b/i.test(normalizedGenerated);
+
+        return looksLikeAcknowledgmentOnly || !hasConcreteAsk || !hasRebuttalContent;
+    }
+
+    buildGenericDenialRebuttalTemplate(messageData, analysis, caseData, userSignature) {
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const reference = this.extractMessageReference(messageData);
+        const recordSummary = this.buildRequestedRecordSummary(caseData);
+        const messageText = this.getMessageBodyForPrompt(messageData);
+        const normalizedMessage = String(messageText || '').toLowerCase();
+        const analysisJson = analysis?.full_analysis_json || {};
+        const incidentDate = caseData?.incident_date
+            ? new Date(caseData.incident_date).toISOString().split('T')[0]
+            : null;
+        const subjectNames = String(caseData?.subject_name || '').trim();
+        const location = String(caseData?.incident_location || '').trim();
+        const deniedScopeItems = Array.isArray(analysisJson.scope_updates)
+            ? analysisJson.scope_updates
+                .filter((item) => String(item?.status || '').toUpperCase() === 'DENIED')
+                .map((item) => String(item?.name || '').trim())
+                .filter(Boolean)
+            : [];
+        const requestedItems = deniedScopeItems.length > 0
+            ? deniedScopeItems
+            : (Array.isArray(caseData?.requested_records)
+                ? caseData.requested_records.filter((item) => !this.isSyntheticRequestedRecordLine(item))
+                : []);
+        const trimmedRequestedItems = requestedItems.slice(0, 5);
+
+        const lines = [
+            'Dear Records Custodian,',
+            '',
+            `I received your response regarding my public records request${reference ? ` (Ref. ${reference})` : ''}, and I am continuing to pursue ${recordSummary}.`,
+        ];
+
+        if (trimmedRequestedItems.length > 0) {
+            lines.push('', 'For clarity, this request still covers:');
+            for (const item of trimmedRequestedItems) {
+                lines.push(`- ${item}`);
+            }
+        }
+
+        if (/body worn camera|body camera|art\.?\s*2b\.0112|not a valid public information request/.test(normalizedMessage)) {
+            const identifyingDetails = [];
+            if (incidentDate) identifyingDetails.push(`date ${incidentDate}`);
+            if (location) identifyingDetails.push(`location ${location}`);
+            if (subjectNames) identifyingDetails.push(`subjects/persons ${subjectNames}`);
+            if (identifyingDetails.length > 0) {
+                lines.push(
+                    '',
+                    `To address the body-worn-camera issue you raised, please treat this message as providing the identifying information you requested: ${identifyingDetails.join('; ')}.`,
+                    'Please process the body-worn-camera and interrogation-video portions of the request using those identifiers, or tell me exactly what additional identifier is still required before your office will search for responsive footage.'
+                );
+            }
+        }
+
+        if (/da'?s office|district attorney/.test(normalizedMessage) || /district attorney/i.test(String(analysis?.full_analysis_json?.referral_contact?.agency_name || ''))) {
+            lines.push(
+                '',
+                'You indicated that some responsive material was transferred to the District Attorney. Please identify which records were transferred, whether your office retains any copy, evidence log, or chain-of-custody record for those materials, and the proper custodian or contact information for the office now holding them.'
+            );
+        }
+
+        if (/retention/.test(normalizedMessage)) {
+            lines.push(
+                '',
+                'If any requested audio or video is unavailable because of retention, please identify the applicable retention authority, the date the material became unavailable, and whether related CAD, dispatch, evidence-log, or call-history records still exist.'
+            );
+        }
+
+        lines.push(
+            '',
+            'If your office contends that no other responsive records exist, please describe the record systems or files that were searched and release any reasonably segregable non-exempt responsive records that remain available.',
+            'For each category your office is withholding or treating as non-responsive, please identify the specific legal basis for that position.',
+            '',
+            requesterName,
+        );
+
+        if (requesterTitle) lines.push(requesterTitle);
+
+        return lines.join('\n').trim();
+    }
+
     /**
      * Generate a FOIA request from case data
      */
@@ -1716,7 +1808,11 @@ Generate a STRONG, legally-grounded rebuttal that:
 4. Quotes exact statutory language where helpful (from the research provided)
 5. Shows good faith and willingness to cooperate
 6. References relevant case law if provided in research
-7. Is under 250 words (body content, not counting greeting/sign-off)
+7. Makes at least two concrete next-step asks that the agency can answer or act on immediately
+8. Directly addresses at least one reason the agency gave for denying or refusing the request
+9. Is under 250 words (body content, not counting greeting/sign-off)
+
+DO NOT produce a thank-you note, acknowledgment, or placeholder shell. If the agency says a body-camera request needs identifiers, include the identifiers from the case context. If the agency says another custodian holds records, ask the agency to identify the custodian and confirm what it transferred.
 
 EMAIL FORMAT (required):
 - Start with a greeting addressing the person who responded (use their name if available from the correspondence, otherwise "Records Custodian")
@@ -1747,6 +1843,10 @@ Return ONLY the email body text, no subject line.`;
 
             if (denialSubtype === 'privacy_exemption' && this.shouldUsePrivacyExemptionTemplateFallback(normalizedRebuttalText)) {
                 normalizedRebuttalText = this.buildPrivacyExemptionTemplate(messageData, caseData, userSignature);
+            }
+
+            if (this.shouldUseGenericDenialRebuttalTemplate(messageData, normalizedRebuttalText)) {
+                normalizedRebuttalText = this.buildGenericDenialRebuttalTemplate(messageData, analysis, caseData, userSignature);
             }
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${normalizedRebuttalText.length} chars) with GPT-5`);
