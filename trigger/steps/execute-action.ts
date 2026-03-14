@@ -914,6 +914,7 @@ export async function executeAction(
           String(caseData?.agency_name || "").trim() ||
           null;
         let existingCaseAgencyPhone: string | null = null;
+        let existingPhoneQueuePhone: string | null = null;
         let existingCaseAgencyRows: Array<{ agency_name: string | null; phone: string | null; fax: string | null; notes: string | null }> = [];
         try {
           const existingCaseAgencies = await db.query(
@@ -955,6 +956,40 @@ export async function executeAction(
           seen.add(key);
           candidates.push(candidate);
         };
+
+        try {
+          const existingPhoneQueue = await db.query(
+            `SELECT agency_phone, notes
+               FROM phone_call_queue
+              WHERE case_id = $1
+                AND agency_phone IS NOT NULL
+                AND TRIM(agency_phone) <> ''
+                AND status IN ('pending', 'assigned', 'in_progress', 'completed')
+              ORDER BY created_at DESC
+              LIMIT 1`,
+            [caseId]
+          );
+          existingPhoneQueuePhone = existingPhoneQueue.rows[0]?.agency_phone || null;
+          if (existingPhoneQueuePhone) {
+            pushCandidate({
+              phone: existingPhoneQueuePhone,
+              kind: "phone",
+              source: "Existing phone queue task",
+              agency_name: fallbackAgencyName,
+            });
+            for (const notedCandidate of extractPhoneCandidatesFromText(
+              existingPhoneQueue.rows[0]?.notes || "",
+              "Existing phone queue notes"
+            )) {
+              pushCandidate({
+                phone: notedCandidate.phone,
+                kind: notedCandidate.kind,
+                source: notedCandidate.source,
+                agency_name: fallbackAgencyName,
+              });
+            }
+          }
+        } catch (e: any) { /* non-fatal */ }
 
         for (const row of existingCaseAgencyRows) {
           pushCandidate({
@@ -1024,6 +1059,7 @@ export async function executeAction(
           params.newPhone ||
           params.candidatePhone ||
           candidates.find((c) => c.kind === "phone")?.phone ||
+          existingPhoneQueuePhone ||
           existingCaseAgencyPhone ||
           null;
 
