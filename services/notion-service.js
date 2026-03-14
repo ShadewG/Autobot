@@ -2682,6 +2682,13 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             setDate('Invoice Status Change', updates.invoice_status_change);
             setMultiSelect('Invoice Status', updates.invoice_status);
             setDate('Date Payment Sent', updates.date_payment_sent);
+            setDate('Invoice Due Date', updates.invoice_due_date);
+            if (Array.isArray(updates.download_links)) {
+                const linkNames = ['Download Link', ...Array.from({ length: 8 }, (_, i) => `Download Link (${i + 2})`)];
+                updates.download_links.forEach((url, i) => {
+                    if (i < linkNames.length && url) setUrl(linkNames[i], url);
+                });
+            }
             setMultiSelect('Label', updates.labels);
 
             if (Object.keys(properties).length === 0) {

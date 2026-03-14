@@ -81,6 +81,41 @@ function buildMailingAddress(caseData, user = null) {
   return parts.join('\n').trim() || null;
 }
 
+function addBusinessDays(startDate, days) {
+  const result = new Date(startDate);
+  let added = 0;
+  while (added < days) {
+    result.setDate(result.getDate() + 1);
+    const dow = result.getDay();
+    if (dow !== 0 && dow !== 6) added++;
+  }
+  return result;
+}
+
+function extractInvoiceDueDate(text) {
+  if (!text) return null;
+
+  // "within N (business) days"
+  const withinMatch = text.match(/within\s+(\d+)\s+(business\s+)?days/i);
+  if (withinMatch) {
+    const n = parseInt(withinMatch[1], 10);
+    const isBusiness = Boolean(withinMatch[2]);
+    const target = isBusiness
+      ? addBusinessDays(new Date(), n)
+      : new Date(Date.now() + n * 86400000);
+    return target.toISOString().slice(0, 10);
+  }
+
+  // "due by/on [date]" or "must be received by [date]"
+  const dateMatch = text.match(/(?:due\s+(?:by|on)|must\s+be\s+received\s+by)\s+([A-Z][a-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+  if (dateMatch) {
+    const parsed = new Date(dateMatch[1]);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
 function buildPaymentContextFromMessage(message, caseData, proposal) {
   const plainText = message?.body_text || message?.normalized_body_text || '';
   const htmlFallback = !plainText && message?.body_html ? htmlToPlainText(message.body_html) : '';
@@ -101,6 +136,7 @@ function buildPaymentContextFromMessage(message, caseData, proposal) {
     invoiceNumber: invoiceMatch?.[1] || null,
     paymentTerms: termLines,
     mailingAddress,
+    invoiceDueDate: extractInvoiceDueDate(body),
   };
 }
 
@@ -189,6 +225,25 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
     ? paymentContext.mailingAddress.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
     : null;
 
+  // Fetch attachment download links for Notion
+  let downloadLinks = [];
+  try {
+    const appUrl = (process.env.APP_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`).replace(/\/$/, '');
+    const messageAtts = latestInbound?.id ? await db.getAttachmentsByMessageId(latestInbound.id) : [];
+    const caseAtts = await db.getAttachmentsByCaseId(caseData.id);
+    const seen = new Set();
+    const allAtts = [];
+    for (const att of [...messageAtts, ...caseAtts]) {
+      if (!seen.has(att.id)) {
+        seen.add(att.id);
+        allAtts.push(att);
+      }
+    }
+    downloadLinks = allAtts.slice(0, 9).map((att) => `${appUrl}/api/monitor/attachments/${att.id}/download`);
+  } catch (err) {
+    console.warn('[fee-workflow] Failed to fetch attachments for Notion links:', err.message);
+  }
+
   await notionService.updatePage(pageId, {
     fee_amount: paymentContext.feeAmount,
     payment_notes: buildPaymentNotes(existingNotes, noteLines),
@@ -201,6 +256,8 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
     invoice_status_change: new Date().toISOString().slice(0, 10),
     invoice_status: mode === 'invoice' ? ['Ready For Invoice'] : ['Pending'],
     labels,
+    invoice_due_date: paymentContext.invoiceDueDate,
+    download_links: downloadLinks,
   });
 
   return { pageId, paymentContext };
@@ -469,6 +526,7 @@ module.exports = {
   CASE_PAID_LABEL,
   resolveNotionPageForCase,
   buildMailingAddress,
+  extractInvoiceDueDate,
   handleFeeProposalDecision,
   completeFeeProposalWaitpoint,
   getFeeWorkflowNotionState,
