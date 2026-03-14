@@ -125,7 +125,7 @@ describe("status update evidence guard", function () {
     assert.strictEqual(result.actionType, "SEND_INITIAL_REQUEST");
   });
 
-  it("routes send_via_email to SEND_STATUS_UPDATE when portal submission has completed", async function () {
+  it("routes send_via_email to RESEARCH_AGENCY when portal submission has completed", async function () {
     database.getCaseById.restore();
     sinon.stub(database, "getCaseById").resolves({
       id: 25155,
@@ -166,10 +166,15 @@ describe("status update evidence guard", function () {
       null
     );
 
-    assert.strictEqual(result.actionType, "SEND_STATUS_UPDATE");
+    assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
+    assert.strictEqual(result.researchLevel, "light");
     assert.ok(
       result.reasoning.some((line) => /completed portal submission/i.test(String(line))),
       `expected portal evidence reasoning, got: ${JSON.stringify(result.reasoning)}`
+    );
+    assert.ok(
+      result.reasoning.some((line) => /phone call/i.test(String(line))),
+      `expected phone fallback reasoning, got: ${JSON.stringify(result.reasoning)}`
     );
   });
 });

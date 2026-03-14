@@ -2816,14 +2816,17 @@ export async function decideNextAction(
           const submissionEvidence = await getStatusUpdateSubmissionEvidence(caseId, caseDataForReview);
           const hasPriorSubmission = submissionEvidence.hasEvidence;
           if (hasPriorSubmission) {
-            return decision("SEND_STATUS_UPDATE", {
-              adjustmentInstruction: ri || "Send a status update by email instead of portal",
+            return decision("RESEARCH_AGENCY", {
+              adjustmentInstruction: ri || "Research updated contact info before sending another follow-up. If no better channel is found, create a phone-call handoff instead of emailing the same contact again.",
+              researchLevel: "light",
               reasoning: [
                 ...reasoning,
                 ...(submissionEvidence.reasons.length > 0
                   ? submissionEvidence.reasons
                   : ["Case has prior submission evidence"]),
-                "Switching to a status update instead of drafting another initial request",
+                "This is a follow-up, not a fresh initial request",
+                "Researching updated contact info before sending another message to the same channel",
+                "If research finds no better email or portal, hand off to a phone call instead of drafting a duplicate status email",
               ],
             });
           }

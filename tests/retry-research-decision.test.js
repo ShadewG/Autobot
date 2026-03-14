@@ -57,7 +57,7 @@ describe("HUMAN_REVIEW_RESOLUTION retry research routing", function () {
     sinon.assert.calledOnce(getCaseByIdStub);
   });
 
-  it("routes send_via_email to SEND_STATUS_UPDATE when prior outbound exists", async function () {
+  it("routes send_via_email to RESEARCH_AGENCY when prior outbound exists", async function () {
     queryStub.callsFake(async (sql) => {
       if (/outbound_count/i.test(String(sql))) {
         return { rows: [{ outbound_count: 3 }] };
@@ -84,10 +84,15 @@ describe("HUMAN_REVIEW_RESOLUTION retry research routing", function () {
       null
     );
 
-    assert.strictEqual(result.actionType, "SEND_STATUS_UPDATE");
+    assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
+    assert.strictEqual(result.researchLevel, "light");
     assert.strictEqual(result.adjustmentInstruction, "Send it by email instead.");
     assert.ok(
       result.reasoning.some((line) => /prior outbound correspondence already exists/i.test(String(line))),
+      `expected prior-send reasoning, got: ${JSON.stringify(result.reasoning)}`
+    );
+    assert.ok(
+      result.reasoning.some((line) => /phone call/i.test(String(line))),
       `expected prior-send reasoning, got: ${JSON.stringify(result.reasoning)}`
     );
   });
