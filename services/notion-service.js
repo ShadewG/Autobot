@@ -2680,6 +2680,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             setRichText('Vendor', updates.vendor);
             setDate('Invoice Added Date', updates.invoice_added_date);
             setDate('Invoice Status Change', updates.invoice_status_change);
+            setMultiSelect('Invoice Status', updates.invoice_status);
             setDate('Date Payment Sent', updates.date_payment_sent);
             setMultiSelect('Label', updates.labels);
 

@@ -4,6 +4,7 @@ const proposalLifecycle = require('./proposal-lifecycle');
 const triggerDispatch = require('./trigger-dispatch-service');
 const { wait: triggerWait } = require('@trigger.dev/sdk');
 const { extractUrls } = require('../utils/contact-utils');
+const { htmlToPlainText } = require('../lib/email-cleaner');
 
 const WAITING_INVOICE_PAYMENT = 'WAITING_INVOICE_PAYMENT';
 const WAITING_GOOD_TO_PAY = 'WAITING_GOOD_TO_PAY';
@@ -81,7 +82,9 @@ function buildMailingAddress(caseData, user = null) {
 }
 
 function buildPaymentContextFromMessage(message, caseData, proposal) {
-  const body = [message?.body_text, message?.normalized_body_text, message?.body_html].filter(Boolean).join('\n');
+  const plainText = message?.body_text || message?.normalized_body_text || '';
+  const htmlFallback = !plainText && message?.body_html ? htmlToPlainText(message.body_html) : '';
+  const body = (plainText || htmlFallback);
   const urls = extractUrls(body).filter((url) => /pay|payment|invoice|billing/i.test(url));
   const invoiceMatch = body.match(/(?:invoice|inv(?:oice)?\s*(?:number|#)?|reference|ref(?:erence)?\s*#?)\s*[:#-]?\s*([A-Z0-9-]{4,})/i);
   const termLines = dedupeLines(
@@ -181,16 +184,22 @@ async function syncFeeWorkflowToNotion(caseData, proposal, { mode, reason = null
         reason ? `Reason: ${reason}` : null,
       ];
 
+  // Strip any stray HTML tags from mailing address (e.g. <br> from portal scrapes)
+  const cleanAddress = paymentContext.mailingAddress
+    ? paymentContext.mailingAddress.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()
+    : null;
+
   await notionService.updatePage(pageId, {
     fee_amount: paymentContext.feeAmount,
     payment_notes: buildPaymentNotes(existingNotes, noteLines),
-    mailing_address: paymentContext.mailingAddress,
+    mailing_address: cleanAddress,
     payment_link: paymentContext.paymentLink,
     payment_link_login: page?.properties?.['Portal Login Email'] ? propertyPlainText(page.properties['Portal Login Email']) : null,
     invoice_number: paymentContext.invoiceNumber,
     vendor: caseData?.agency_name || null,
     invoice_added_date: mode === 'invoice' ? new Date().toISOString().slice(0, 10) : null,
     invoice_status_change: new Date().toISOString().slice(0, 10),
+    invoice_status: mode === 'invoice' ? ['Ready For Invoice'] : ['Pending'],
     labels,
   });
 
