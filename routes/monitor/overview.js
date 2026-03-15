@@ -194,7 +194,22 @@ function buildReadableResearchSummary(rawNotes) {
 }
 
 function extractPhoneCallPlan(rawNotes, row = {}) {
-    if (!rawNotes) return null;
+    if (!rawNotes) {
+        const directoryPhone = String(row.canonical_phone || '').trim() || null;
+        const agencyName = String(row.agency_name || '').trim() || null;
+        const agencyEmail = String(row.agency_email || '').trim() || null;
+        const portalUrl = String(row.portal_url || '').trim() || null;
+        if (!directoryPhone && !agencyName) return null;
+        return {
+            agency_name: agencyName,
+            agency_phone: directoryPhone,
+            agency_email: agencyEmail,
+            portal_url: portalUrl,
+            reason: 'Deadline passed — phone follow-up needed',
+            outcome: null,
+            suggested_agency: null,
+        };
+    }
     let parsed = rawNotes;
     if (typeof rawNotes === 'string') {
         try { parsed = JSON.parse(rawNotes); } catch (_) { return null; }
@@ -978,6 +993,7 @@ router.get('/live-overview', async (req, res) => {
                 (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 c.agency_email,
                 c.user_id,
+                (SELECT a.phone FROM agencies a WHERE a.id = c.agency_id LIMIT 1) AS canonical_phone,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (
                     SELECT ${INBOUND_PREVIEW_SQL.replace(/\bm\b/g, 'm2')}

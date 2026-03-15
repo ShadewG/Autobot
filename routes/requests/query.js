@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestRecoveredRequestChannels, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestRecoveredRequestChannels, normalizeThreadBody, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, buildOperatorBrief, buildReviewContext, businessDaysDiff, hasMissingImportDeliveryPath, getNoCorrespondenceRecovery, shouldDisplayAsReadyToSendPendingReview } = require('./_helpers');
 const { buildPortalSubmissionThreadMessages } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = require('../../services/canonical-agency');
+const errorTrackingService = require('../../services/error-tracking-service');
 const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 const {
     deriveDisplayState,
@@ -28,8 +29,8 @@ function getWorkspaceProgressEvidence(caseData = {}) {
     const outboundCount = Number(caseData?.outbound_count || 0);
     const threadCount = Number(caseData?.thread_count || 0);
     const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
-    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
-    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.last_response_date);
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date) || Boolean(caseData?.last_response_date);
 
     return {
         hasAnyCorrespondence,
@@ -166,7 +167,7 @@ async function lookupAgencyByNotionReference(rawValue) {
     if (!notionId) return null;
 
     const result = await db.query(
-        `SELECT id, name, state, email_foia, email_main, portal_url, portal_url_alt, portal_provider
+        `SELECT id, name, state, email_foia, email_main, portal_url, portal_url_alt, portal_provider, phone
          FROM agencies
          WHERE LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', '')) = $1
          LIMIT 1`,
@@ -360,10 +361,99 @@ async function detectLatestInboundManualPasteMismatch(caseId) {
     }
 }
 
+function buildCanonicalAgencyLookupKey(hints = {}) {
+    return JSON.stringify({
+        portalUrl: normalizePortalUrl(hints.portalUrl) || null,
+        portalMailbox: normalizeAgencyEmailHint(hints.portalMailbox) || null,
+        agencyEmail: normalizeAgencyEmailHint(hints.agencyEmail) || null,
+        agencyName: String(hints.agencyName || '').trim().toLowerCase() || null,
+        stateHint: String(hints.stateHint || '').trim().toUpperCase() || null,
+    });
+}
+
+function createMemoizedCanonicalAgencyLookup(dbHandle) {
+    const cache = new Map();
+    return async (hints) => {
+        const key = buildCanonicalAgencyLookupKey(hints);
+        if (!cache.has(key)) {
+            cache.set(key, findCanonicalAgency(dbHandle, hints).catch((error) => {
+                cache.delete(key);
+                throw error;
+            }));
+        }
+        return cache.get(key);
+    };
+}
+
+async function preloadLatestInboundManualPasteMismatches(caseIds = []) {
+    const normalizedCaseIds = [...new Set(
+        (Array.isArray(caseIds) ? caseIds : [])
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value > 0)
+    )];
+    const mismatchByCaseId = new Map();
+    if (normalizedCaseIds.length === 0) return mismatchByCaseId;
+
+    try {
+        const result = await db.query(
+            `WITH ranked_inbound AS (
+                SELECT
+                    m.case_id,
+                    m.id,
+                    m.thread_id,
+                    m.from_email,
+                    m.direction,
+                    m.metadata,
+                    COALESCE(m.received_at, m.created_at) AS received_at,
+                    t.agency_email,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY m.case_id
+                        ORDER BY COALESCE(m.received_at, m.created_at) DESC, m.id DESC
+                    ) AS inbound_rank
+                 FROM messages m
+                 LEFT JOIN email_threads t ON t.id = m.thread_id
+                 WHERE m.case_id = ANY($1::int[])
+                   AND LOWER(COALESCE(m.direction, '')) = 'inbound'
+            )
+            SELECT case_id, id, thread_id, from_email, direction, metadata, agency_email
+            FROM ranked_inbound
+            WHERE inbound_rank = 1`,
+            [normalizedCaseIds]
+        );
+
+        for (const row of result.rows) {
+            mismatchByCaseId.set(
+                Number(row.case_id),
+                shouldEscalateManualPasteMismatch(
+                    {
+                        id: row.id,
+                        thread_id: row.thread_id,
+                        from_email: row.from_email,
+                        direction: row.direction,
+                        metadata: row.metadata || {},
+                    },
+                    {
+                        id: row.thread_id,
+                        agency_email: row.agency_email || null,
+                    },
+                    null
+                )
+            );
+        }
+    } catch (error) {
+        logger.warn('[requests] skipped batch manual paste mismatch preload', {
+            case_ids: normalizedCaseIds,
+            error: error.message,
+        });
+    }
+
+    return mismatchByCaseId;
+}
+
 function applyManualPasteMismatchListOverride(listItem, mismatch) {
     if (!mismatch?.mismatch) return listItem;
 
-    return {
+    const overridden = {
         ...listItem,
         status: 'NEEDS_HUMAN_REVIEW',
         requires_human: true,
@@ -373,6 +463,20 @@ function applyManualPasteMismatchListOverride(listItem, mismatch) {
         control_state: 'BLOCKED',
         control_mismatches: [],
     };
+
+    overridden.review_reason = detectReviewReason(overridden);
+    overridden.review_context = buildReviewContext(overridden, {
+        reviewState: overridden.review_state,
+        controlState: overridden.control_state,
+        controlMismatches: overridden.control_mismatches,
+    });
+    overridden.operator_brief = buildOperatorBrief(overridden, {
+        reviewState: overridden.review_state,
+        controlState: overridden.control_state,
+        controlMismatches: overridden.control_mismatches,
+    });
+
+    return overridden;
 }
 
 /**
@@ -510,6 +614,14 @@ router.get('/', async (req, res) => {
         const caseIds = result.rows
             .map((row) => Number(row.id))
             .filter((id) => Number.isInteger(id) && id > 0);
+        const manualPasteMismatchCaseIds = result.rows
+            .filter((row) =>
+                row.active_proposal_status
+                || String(row.active_run_trigger_type || '').toLowerCase() === 'inbound_message'
+            )
+            .map((row) => Number(row.id));
+        const manualPasteMismatchMap = await preloadLatestInboundManualPasteMismatches(manualPasteMismatchCaseIds);
+        const resolveCanonicalAgency = createMemoizedCanonicalAgencyLookup(db);
 
         const listAgencyOverrides = new Map();
         if (caseIds.length > 0) {
@@ -528,7 +640,8 @@ router.get('/', async (req, res) => {
                     a.email_foia AS canonical_email_foia,
                     a.portal_url AS canonical_portal_url,
                     a.portal_url_alt AS canonical_portal_url_alt,
-                    a.portal_provider AS canonical_portal_provider
+                    a.portal_provider AS canonical_portal_provider,
+                    a.phone AS canonical_phone
                  FROM case_agencies ca
                  LEFT JOIN agencies a ON a.id = ca.agency_id
                  WHERE ca.case_id = ANY($1::int[])
@@ -552,18 +665,23 @@ router.get('/', async (req, res) => {
         }
 
         const requests = await Promise.all(result.rows.map(async (row) => {
-            const manualPasteMismatch = (
-                row.active_proposal_status ||
-                String(row.active_run_trigger_type || '').toLowerCase() === 'inbound_message'
-            )
-                ? await detectLatestInboundManualPasteMismatch(Number(row.id))
+            const shouldCheckManualPasteMismatch = Boolean(
+                row.active_proposal_status
+                || String(row.active_run_trigger_type || '').toLowerCase() === 'inbound_message'
+            );
+            const manualPasteMismatch = shouldCheckManualPasteMismatch
+                ? (
+                    manualPasteMismatchMap.has(Number(row.id))
+                        ? manualPasteMismatchMap.get(Number(row.id))
+                        : await detectLatestInboundManualPasteMismatch(Number(row.id))
+                )
                 : null;
             const normalizedRowState = row.state === '{}' ? null : row.state;
             const override = listAgencyOverrides.get(Number(row.id));
             const ignoreOverrideForDisplay = override?.added_source === 'wrong_agency_referral';
             const researchSuggestedAgency = extractResearchSuggestedAgency(row.contact_research_notes);
             const researchCanonical = researchSuggestedAgency
-                ? await findCanonicalAgency(db, {
+                ? await resolveCanonicalAgency({
                     portalUrl: null,
                     portalMailbox: null,
                     agencyEmail: null,
@@ -739,10 +857,11 @@ router.get('/', async (req, res) => {
                         : preferResearchDisplay
                         ? (researchCanonical?.portal_provider || null)
                         : (suppressPlaceholderDisplay ? null : (notionAgencyOverride?.portal_provider || displayRow.portal_provider)),
+                    canonical_phone: notionAgencyOverride?.phone || (ignoreOverrideForDisplay ? override?.canonical_phone : null) || null,
                 }), manualPasteMismatch);
             }
 
-            const canonicalOverride = await findCanonicalAgency(db, {
+            const canonicalOverride = await resolveCanonicalAgency({
                 portalUrl: override.portal_url,
                 portalMailbox: override.agency_email,
                 agencyEmail: override.agency_email,
@@ -926,6 +1045,7 @@ router.get('/', async (req, res) => {
                     ? (resolvedPortalUrl || null)
                     : (forceCorrectedAgencyDisplay ? (resolvedPortalUrl || null) : (resolvedPortalUrl || row.portal_url || null)),
                 portal_provider: suppressImportBlockedAgencyDisplay ? null : resolvedPortalProvider,
+                canonical_phone: override.canonical_phone || null,
             }), manualPasteMismatch);
         }));
 
@@ -1009,6 +1129,13 @@ router.get('/:id', async (req, res) => {
             ),
         ]);
 
+        // Look up agency phone from directory for phone call plan fallback
+        let canonicalPhone = null;
+        if (caseData.agency_id) {
+            const agencyResult = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+            canonicalPhone = agencyResult.rows[0]?.phone || null;
+        }
+
         caseData = {
             ...caseData,
             active_run_status: activeRunResult.rows[0]?.status || null,
@@ -1016,6 +1143,7 @@ router.get('/:id', async (req, res) => {
             active_run_started_at: activeRunResult.rows[0]?.started_at || null,
             active_run_trigger_run_id: activeRunResult.rows[0]?.trigger_run_id || null,
             active_proposal_status: activeProposalResult.rows[0]?.status || null,
+            canonical_phone: canonicalPhone,
         };
 
         res.json({
@@ -1038,6 +1166,7 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/workspace', async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
+        const resolveCanonicalAgency = createMemoizedCanonicalAgencyLookup(db);
 
         // Fetch case data
         const rawCaseData = await db.getCaseById(requestId);
@@ -1238,6 +1367,12 @@ router.get('/:id/workspace', async (req, res) => {
         const feeQuote = parseFeeQuote(caseData);
         const constraints = parseConstraints(caseData);
 
+        // Add agency phone from directory for phone call plan fallback
+        if (!caseData.canonical_phone && caseData.agency_id) {
+            const agencyPhoneResult = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+            caseData = { ...caseData, canonical_phone: agencyPhoneResult.rows[0]?.phone || null };
+        }
+
         const caseAgencies = await db.getCaseAgencies(requestId, false);
         const normalizedCaseAgencies = dedupeCaseAgencies(caseAgencies.map((agency) => ({
             ...agency,
@@ -1260,6 +1395,14 @@ router.get('/:id/workspace', async (req, res) => {
         const normalizedCurrentManualRequestUrl = normalizePortalUrl(caseData.manual_request_url);
         const normalizedCurrentPdfFormUrl = normalizePortalUrl(caseData.pdf_form_url);
         if (
+            normalizedCurrentPortalUrl
+            && !recoveredRequestChannels.portal_url
+            && recoveredRequestChannels.manual_request_url === normalizedCurrentPortalUrl
+        ) {
+            recoveredRequestChannels.portal_url = normalizedCurrentPortalUrl;
+            recoveredRequestChannels.portal_provider = caseData.portal_provider || detectPortalProviderByUrl(normalizedCurrentPortalUrl)?.name || null;
+        }
+        if (
             normalizedCurrentPortalUrl !== recoveredRequestChannels.portal_url ||
             (caseData.portal_provider || null) !== (recoveredRequestChannels.portal_provider || null) ||
             normalizedCurrentManualRequestUrl !== recoveredRequestChannels.manual_request_url ||
@@ -1281,7 +1424,7 @@ router.get('/:id/workspace', async (req, res) => {
                 /@(govqa\.us|custhelp\.com|mycusthelp\.com|mycusthelp\.net|nextrequest\.com|request\.justfoia\.com|civicplus\.com)$/i.test(String(message.from_email || '').trim())
             );
 
-        const canonicalAgency = await findCanonicalAgency(db, {
+        const canonicalAgency = await resolveCanonicalAgency({
             portalUrl: caseData.portal_url,
             portalMailbox: latestInboundPortalMessage?.from_email || latestThread?.agency_email || null,
             agencyEmail: caseData.agency_email,
@@ -1289,7 +1432,7 @@ router.get('/:id/workspace', async (req, res) => {
             stateHint: caseData.state,
         });
         const researchCanonicalAgency = researchSuggestedAgency
-            ? await findCanonicalAgency(db, {
+            ? await resolveCanonicalAgency({
                 portalUrl: null,
                 portalMailbox: null,
                 agencyEmail: null,
@@ -1853,6 +1996,15 @@ router.get('/:id/workspace', async (req, res) => {
             activeRun,
         });
         const effectiveActiveRun = staleWaitingRunWithoutProposal ? null : activeRun;
+        const latestTrackedError = errorTrackingService.summarizeTrackedErrorEvent(
+            await errorTrackingService.getLatestCaseErrorEvent(requestId).catch((error) => {
+                logger.warn('[workspace] failed to load latest tracked error', {
+                    case_id: requestId,
+                    error: error.message,
+                });
+                return null;
+            })
+        );
         const importSafetyReasonDetail = importSafety.metadataMismatch?.expectedAgencyName
             ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
             : importSafety.agencyStateMismatch
@@ -2353,6 +2505,43 @@ router.get('/:id/workspace', async (req, res) => {
             });
         }
         requestDetail.requires_human = effectiveRequiresHuman;
+        requestDetail.review_reason = (effectiveRequiresHuman || requestDetail.review_state === 'DECISION_REQUIRED')
+            ? detectReviewReason({
+                ...caseData,
+                pause_reason: requestDetail.pause_reason,
+                substatus: requestDetail.substatus,
+            })
+            : null;
+        requestDetail.latest_tracked_error = latestTrackedError;
+        requestDetail.review_context = buildReviewContext({
+            ...caseData,
+            pause_reason: requestDetail.pause_reason,
+            substatus: requestDetail.substatus,
+            requires_human: requestDetail.requires_human,
+        }, {
+            reviewState: requestDetail.review_state,
+            controlState: requestDetail.control_state,
+            controlMismatches: requestDetail.control_mismatches,
+            pendingProposal,
+            activeRun: effectiveActiveRun,
+            activePortalTaskStatus: caseData.active_portal_task_status || null,
+            latestTrackedError,
+        });
+        requestDetail.operator_brief = buildOperatorBrief({
+            ...caseData,
+            pause_reason: requestDetail.pause_reason,
+            substatus: requestDetail.substatus,
+            requires_human: requestDetail.requires_human,
+        }, {
+            reviewState: requestDetail.review_state,
+            controlState: requestDetail.control_state,
+            controlMismatches: requestDetail.control_mismatches,
+            pendingProposal,
+            activeRun: effectiveActiveRun,
+            activePortalTaskStatus: caseData.active_portal_task_status || null,
+            latestTrackedError,
+        });
+        requestDetail.ai_failure_summary = requestDetail.operator_brief?.failure_summary || null;
 
         res.json({
             success: true,
@@ -2371,6 +2560,8 @@ router.get('/:id/workspace', async (req, res) => {
             review_state: requestDetail.review_state,
             control_state: requestDetail.control_state,
             control_mismatches: requestDetail.control_mismatches,
+            operator_brief: requestDetail.operator_brief,
+            latest_tracked_error: latestTrackedError,
             active_run: effectiveActiveRun,
             agent_decisions: agentDecisions,
             constraint_history: constraintHistory,

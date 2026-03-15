@@ -29,8 +29,8 @@ function getCaseProgressEvidence(caseData = {}) {
     const outboundCount = Number(caseData?.outbound_count || 0);
     const threadCount = Number(caseData?.thread_count || 0);
     const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
-    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
-    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.last_response_date);
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date) || Boolean(caseData?.last_response_date);
 
     return {
         messageCount,
@@ -153,8 +153,8 @@ function getNoCorrespondenceRecovery(caseData, { activeProposal = null, activeRu
     const outboundCount = Number(caseData?.outbound_count || 0);
     const threadCount = Number(caseData?.thread_count || 0);
     const portalSubmissionCount = Number(caseData?.portal_submission_count || 0);
-    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0;
-    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date);
+    const hasAnyCorrespondence = messageCount > 0 || threadCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.last_response_date);
+    const hasDispatchEvidence = outboundCount > 0 || portalSubmissionCount > 0 || Boolean(caseData?.send_date) || Boolean(caseData?.last_response_date);
 
     if (hasAnyCorrespondence || hasDispatchEvidence) return null;
 
@@ -895,7 +895,8 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
         Number(caseData?.portal_submission_count || 0) > 0 ||
         Number(caseData?.message_count || 0) > 0 ||
         Number(caseData?.thread_count || 0) > 0 ||
-        Boolean(caseData?.send_date);
+        Boolean(caseData?.send_date) ||
+        Boolean(caseData?.last_response_date);
     const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
     const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
@@ -1095,6 +1096,42 @@ function toRequestListItem(caseData) {
     const effectivePauseReason = effectiveRequiresHuman
         ? (caseData.pause_reason || null)
         : null;
+    const reviewReason = (effectiveRequiresHuman || REVIEW_DB_STATUSES.has(effectiveDbStatus))
+        ? detectReviewReason({
+            ...caseData,
+            pause_reason: effectivePauseReason,
+            substatus: normalizedSubstatus,
+            status: effectiveDbStatus,
+        })
+        : null;
+    const reviewContext = buildReviewContext({
+        ...caseData,
+        pause_reason: effectivePauseReason,
+        substatus: normalizedSubstatus,
+        requires_human: effectiveRequiresHuman,
+        status: effectiveDbStatus,
+    }, {
+        reviewState: review_state,
+        controlState: control_state,
+        controlMismatches: control_mismatches,
+        pendingProposal: activeProposal,
+        activeRun,
+        activePortalTaskStatus: caseData.active_portal_task_status || null,
+    });
+    const operatorBrief = buildOperatorBrief({
+        ...caseData,
+        pause_reason: effectivePauseReason,
+        substatus: normalizedSubstatus,
+        requires_human: effectiveRequiresHuman,
+        status: effectiveDbStatus,
+    }, {
+        reviewState: review_state,
+        controlState: control_state,
+        controlMismatches: control_mismatches,
+        pendingProposal: activeProposal,
+        activeRun,
+        activePortalTaskStatus: caseData.active_portal_task_status || null,
+    });
 
     return {
         id: String(caseData.id),
@@ -1125,6 +1162,9 @@ function toRequestListItem(caseData) {
         review_state,
         control_state,
         control_mismatches,
+        review_reason: reviewReason,
+        review_context: reviewContext,
+        operator_brief: operatorBrief,
     };
 }
 
@@ -1183,13 +1223,244 @@ function detectReviewReason(caseData) {
     return 'GENERAL';
 }
 
+function summarizeSupportText(value, max = 180) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+    return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function buildReviewContext(caseData, {
+    reviewState = null,
+    controlState = null,
+    controlMismatches = [],
+    pendingProposal = null,
+    activeRun = null,
+    activePortalTaskStatus = null,
+    latestTrackedError = null,
+} = {}) {
+    const normalizedReviewState = String(reviewState || caseData?.review_state || '').toUpperCase() || null;
+    const normalizedControlState = String(controlState || caseData?.control_state || '').toUpperCase() || null;
+    const mismatchList = Array.isArray(controlMismatches) ? controlMismatches : [];
+    const reviewReason = detectReviewReason(caseData);
+    const activeRunStatus = String(activeRun?.status || caseData?.active_run_status || '').toLowerCase() || null;
+    const portalTaskStatus = String(activePortalTaskStatus || caseData?.active_portal_task_status || '').toUpperCase() || null;
+
+    return {
+        review_reason: reviewReason,
+        pause_reason: caseData?.pause_reason || null,
+        review_state: normalizedReviewState,
+        control_state: normalizedControlState,
+        mismatch_codes: mismatchList.map((issue) => issue?.code).filter(Boolean),
+        has_pending_proposal: Boolean(pendingProposal || caseData?.active_proposal_status),
+        active_run_status: activeRunStatus,
+        active_portal_task_status: portalTaskStatus,
+        latest_error_surface: latestTrackedError?.failure_surface || null,
+        latest_error_at: latestTrackedError?.occurred_at || null,
+        operator_gate: Boolean(
+            caseData?.requires_human
+            || normalizedReviewState === 'DECISION_REQUIRED'
+            || normalizedControlState === 'NEEDS_DECISION'
+            || normalizedControlState === 'BLOCKED'
+        ),
+    };
+}
+
+function buildOperatorBrief(caseData, {
+    reviewState = null,
+    controlState = null,
+    controlMismatches = [],
+    pendingProposal = null,
+    activeRun = null,
+    activePortalTaskStatus = null,
+    latestTrackedError = null,
+} = {}) {
+    const normalizedReviewState = String(reviewState || caseData?.review_state || '').toUpperCase();
+    const normalizedControlState = String(controlState || caseData?.control_state || '').toUpperCase();
+    const mismatchList = Array.isArray(controlMismatches) ? controlMismatches : [];
+    const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
+    const reviewReason = detectReviewReason(caseData);
+    const activeRunStatus = String(activeRun?.status || caseData?.active_run_status || '').toLowerCase();
+    const portalTaskStatus = String(activePortalTaskStatus || caseData?.active_portal_task_status || '').toUpperCase();
+    const substatus = summarizeSupportText(caseData?.substatus, 220);
+    const hasPendingProposal = Boolean(pendingProposal || caseData?.active_proposal_status);
+    const base = {
+        reason_code: reviewReason,
+        status: normalizedControlState === 'NEEDS_DECISION' || normalizedReviewState === 'DECISION_REQUIRED'
+            ? 'decision_required'
+            : (caseData?.requires_human ? 'attention_required' : 'monitoring'),
+        needs_operator_action: Boolean(
+            caseData?.requires_human
+            || normalizedReviewState === 'DECISION_REQUIRED'
+            || normalizedControlState === 'NEEDS_DECISION'
+            || normalizedControlState === 'BLOCKED'
+        ),
+        failure_surface: null,
+        failure_summary: null,
+    };
+
+    if (mismatchList.length > 0) {
+        return {
+            ...base,
+            reason_code: 'BACKEND_STATE_MISMATCH',
+            status: 'blocked',
+            headline: 'Case state is out of sync',
+            summary: summarizeSupportText(mismatchList.map((issue) => issue?.message).filter(Boolean).join('; '), 240) || 'The case state does not match the active AI/proposal state.',
+            recommended_action: 'Inspect the latest proposal, run, and portal task before approving or retrying anything.',
+            failure_surface: 'backend_reliability',
+            failure_summary: 'Backend state mismatch detected between review and execution state.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (latestTrackedError) {
+        const source = latestTrackedError.source_service || 'automation';
+        return {
+            ...base,
+            reason_code: 'RECENT_EXECUTION_ERROR',
+            status: 'blocked',
+            headline: `Automation failed in ${source}`,
+            summary: latestTrackedError.message || 'A recent tracked error blocked the case.',
+            recommended_action: latestTrackedError.retryable
+                ? 'Review the latest error and retry the run if the portal/session state still looks valid.'
+                : 'Review the latest tracked error before retrying or taking over manually.',
+            failure_surface: latestTrackedError.failure_surface || 'backend_reliability',
+            failure_summary: latestTrackedError.message || 'Recent tracked error blocked execution.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (pauseReason === 'MANUAL_PASTE_MISMATCH' || /pasted inbound sender/i.test(String(caseData?.substatus || ''))) {
+        return {
+            ...base,
+            reason_code: 'MANUAL_PASTE_MISMATCH',
+            status: 'blocked',
+            headline: 'Verify the pasted inbound email',
+            summary: substatus || 'The pasted inbound sender did not match the expected agency channel.',
+            recommended_action: 'Confirm the correct agency inbox before using this inbound message to drive AI decisions.',
+            failure_surface: 'ingestion',
+            failure_summary: 'Manual paste sender mismatch needs review.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (pauseReason === 'IMPORT_REVIEW') {
+        return {
+            ...base,
+            reason_code: 'IMPORT_REVIEW',
+            status: 'blocked',
+            headline: 'Confirm the agency and delivery path',
+            summary: substatus || 'The imported case does not yet have a trusted delivery path.',
+            recommended_action: 'Confirm the correct agency email or portal before allowing AI to send anything.',
+            failure_surface: 'ingestion',
+            failure_summary: 'Imported case is blocked until the delivery path is verified.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (normalizedReviewState === 'DECISION_REQUIRED' && hasPendingProposal) {
+        return {
+            ...base,
+            reason_code: 'PENDING_PROPOSAL_REVIEW',
+            status: 'decision_required',
+            headline: 'Review the AI proposal',
+            summary: substatus || 'AI prepared the next action and is waiting for a decision.',
+            recommended_action: 'Approve, adjust, or dismiss the pending proposal.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (reviewReason === 'PHONE_CALL') {
+        return {
+            ...base,
+            headline: 'Call the agency',
+            summary: substatus || 'The case needs a human phone call to move forward.',
+            recommended_action: 'Use the phone plan or agency contact details, then log the result.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (reviewReason === 'MISSING_INFO' || pauseReason === 'RESEARCH_HANDOFF' || pauseReason === 'AGENCY_RESEARCH_COMPLETE') {
+        return {
+            ...base,
+            headline: 'Complete the contact or research handoff',
+            summary: substatus || 'AI could not verify a safe contact channel on its own.',
+            recommended_action: 'Confirm the correct agency, inbox, or portal and then resume the case.',
+            needs_operator_action: true,
+        };
+    }
+
+    if (portalTaskStatus === 'PENDING' || portalTaskStatus === 'IN_PROGRESS') {
+        return {
+            ...base,
+            status: 'processing',
+            reason_code: 'PORTAL_AUTOMATION_ACTIVE',
+            headline: 'Portal automation is running',
+            summary: substatus || 'The portal worker is still processing the submission.',
+            recommended_action: 'Monitor the run and only intervene if it stalls or requests auth.',
+            needs_operator_action: false,
+        };
+    }
+
+    if (['created', 'queued', 'processing', 'running', 'waiting'].includes(activeRunStatus)) {
+        return {
+            ...base,
+            status: 'processing',
+            reason_code: 'AI_RUN_ACTIVE',
+            headline: 'AI is working the case',
+            summary: substatus || 'A live run is still processing this case.',
+            recommended_action: activeRunStatus === 'waiting'
+                ? 'Check whether the run is waiting on a human or external system.'
+                : 'Monitor the run unless it stalls or produces a bad proposal.',
+            needs_operator_action: activeRunStatus === 'waiting',
+        };
+    }
+
+    if (normalizedReviewState === 'WAITING_AGENCY' || ['awaiting_response', 'sent', 'responded'].includes(String(caseData?.status || '').toLowerCase())) {
+        return {
+            ...base,
+            status: 'monitoring',
+            reason_code: 'WAITING_ON_AGENCY',
+            headline: 'Waiting on the agency',
+            summary: substatus || 'The request is out and the case is waiting for agency response.',
+            recommended_action: 'No action is needed until the agency responds or the statutory deadline approaches.',
+            needs_operator_action: false,
+        };
+    }
+
+    return {
+        ...base,
+        headline: caseData?.requires_human ? 'Human review is required' : 'Case is ready for the next AI step',
+        summary: substatus || 'No special blocker is currently attached to this case.',
+        recommended_action: caseData?.requires_human
+            ? 'Review the latest case state and decide the next step.'
+            : 'Allow AI to continue or trigger the next run when appropriate.',
+    };
+}
+
 /**
  * Extract phone call plan from contact_research_notes.
  * Mirrors the logic in routes/monitor/overview.js so the case detail page
  * can display the same phone-call context as the gated queue.
  */
 function extractPhoneCallPlan(rawNotes, row = {}) {
-    if (!rawNotes) return null;
+    // When no contact research exists, build a minimal plan from agency directory data
+    // so that needs_phone_call cases still show the phone UI
+    if (!rawNotes) {
+        const directoryPhone = String(row.canonical_phone || '').trim() || null;
+        const agencyName = String(row.agency_name || '').trim() || null;
+        const agencyEmail = (isPlaceholderAgencyEmail(row.agency_email) ? null : String(row.agency_email || '').trim()) || null;
+        const portalUrl = String(row.portal_url || '').trim() || null;
+        if (!directoryPhone && !agencyName) return null;
+        return {
+            agency_name: agencyName,
+            agency_phone: directoryPhone,
+            agency_email: agencyEmail,
+            portal_url: portalUrl,
+            reason: 'Deadline passed — phone follow-up needed',
+            outcome: null,
+            suggested_agency: null,
+        };
+    }
     let parsed = rawNotes;
     if (typeof rawNotes === 'string') {
         try { parsed = JSON.parse(rawNotes); } catch (_) { return null; }
@@ -1901,7 +2172,7 @@ module.exports = {
     extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates,
     extractLatestRecoveredRequestChannels, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
-    detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
+    detectReviewReason, buildOperatorBrief, buildReviewContext, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
     toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones, hasMissingImportDeliveryPath,
     getNoCorrespondenceRecovery, isStaleWaitingRunWithoutProposal, shouldDisplayAsReadyToSendPendingReview
 };
