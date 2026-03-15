@@ -3484,7 +3484,6 @@ export async function decideNextAction(
           return {
             ...deterministicDenialResult,
             reasoning: [
-              `AI Router v2 suggested ${v2Result.actionType}, but deterministic denial routing preferred ${deterministicDenialResult.actionType}`,
               ...(deterministicDenialResult.reasoning || []),
             ],
           };
@@ -3586,7 +3585,6 @@ export async function decideNextAction(
           return {
             ...deterministicDenialResult,
             reasoning: [
-              `AI suggested ${aiResult.actionType}, but deterministic denial routing preferred ${deterministicDenialResult.actionType}`,
               ...(deterministicDenialResult.reasoning || []),
             ],
           };

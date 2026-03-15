@@ -171,8 +171,8 @@ describe("AI Router v2 deterministic fallback", function () {
     assert.strictEqual(result.requiresHuman, true);
     assert.strictEqual(result.pauseReason, "DENIAL");
     assert.ok(
-      result.reasoning.some((line) => /deterministic denial routing preferred send_rebuttal/i.test(String(line))),
-      `expected deterministic override reasoning, got: ${JSON.stringify(result.reasoning)}`
+      result.reasoning.some((line) => /denial received|no responsive records/i.test(String(line))),
+      `expected denial reasoning, got: ${JSON.stringify(result.reasoning)}`
     );
   });
 
@@ -246,8 +246,8 @@ describe("AI Router v2 deterministic fallback", function () {
     assert.strictEqual(result.actionType, "SEND_REBUTTAL");
     assert.strictEqual(result.pauseReason, "DENIAL");
     assert.ok(
-      result.reasoning.some((line) => /deterministic denial routing preferred send_rebuttal/i.test(String(line))),
-      `expected deterministic override reasoning, got: ${JSON.stringify(result.reasoning)}`
+      result.reasoning.some((line) => /denial received|no responsive records/i.test(String(line))),
+      `expected denial reasoning, got: ${JSON.stringify(result.reasoning)}`
     );
   });
 });
