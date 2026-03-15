@@ -6,7 +6,7 @@ const sinon = require("sinon");
 process.env.OPENAI_API_KEY = "";
 
 const database = require("../services/database");
-const { decideNextAction } = require("../trigger/steps/decide-next-action.ts");
+const { decideNextAction, validateDecision } = require("../trigger/steps/decide-next-action.ts");
 const {
   reasoningForcesCorrectedAgencyResearch,
   isSyntheticKnownChannelSignal,
@@ -171,5 +171,30 @@ describe("DENIAL no-records wrong-agency routing", function () {
       }),
       true
     );
+  });
+
+  it("rejects AI actions that conflict with an existing WRONG_AGENCY constraint", async function () {
+    sinon.stub(database, "getCaseAgencies").resolves([]);
+    sinon.stub(database, "getLatestInboundMessage").resolves(null);
+
+    const result = await validateDecision(
+      {
+        action: "SEND_REBUTTAL",
+        confidence: 0.86,
+        requiresHuman: true,
+        reasoning: ["Draft a rebuttal"],
+      },
+      {
+        caseId: 25210,
+        classification: "DENIAL",
+        extractedFeeAmount: null,
+        autopilotMode: "SUPERVISED",
+        denialSubtype: "no_records",
+        constraints: ["WRONG_AGENCY"],
+      }
+    );
+
+    assert.strictEqual(result.valid, false);
+    assert.match(String(result.reason || ""), /WRONG_AGENCY must route/i);
   });
 });

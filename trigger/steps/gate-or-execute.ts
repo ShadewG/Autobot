@@ -28,6 +28,10 @@ const ACTIONS_REQUIRING_REVIEWABLE_DRAFT = new Set<ActionType>([
   "REFORMULATE_REQUEST",
 ]);
 
+const DRAFT_ALIGNMENT_FALLBACK_FLAGS = new Set([
+  "INVALID_ACTION_DRAFT",
+]);
+
 function hasDraftContent(draft: { subject: string | null; bodyText: string | null; bodyHtml: string | null }): boolean {
   const subject = (draft.subject || "").trim();
   const bodyText = (draft.bodyText || "").trim();
@@ -122,7 +126,11 @@ export async function createProposalAndGate(
   // Research-only steps are safe operational actions and should not block
   // human queues. Any true ambiguity/failure is handled inside execute-action
   // via explicit research handoff proposals.
-  if (actionType === "RESEARCH_AGENCY") {
+  if (
+    actionType === "RESEARCH_AGENCY" &&
+    effectiveSafety.canAutoExecute &&
+    !effectiveSafety.requiresHuman
+  ) {
     effectiveDecisionCanAutoExecute = true;
     effectiveDecisionRequiresHuman = false;
     effectivePauseReason = null;
@@ -149,6 +157,34 @@ export async function createProposalAndGate(
       caseId,
       runId,
       actionType,
+    });
+  }
+
+  if (
+    ACTIONS_REQUIRING_REVIEWABLE_DRAFT.has(actionType)
+    && effectiveSafety.riskFlags?.some((flag) => DRAFT_ALIGNMENT_FALLBACK_FLAGS.has(flag))
+  ) {
+    effectiveDraft = buildFallbackDraft(actionType, [
+      ...reasoning,
+      `Generated ${actionType} draft failed semantic validation and needs manual rewrite before sending.`,
+    ]);
+    effectiveDecisionCanAutoExecute = false;
+    effectiveDecisionRequiresHuman = true;
+    effectivePauseReason = effectivePauseReason || "INVALID_DRAFT_AUTOFALLBACK";
+    effectiveSafety = {
+      ...effectiveSafety,
+      canAutoExecute: false,
+      requiresHuman: true,
+      warnings: [
+        ...(effectiveSafety.warnings || []),
+        `Generated ${actionType} draft failed semantic validation; fallback draft generated automatically.`,
+      ],
+    };
+    logger.error("Generated draft failed semantic validation; replaced with fallback draft", {
+      caseId,
+      runId,
+      actionType,
+      riskFlags: effectiveSafety.riskFlags,
     });
   }
 

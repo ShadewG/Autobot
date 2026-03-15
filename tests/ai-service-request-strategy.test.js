@@ -40,6 +40,27 @@ describe('AI service request strategy path', function () {
     assert.match(prompt, /Jason Chen was convicted of murdering Jasmine Pace in Chattanooga\./);
   });
 
+  it('falls back to a real requester name instead of generic Requester', async function () {
+    const originalRequesterName = process.env.REQUESTER_NAME;
+    const originalSendgridFromName = process.env.SENDGRID_FROM_NAME;
+    delete process.env.REQUESTER_NAME;
+    process.env.SENDGRID_FROM_NAME = 'Samuel Hylton';
+    sinon.stub(db, 'getUserById').resolves(null);
+
+    try {
+      const signature = await aiService.getUserSignatureForCase({
+        user_id: 999999,
+        requester_name: null,
+      });
+      assert.strictEqual(signature.name, 'Samuel Hylton');
+    } finally {
+      if (originalRequesterName === undefined) delete process.env.REQUESTER_NAME;
+      else process.env.REQUESTER_NAME = originalRequesterName;
+      if (originalSendgridFromName === undefined) delete process.env.SENDGRID_FROM_NAME;
+      else process.env.SENDGRID_FROM_NAME = originalSendgridFromName;
+    }
+  });
+
   it('does not globally encourage narrowing for privacy-exemption rebuttals', function () {
     const systemPrompt = denialResponsePrompts.denialRebuttalSystemPrompt;
     assert.match(systemPrompt, /Only offer narrowing or phased production when the denial is actually about overbreadth or burden/i);

@@ -244,7 +244,13 @@ class AIService {
             user = await db.getUserById(caseData.user_id);
         }
 
-        const name = user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Requester';
+        const name =
+            user?.signature_name ||
+            user?.name ||
+            caseData?.requester_name ||
+            process.env.REQUESTER_NAME ||
+            process.env.SENDGRID_FROM_NAME ||
+            'Requester';
         const title = user?.signature_title || process.env.REQUESTER_TITLE || '';
         const organization = user?.signature_organization || '';
         const phone = user?.signature_phone || process.env.REQUESTER_PHONE || '';

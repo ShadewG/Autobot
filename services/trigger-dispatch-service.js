@@ -28,6 +28,33 @@ function resolveProcessInboundIdentity(payload = {}, context = {}) {
   return { caseId, messageId, triggerType };
 }
 
+async function hydrateProcessInboundDispatch(payload = {}, context = {}) {
+  const identity = resolveProcessInboundIdentity(payload, context);
+  if (
+    identity.caseId &&
+    identity.messageId == null &&
+    identity.triggerType === 'human_review_resolution'
+  ) {
+    const latestInbound = await db.query(
+      `SELECT id
+       FROM messages
+       WHERE case_id = $1
+         AND direction = 'inbound'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [identity.caseId]
+    );
+    const fallbackMessageId = latestInbound.rows[0]?.id ?? null;
+    if (fallbackMessageId != null) {
+      return {
+        payload: { ...payload, caseId: identity.caseId, messageId: fallbackMessageId, triggerType: identity.triggerType },
+        context: { ...context, caseId: identity.caseId, messageId: fallbackMessageId, triggerType: identity.triggerType },
+      };
+    }
+  }
+  return { payload, context };
+}
+
 async function mergeRunMetadata(runId, patch) {
   if (!runId) return;
   await db.query(
@@ -102,10 +129,15 @@ async function findActiveEquivalentProcessInboundRun({ caseId, messageId, trigge
 
 async function triggerTask(taskId, payload, options = {}, context = {}) {
   const runId = context.runId || payload?.runId || null;
-  const caseId = context.caseId || payload?.caseId || null;
-  const triggerType = context.triggerType || null;
+  const hydratedDispatch = taskId === 'process-inbound'
+    ? await hydrateProcessInboundDispatch(payload, context)
+    : { payload, context };
+  const resolvedPayload = hydratedDispatch.payload;
+  const resolvedContext = hydratedDispatch.context;
+  const caseId = resolvedContext.caseId || resolvedPayload?.caseId || null;
+  const triggerType = resolvedContext.triggerType || null;
   const source = context.source || 'app_dispatch';
-  const processInboundIdentity = resolveProcessInboundIdentity(payload, context);
+  const processInboundIdentity = resolveProcessInboundIdentity(resolvedPayload, resolvedContext);
 
   // Dedupe process-inbound dispatches for the same case/message/trigger while one is active.
   // Resets and explicit replacements bypass dedupe — they intentionally supersede prior runs.
@@ -150,7 +182,7 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
     }
   }
 
-  const triggerOptions = withStableIdempotency(options, taskId, runId, caseId, payload, context);
+  const triggerOptions = withStableIdempotency(options, taskId, runId, caseId, resolvedPayload, resolvedContext);
 
   // Use task-level/default queueing only. Avoid per-trigger queue overrides.
   // This prevents stale custom queue routing and keeps run scheduling predictable.
@@ -158,13 +190,13 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
     delete triggerOptions.queue;
   }
 
-  const handle = await tasks.trigger(taskId, payload, triggerOptions);
+  const handle = await tasks.trigger(taskId, resolvedPayload, triggerOptions);
 
   if (runId) {
     await mergeRunMetadata(runId, {
       triggerRunId: handle.id,
       dispatch_task_id: taskId,
-      dispatch_payload: payload,
+      dispatch_payload: resolvedPayload,
       dispatch_options: triggerOptions,
       dispatch_attempted_at: new Date().toISOString(),
       dispatch_attempts: context.dispatchAttempts || 1,

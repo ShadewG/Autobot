@@ -1781,9 +1781,15 @@ export async function validateDecision(
     }
   }
 
+  const hasWrongAgencyConstraint = (constraints || []).includes("WRONG_AGENCY");
+
   // SEND_INITIAL_REQUEST is generally only valid for process-initial-request.
   // Exception: WRONG_AGENCY reroutes with a verified alternate custodian/contact.
-  if (aiDecisionResult.action === "SEND_INITIAL_REQUEST" && classification !== "WRONG_AGENCY") {
+  if (
+    aiDecisionResult.action === "SEND_INITIAL_REQUEST" &&
+    classification !== "WRONG_AGENCY" &&
+    !hasWrongAgencyConstraint
+  ) {
     return { valid: false, reason: "SEND_INITIAL_REQUEST is not valid for inbound message routing" };
   }
 
@@ -1797,7 +1803,7 @@ export async function validateDecision(
 
   // WRONG_AGENCY: allow direct reroute actions only when we have a verified
   // alternate custodian/channel; otherwise require RESEARCH_AGENCY.
-  if (classification === "WRONG_AGENCY") {
+  if (classification === "WRONG_AGENCY" || hasWrongAgencyConstraint) {
     const directAction = await getWrongAgencyDirectAction(caseId);
     const allowed = new Set<ActionType>(["RESEARCH_AGENCY"]);
     if (directAction) allowed.add(directAction);
