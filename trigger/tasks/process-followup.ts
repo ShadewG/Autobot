@@ -22,6 +22,7 @@ import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
+const { scheduleAICreditRetry } = require("../../services/ai-quota-retry-service");
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -48,6 +49,23 @@ export const processFollowup = task({
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
+      try {
+        const quotaRetry = await scheduleAICreditRetry({
+          taskId: "process-followup",
+          payload,
+          error,
+          sourceService: "trigger.dev",
+        });
+        if (quotaRetry.scheduled) {
+          return;
+        }
+      } catch (retryError: any) {
+        await db.logActivity("agent_run_retry_schedule_failed", `Failed to schedule AI-credit retry for case ${caseId}: ${String(retryError?.message || retryError).substring(0, 200)}`, {
+          case_id: caseId,
+          actor_type: "system",
+          source_service: "trigger.dev",
+        });
+      }
       if (isTransientError(error)) {
         await db.logActivity("agent_run_transient_failure", `Process-followup hit transient error for case ${caseId}, will not escalate: ${String(error).substring(0, 200)}`, {
           case_id: caseId,
@@ -131,15 +149,6 @@ export const processFollowup = task({
       try {
         trace?.recordNode(step, { detail, ...extra });
         await db.updateAgentRunNodeProgress(runId, step);
-        await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
-          case_id: caseId,
-          run_id: runId,
-          step,
-          category: "AGENT",
-          actor_type: "system",
-          source_service: "trigger.dev",
-          ...extra,
-        });
       } catch {
         // non-fatal
       }

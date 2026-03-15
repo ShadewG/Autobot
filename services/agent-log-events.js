@@ -113,7 +113,8 @@ async function logExternalCall(db, phase, context = {}) {
 }
 
 async function logExternalCallStarted(db, context) {
-  return logExternalCall(db, 'started', context);
+  // No-op: completed/failed events capture all data including timing.
+  return null;
 }
 
 async function logExternalCallCompleted(db, context) {

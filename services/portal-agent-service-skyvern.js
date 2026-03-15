@@ -2544,53 +2544,58 @@ class PortalAgentServiceSkyvern {
                         }
                     }
 
-                    // Log NEW screenshots to activity_log for history
+                    // Download & persist ALL new screenshots; only log the LAST to activity_log
                     const newScreenshots = data.screenshot_urls.slice(screenshotIndex);
                     for (let i = 0; i < newScreenshots.length; i++) {
+                        const isLast = i === newScreenshots.length - 1;
                         try {
-                            const logRow = await database.logActivity(
-                                'portal_screenshot',
-                                `Portal screenshot #${screenshotIndex + i + 1}`,
-                                {
-                                    case_id: caseId,
-                                    url: newScreenshots[i],
-                                    run_id: workflowRunId,
-                                    sequence_index: screenshotIndex + i,
-                                    skyvern_status: status
-                                }
-                            );
+                            // Only create an activity_log row for the last screenshot in this batch
+                            let logRow = null;
+                            if (isLast) {
+                                logRow = await database.logActivity(
+                                    'portal_screenshot',
+                                    `Portal screenshot #${screenshotIndex + i + 1}`,
+                                    {
+                                        case_id: caseId,
+                                        url: newScreenshots[i],
+                                        run_id: workflowRunId,
+                                        sequence_index: screenshotIndex + i,
+                                        skyvern_status: status
+                                    }
+                                );
+                            }
 
-                            // Download from Skyvern and persist to local disk
-                            if (logRow?.id) {
-                                try {
-                                    const imgResp = await axios.get(newScreenshots[i], { responseType: 'arraybuffer', timeout: 10000 });
-                                    const persisted = await persistPortalScreenshot({
-                                        caseId,
-                                        runId: workflowRunId,
-                                        sequenceIndex: screenshotIndex + i,
-                                        status,
-                                        label: `Portal screenshot #${screenshotIndex + i + 1}`,
-                                        buffer: Buffer.from(imgResp.data),
-                                        extension: '.png',
-                                        metadata: { url: newScreenshots[i] },
-                                        skipActivityLog: true,
-                                        skipCaseUpdate: true,
-                                    });
-                                    const persistentUrl = persisted?.publicUrl || null;
+                            // Download from Skyvern and persist to local disk (ALL screenshots)
+                            try {
+                                const imgResp = await axios.get(newScreenshots[i], { responseType: 'arraybuffer', timeout: 10000 });
+                                const persisted = await persistPortalScreenshot({
+                                    caseId,
+                                    runId: workflowRunId,
+                                    sequenceIndex: screenshotIndex + i,
+                                    status,
+                                    label: `Portal screenshot #${screenshotIndex + i + 1}`,
+                                    buffer: Buffer.from(imgResp.data),
+                                    extension: '.png',
+                                    metadata: { url: newScreenshots[i] },
+                                    skipActivityLog: true,
+                                    skipCaseUpdate: true,
+                                });
+                                const persistentUrl = persisted?.publicUrl || null;
+                                if (logRow?.id && persistentUrl) {
                                     await database.query(
                                         `UPDATE activity_log SET metadata = metadata || $1::jsonb WHERE id = $2`,
                                         [JSON.stringify({ persistent_url: persistentUrl }), logRow.id]
                                     );
-                                    // Update live screenshot on the case with persistent URL
-                                    if (persistentUrl && i === newScreenshots.length - 1) {
-                                        await database.query(
-                                            'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
-                                            [persistentUrl, caseId]
-                                        );
-                                    }
-                                } catch (persistErr) {
-                                    console.warn(`   Screenshot persist failed: ${persistErr.message}`);
                                 }
+                                // Update live screenshot on the case with persistent URL
+                                if (persistentUrl && isLast) {
+                                    await database.query(
+                                        'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
+                                        [persistentUrl, caseId]
+                                    );
+                                }
+                            } catch (persistErr) {
+                                console.warn(`   Screenshot persist failed: ${persistErr.message}`);
                             }
                         } catch (logErr) {
                             console.warn(`   Screenshot log failed: ${logErr.message}`);

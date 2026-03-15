@@ -27,6 +27,7 @@ const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 const recordsDeliveryService = require("../../services/records-delivery-service");
 const { recoverInboundRunFailureToProposal } = require("../../services/inbound-run-failure-recovery");
+const { scheduleAICreditRetry } = require("../../services/ai-quota-retry-service");
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SUBMIT_PORTAL", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -106,6 +107,23 @@ export const processInbound = task({
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
+      try {
+        const quotaRetry = await scheduleAICreditRetry({
+          taskId: "process-inbound",
+          payload,
+          error,
+          sourceService: "trigger.dev",
+        });
+        if (quotaRetry.scheduled) {
+          return;
+        }
+      } catch (retryError: any) {
+        await db.logActivity("agent_run_retry_schedule_failed", `Failed to schedule AI-credit retry for case ${caseId}: ${String(retryError?.message || retryError).substring(0, 200)}`, {
+          case_id: caseId,
+          actor_type: "system",
+          source_service: "trigger.dev",
+        });
+      }
       if (isTransientError(error)) {
         await db.logActivity("agent_run_transient_failure", `Process-inbound hit transient error for case ${caseId}, will not escalate: ${String(error).substring(0, 200)}`, {
           case_id: caseId,
@@ -202,15 +220,6 @@ export const processInbound = task({
       try {
         trace?.recordNode(step, { detail, ...extra });
         await db.updateAgentRunNodeProgress(runId, step);
-        await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
-          case_id: caseId,
-          run_id: runId,
-          step,
-          category: "AGENT",
-          actor_type: "system",
-          source_service: "trigger.dev",
-          ...extra,
-        });
       } catch {
         // non-fatal: live step telemetry should not break the run
       }
