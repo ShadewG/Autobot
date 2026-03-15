@@ -1033,136 +1033,83 @@ class CronService {
                         }
                         await db.updateCase(caseData.id, updates);
 
-                        let agencyPhone = research?.contact_phone || null;
-                        if (!agencyPhone && caseData.agency_id) {
-                            const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
-                            if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
-                        }
-
-                        const phoneTask = await db.createPhoneCallTask({
-                            case_id: caseData.id,
-                            agency_name: caseData.agency_name,
-                            agency_phone: agencyPhone,
-                            agency_state: caseData.state,
-                            reason: 'deadline_passed',
-                            priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
-                            notes: `Contact info changed during overdue research. ${updates.contact_research_notes}`,
-                            days_since_sent: daysSinceSent
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
+                            caseId: caseData.id,
+                            actionType: 'ESCALATE',
+                            reasoning: [
+                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                { step: 'Contact info changed', detail: updates.contact_research_notes },
+                                { step: 'Recommendation', detail: 'Consider adding to phone queue for follow-up call' }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Deadline overdue: ${caseData.case_name}`,
+                            draftBodyText: `${daysOverdue} days past statutory deadline. Contact info changed during research — recommend phone follow-up.`,
+                            status: 'PENDING_APPROVAL'
                         });
 
-                        const aiService = require('./ai-service');
-                        db.getMessagesByCaseId(caseData.id, 20)
-                            .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
-                            .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
-                            .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
-
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                            targetStatus: 'needs_phone_call',
                             substatus: `Deadline passed + contact updated (${daysOverdue}d overdue)`,
                             pauseReason: 'DEADLINE_PHONE_CALL',
                         });
 
                         contactUpdates++;
-                        phoneCalls++;
-                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (contact changed)`);
+                        humanReviews++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → proposal (contact changed, ${daysOverdue}d overdue)`);
                     } else if (isEmailCase) {
-                        // Contact correct (or no research result) + email case → phone call
-                        let agencyPhone = research?.contact_phone || null;
-                        if (!agencyPhone && caseData.agency_id) {
-                            const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
-                            if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
-                        }
-
-                        const phoneTask = await db.createPhoneCallTask({
-                            case_id: caseData.id,
-                            agency_name: caseData.agency_name,
-                            agency_phone: agencyPhone,
-                            agency_state: caseData.state,
-                            reason: 'deadline_passed',
-                            priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
-                            notes: `Statutory deadline passed ${daysOverdue} days ago (deadline: ${caseData.deadline_date})`,
-                            days_since_sent: daysSinceSent
+                        // Contact correct (or no research result) + email case → propose phone call
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
+                            caseId: caseData.id,
+                            actionType: 'ESCALATE',
+                            reasoning: [
+                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                { step: 'Email case', detail: 'No response received via email' },
+                                { step: 'Recommendation', detail: 'Consider adding to phone queue for follow-up call' }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Deadline overdue: ${caseData.case_name}`,
+                            draftBodyText: `${daysOverdue} days past statutory deadline — no email response. Recommend phone follow-up.`,
+                            status: 'PENDING_APPROVAL'
                         });
 
-                        // Auto-generate briefing (fire-and-forget)
-                        const aiService = require('./ai-service');
-                        db.getMessagesByCaseId(caseData.id, 20)
-                            .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
-                            .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
-                            .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
-
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                            targetStatus: 'needs_phone_call',
                             substatus: `Deadline passed ${daysOverdue}d ago — no response`,
                             pauseReason: 'DEADLINE_PHONE_CALL',
                         });
 
-                        phoneCalls++;
-                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (${daysOverdue}d overdue)`);
+                        humanReviews++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → proposal (${daysOverdue}d overdue)`);
                     } else {
-                        // Portal/no-contact path:
-                        // Prefer phone-call action over generic human escalation so
-                        // overdue cases keep moving without manual triage.
-                        try {
-                            let agencyPhone = research?.contact_phone || null;
-                            if (!agencyPhone && caseData.agency_id) {
-                                const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
-                                if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
-                            }
+                        // Portal/no-contact path → propose phone call
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
+                            caseId: caseData.id,
+                            actionType: 'ESCALATE',
+                            reasoning: [
+                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                { step: 'Contact method', detail: caseData.portal_url ? `Portal: ${caseData.portal_url}` : 'No portal/email contact available' },
+                                { step: 'Recommendation', detail: 'Consider adding to phone queue for follow-up call' }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Deadline overdue: ${caseData.case_name}`,
+                            draftBodyText: `${daysOverdue} days past statutory deadline. ${caseData.portal_url ? 'Portal submission may need phone follow-up.' : 'No contact method available — recommend phone call.'}`,
+                            status: 'PENDING_APPROVAL'
+                        });
 
-                            const phoneTask = await db.createPhoneCallTask({
-                                case_id: caseData.id,
-                                agency_name: caseData.agency_name,
-                                agency_phone: agencyPhone,
-                                agency_state: caseData.state,
-                                reason: 'deadline_passed',
-                                priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
-                                notes: `Statutory deadline passed ${daysOverdue} days ago (deadline: ${caseData.deadline_date}). ${caseData.portal_url ? `Existing portal: ${caseData.portal_url}` : 'No portal/email contact available.'}`,
-                                days_since_sent: daysSinceSent
-                            });
+                        await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                            substatus: `Deadline passed ${daysOverdue}d ago — awaiting review`,
+                            pauseReason: 'DEADLINE_PHONE_CALL',
+                        });
 
-                            // Auto-generate briefing (fire-and-forget)
-                            const aiService = require('./ai-service');
-                            db.getMessagesByCaseId(caseData.id, 20)
-                                .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
-                                .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
-                                .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
-
-                            await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                                targetStatus: 'needs_phone_call',
-                                substatus: `Deadline passed ${daysOverdue}d ago — portal/no-contact fallback to phone`,
-                                pauseReason: 'DEADLINE_PHONE_CALL',
-                            });
-
-                            phoneCalls++;
-                            console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (${caseData.portal_url ? 'portal fallback' : 'no contact fallback'})`);
-                        } catch (phoneErr) {
-                            // Last resort only: if we cannot create a phone task, ask for manual escalation.
-                            await db.upsertProposal({
-                                proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
-                                caseId: caseData.id,
-                                actionType: 'ESCALATE',
-                                reasoning: [
-                                    { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
-                                    { step: 'Fallback failed', detail: `Phone escalation failed: ${phoneErr.message}` },
-                                    { step: 'Portal case', detail: caseData.portal_url ? `Portal: ${caseData.portal_url}` : 'No contact research results' }
-                                ],
-                                confidence: 0,
-                                requiresHuman: true,
-                                canAutoExecute: false,
-                                draftSubject: `Deadline overdue: ${caseData.case_name}`,
-                                draftBodyText: `${daysOverdue} days past statutory deadline. Automated phone fallback failed: ${phoneErr.message}`,
-                                status: 'PENDING_APPROVAL'
-                            });
-
-                            await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                                substatus: `Deadline passed ${daysOverdue}d ago — phone fallback failed`,
-                                pauseReason: 'DEADLINE_NO_CONTACT',
-                            });
-
-                            humanReviews++;
-                            console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → human review (phone fallback failed)`);
-                        }
+                        humanReviews++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → proposal (${caseData.portal_url ? 'portal case' : 'no contact'})`);
                     }
 
                     await db.logActivity('deadline_escalation',
