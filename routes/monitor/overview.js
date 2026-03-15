@@ -1017,6 +1017,13 @@ router.get('/live-overview', async (req, res) => {
                   SELECT 1 FROM proposals p WHERE p.case_id = c.id
                   AND p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
               )
+              AND NOT (
+                  LOWER(c.status) = 'needs_phone_call'
+                  AND EXISTS (
+                      SELECT 1 FROM phone_call_queue pcq
+                      WHERE pcq.case_id = c.id AND pcq.status IN ('pending', 'claimed')
+                  )
+              )
               AND ${buildRealCaseWhereClause('c', 'm_filter')}
               ${caseUserFilter}
             ORDER BY
