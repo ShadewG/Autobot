@@ -73,21 +73,42 @@ function buildDecisionSummary(payload = {}) {
   const action = payload.router_output?.action_type || payload.router_output?.actionType || null;
   const gate = payload.gate_decision?.pause_reason || payload.gate_decision?.gated_reason || null;
   const parts = [];
-  if (intent) parts.push(`intent ${intent}`);
-  if (action) parts.push(`action ${action}`);
-  if (gate) parts.push(`gate ${gate}`);
-  if (parts.length === 0) return payload.run_id ? `Decision trace for run ${payload.run_id}` : 'Decision trace recorded';
-  return parts.join(' • ');
+  if (intent) parts.push(`Classified as ${intent.replace(/_/g, ' ')}`);
+  if (action) parts.push(`decided ${action.replace(/_/g, ' ').toLowerCase()}`);
+  if (gate) parts.push(`gated for ${gate.replace(/_/g, ' ').toLowerCase()}`);
+  if (parts.length === 0) return 'AI decision recorded';
+  return parts.join(' → ');
 }
 
+const CASE_EVENT_LABELS = {
+  RUN_STARTED: 'Agent run started',
+  RUN_WAITING: 'Waiting for human review',
+  RUN_COMPLETED: 'Agent run completed',
+  RUN_FAILED: 'Agent run failed',
+  PROPOSAL_GATED: 'Draft ready for review',
+  PROPOSAL_APPROVED: 'Proposal approved',
+  PROPOSAL_DISMISSED: 'Proposal dismissed',
+  PROPOSAL_EXECUTED: 'Action sent',
+  CASE_UPDATED: 'Case updated',
+  STATUS_CHANGED: 'Status changed',
+  PORTAL_SUBMITTED: 'Portal request submitted',
+  PORTAL_COMPLETED: 'Portal submission completed',
+  PORTAL_FAILED: 'Portal submission failed',
+};
+
 function normalizeCaseEvent(row) {
+  const event = row.event || '';
+  const label = CASE_EVENT_LABELS[event] || event.replace(/_/g, ' ').toLowerCase();
+  const proposal = row.context?.proposalId ? ` (proposal #${row.context.proposalId})` : '';
+  const actionType = row.mutations_applied?.proposals?.action_type;
+  const actionLabel = actionType ? ` — ${actionType.replace(/_/g, ' ').toLowerCase()}` : '';
   return {
     id: `case_event_ledger:${row.id}`,
     timestamp: row.created_at,
     kind: 'state_transition',
     source: 'case_event_ledger',
-    title: row.event ? `Case event: ${row.event}` : 'Case transition',
-    summary: row.transition_key || row.event || 'Case state transition recorded',
+    title: `${label}${actionLabel}${proposal}`,
+    summary: `${label}${actionLabel}`,
     severity: 'info',
     run_id: row.context?.run_id || row.context?.runId || null,
     message_id: row.context?.message_id || row.context?.messageId || null,
@@ -103,16 +124,56 @@ function normalizeCaseEvent(row) {
   };
 }
 
+const ACTIVITY_LABELS = {
+  agent_run_step: (meta) => {
+    const step = meta.step || '';
+    const stepLabels = {
+      classify: 'Classifying inbound message',
+      decide_next_action: 'Deciding next action',
+      draft_response: 'Drafting response',
+      safety_check: 'Running safety check',
+      gate_or_execute: 'Creating proposal for review',
+      wait_human_decision: 'Waiting for human decision',
+      execute_action: 'Executing approved action',
+      research_context: 'Researching agency context',
+    };
+    return stepLabels[step] || `Agent step: ${step.replace(/_/g, ' ')}`;
+  },
+  external_call_started: (meta) => `Calling ${meta.provider || meta.source_service || 'external service'}`,
+  external_call_completed: (meta) => {
+    const provider = meta.provider || meta.source_service || 'external service';
+    const op = meta.operation ? `: ${meta.operation.replace(/_/g, ' ')}` : '';
+    return `${provider}${op} completed`;
+  },
+  proposal_adjusted: () => 'Proposal adjusted per operator instruction',
+  proposal_approved: () => 'Proposal approved',
+  proposal_dismissed: () => 'Proposal dismissed',
+  stale_inbound_marked_processed: () => 'Inbound message marked as processed',
+  stale_reprocess_retriggered: () => 'Reprocessing triggered for stale inbound',
+  stale_proposal_recovered: () => 'Stale proposal recovered',
+  manual_ai_trigger: () => 'AI manually triggered by operator',
+  case_reset: () => 'Case reset to reprocess',
+};
+
+// Noise events to exclude from operator-facing log
+const NOISE_EVENT_TYPES = new Set([
+  'external_call_started',
+]);
+
 function normalizeActivity(row) {
   const metadata = row.metadata || {};
   const kind = classifyActivityKind(row.event_type, metadata);
+  const labelFn = ACTIVITY_LABELS[row.event_type];
+  const friendlySummary = typeof labelFn === 'function'
+    ? labelFn(metadata)
+    : (row.description || row.event_type?.replace(/_/g, ' ') || 'Activity recorded');
   return {
     id: `activity_log:${row.id}`,
     timestamp: row.created_at,
     kind,
     source: 'activity_log',
-    title: row.description || (row.event_type ? `Activity: ${row.event_type}` : 'Activity recorded'),
-    summary: row.event_type || row.description || 'Activity recorded',
+    title: friendlySummary,
+    summary: friendlySummary,
     severity: severityFromKind(kind, metadata),
     run_id: metadata.run_id || metadata.runId || null,
     message_id: metadata.message_id || metadata.messageId || null,
@@ -226,6 +287,11 @@ function buildSummary(entries) {
 function finalizeEntries(allEntries, { limit, sourceFilters, kindFilters, before, after }) {
   const filtered = allEntries
     .filter((row) => row.timestamp)
+    // Filter out noise events (e.g. external_call_started is always followed by _completed)
+    .filter((row) => {
+      const eventType = row.payload?.event_type || '';
+      return !NOISE_EVENT_TYPES.has(eventType);
+    })
     .filter((row) => sourceFilters.size === 0 || sourceFilters.has(row.source))
     .filter((row) => kindFilters.size === 0 || kindFilters.has(row.kind))
     .filter((row) => !before || new Date(row.timestamp).getTime() < before.getTime())
