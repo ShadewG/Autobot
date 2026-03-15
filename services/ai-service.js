@@ -1772,7 +1772,7 @@ Return concise legal citations and key statutory language with sources.`;
                     ? `**Overbreadth Hard Requirements:**\n- You SHOULD offer a concrete narrowing or phased-production proposal.\n- Keep the narrowing specific enough that the agency can act on it immediately.\n- Do not fight about exemptions unless the agency refuses a reasonable narrowed request.`
                     : '';
 
-            const prompt = `Generate a strategic FOIA denial rebuttal for this response:
+            const prompt = `${adjustmentInstruction ? `**CRITICAL — HUMAN OPERATOR OVERRIDE:**\nThe operator has given you a specific instruction. Follow it exactly instead of generating a standard rebuttal. The operator's instruction takes priority over all default strategy/format guidance below.\n\nOPERATOR INSTRUCTION: ${adjustmentInstruction}\n\n---\n\n` : ''}Generate a strategic FOIA denial rebuttal for this response:
 
 **Denial Type:** ${strategy.name}
 **Agency Response:** ${agencyResponseText}
@@ -1999,7 +1999,7 @@ Respond with JSON ONLY.`;
                 ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. If the agency has already responded, do NOT claim they haven't responded. Acknowledge any prior replies.`
                 : '';
 
-            const prompt = `Generate a follow-up email for a FOIA request that hasn't received a response.
+            const prompt = `${adjustmentInstruction ? `**CRITICAL — HUMAN OPERATOR OVERRIDE:**\nThe operator has given you a specific instruction. Follow it exactly instead of generating a standard follow-up. The operator's instruction takes priority over all default guidance below.\n\nOPERATOR INSTRUCTION: ${adjustmentInstruction}\n\n---\n\n` : ''}Generate a follow-up email for a FOIA request that hasn't received a response.
 
 **Request Details:**
 - Subject: ${caseData.subject_name}
@@ -2829,7 +2829,7 @@ Return valid JSON matching the schema below. Use null for missing fields, [] for
             ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
             : '';
 
-        const prompt = `You are responding to a public records request clarification from a government agency.
+        const prompt = `${adjustmentInstruction ? `**CRITICAL — HUMAN OPERATOR OVERRIDE:**\nThe operator has given you a specific instruction. Follow it exactly instead of generating a standard clarification response. The operator's instruction takes priority over all default guidance below.\n\nOPERATOR INSTRUCTION: ${adjustmentInstruction}\n\n---\n\n` : ''}You are responding to a public records request clarification from a government agency.
 
 AGENCY MESSAGE:
 ${getCanonicalMessageText(message) || message.body || ''}
@@ -2844,7 +2844,6 @@ ORIGINAL REQUEST:
 - Requester phone on file: ${userSignature?.phone || 'Not available'}
 
 ${clarificationResearch ? `PRE-RESEARCHED CONTEXT (use this to answer their question):\n${clarificationResearch}\n` : ''}
-${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
 ${lessonsContext}${examplesContext}${correspondenceSection}
 Generate a professional, helpful response that:
 1. Directly addresses their specific questions or requests for clarification
@@ -2902,7 +2901,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
             const stateName = stateDeadline?.state_name || caseData.state;
             const legalResearch = legalResearchOverride || await this.researchStateLaws(stateName, denialSubtype);
 
-            const prompt = `Generate a formal administrative appeal of a FOIA/public records denial.
+            const prompt = `${adjustmentInstruction ? `**CRITICAL — HUMAN OPERATOR OVERRIDE:**\nThe operator has given you a specific instruction. Follow it exactly instead of generating a standard appeal. The operator's instruction takes priority over all default guidance below.\n\nOPERATOR INSTRUCTION: ${adjustmentInstruction}\n\n---\n\n` : ''}Generate a formal administrative appeal of a FOIA/public records denial.
 
 **This is a FORMAL APPEAL, not a casual rebuttal.** It should:
 - Reference the original request and denial
@@ -2961,15 +2960,13 @@ Generate a formal appeal letter under 300 words. Return ONLY the letter body, no
         const examplesContext = options.examplesContext || '';
         const currency = options.currency || 'USD';
 
-        const prompt = `Generate a professional response accepting a fee quote for a public records request.
+        const prompt = `${adjustmentInstruction ? `**CRITICAL — HUMAN OPERATOR OVERRIDE:**\nThe operator has given you a specific instruction. Follow it exactly instead of generating a standard fee acceptance. The operator's instruction takes priority over all default guidance below.\n\nOPERATOR INSTRUCTION: ${adjustmentInstruction}\n\n---\n\n` : ''}Generate a professional response accepting a fee quote for a public records request.
 
 CASE DETAILS:
 - Subject: ${caseData.subject_name || 'Unknown'}
 - Agency: ${caseData.agency_name || 'Unknown'}
 - State: ${caseData.state || 'Unknown'}
 - Fee Amount: $${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}
-
-${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
 ${examplesContext}
 
 The response should:
