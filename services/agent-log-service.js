@@ -348,10 +348,10 @@ async function buildGlobalAgentLog(db, options = {}) {
       params
     ),
     db.query(
-      `SELECT *
-       FROM email_events
-       ${caseClause}
-       ORDER BY COALESCE(event_timestamp, created_at) DESC, id DESC
+      `SELECT ee.*${caseId ? ', m.case_id' : ''}
+       FROM email_events ee
+       ${caseId ? 'INNER JOIN messages m ON m.id = ee.message_id WHERE m.case_id = $1' : ''}
+       ORDER BY COALESCE(ee.event_timestamp, ee.created_at) DESC, ee.id DESC
        LIMIT $${limitIndex}`,
       params
     ),
