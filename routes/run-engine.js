@@ -171,6 +171,18 @@ function getProposalDecisionErrorCode(error) {
   return classifyOperatorActionError(error, 'PROPOSAL_DECISION_FAILED');
 }
 
+function getLocalApprovalSuccessMessage(actionType, usedPortalLocalApproval) {
+  if (usedPortalLocalApproval) {
+    return actionType === 'SUBMIT_PORTAL'
+      ? 'Portal request submitted directly via local approval path'
+      : 'Portal action completed directly via local approval path';
+  }
+
+  return actionType === 'SEND_PDF_EMAIL'
+    ? 'PDF email sent directly via local approval path'
+    : 'Email sent directly via local approval path';
+}
+
 async function ensureCaseThread(caseId, subject, agencyEmail = null) {
   let thread = await db.getThreadByCaseId(caseId);
   if (thread) return thread;
@@ -856,7 +868,9 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
   let draft = stubDraft;
 
   if (!draft && localDecision.actionType === 'SEND_CLARIFICATION') {
-    const generatedDraft = await aiService.generateAutoReply(message, analysis, caseData);
+    const generatedDraft = typeof aiService.generateClarificationResponse === 'function'
+      ? await aiService.generateClarificationResponse(message, analysis, caseData)
+      : await aiService.generateAutoReply(message, analysis, caseData);
     draft = {
       subject: generatedDraft?.subject || null,
       bodyText: generatedDraft?.body_text || generatedDraft?.body || null,
@@ -1095,6 +1109,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   const proposalId = proposal.id;
   const caseData = await db.getCaseById(caseId);
   const executionKey = proposal.execution_key || `direct-email:${proposalId}`;
+  const sendDate = new Date().toISOString();
 
   const targetAgency = proposal.case_agency_id
     ? await db.getCaseAgencyById(proposal.case_agency_id)
@@ -1178,7 +1193,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     emailJobId: emailResult?.providerMessageId || emailResult?.messageId || null,
     allowedCurrentStatuses: ['DECISION_RECEIVED'],
   });
-  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
+  await transitionCaseRuntime(caseId, 'EMAIL_SENT', { proposalId, sendDate });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
     case_id: caseId,
     proposal_id: proposalId,
@@ -1193,6 +1208,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
 async function executeApprovedPortalActionLocally(proposal, humanDecision) {
   const caseId = proposal.case_id;
   const proposalId = proposal.id;
+  const sendDate = new Date().toISOString();
 
   await proposalLifecycle.markProposalExecuted(proposalId, {
     humanDecision,
@@ -1200,10 +1216,19 @@ async function executeApprovedPortalActionLocally(proposal, humanDecision) {
   });
 
   await db.updateCase(caseId, {
-    status: 'awaiting_response',
+    status: 'sent',
+    send_date: sendDate,
     requires_human: false,
     pause_reason: null,
-    substatus: 'Portal action approved locally',
+    substatus: 'Portal request submitted locally',
+  });
+
+  await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and submitted directly via portal`, {
+    case_id: caseId,
+    proposal_id: proposalId,
+    action_type: proposal.action_type,
+    actor_type: 'human',
+    source_service: 'dashboard',
   });
 
   return { executed: true };
@@ -1214,6 +1239,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   const proposalId = proposal.id;
   const caseData = await db.getCaseById(caseId);
   const executionKey = proposal.execution_key || `direct-pdf-email:${proposalId}`;
+  const sendDate = new Date().toISOString();
   const targetAgency = proposal.case_agency_id
     ? await db.getCaseAgencyById(proposal.case_agency_id)
     : null;
@@ -1343,7 +1369,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     emailJobId: emailResult?.providerMessageId || emailResult?.messageId || null,
     allowedCurrentStatuses: ['DECISION_RECEIVED'],
   });
-  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
+  await transitionCaseRuntime(caseId, 'EMAIL_SENT', { proposalId, sendDate });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly with PDF attachment`, {
     case_id: caseId,
     proposal_id: proposalId,
@@ -2097,8 +2123,11 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
       const caseDataForLocalApproval = await db.getCaseById(caseId);
       const shouldUsePortalLocalApproval =
-        Boolean(caseDataForLocalApproval?.portal_url) &&
-        ['ACCEPT_FEE', 'NEGOTIATE_FEE'].includes(proposal.action_type);
+        proposal.action_type === 'SUBMIT_PORTAL' ||
+        (
+          Boolean(caseDataForLocalApproval?.portal_url) &&
+          ['ACCEPT_FEE', 'NEGOTIATE_FEE'].includes(proposal.action_type)
+        );
 
       if (shouldUsePortalLocalApproval) {
         await executeApprovedPortalActionLocally(proposal, humanDecision);
@@ -2118,11 +2147,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
       return res.json({
         success: true,
-        message: shouldUsePortalLocalApproval
-          ? 'Portal action completed directly via local approval path'
-          : proposal.action_type === 'SEND_PDF_EMAIL'
-            ? 'PDF email sent directly via local approval path'
-            : 'Email sent directly via local approval path',
+        message: getLocalApprovalSuccessMessage(proposal.action_type, shouldUsePortalLocalApproval),
         proposal_id: proposalId,
         action,
         fallback: 'local_direct_approval',
@@ -2218,9 +2243,14 @@ router.post('/proposals/:id/decision', async (req, res) => {
       await proposalLifecycle.markProposalDecisionReceived(proposalId, {
         humanDecision,
       });
+      // Clear human-review flags AND update substatus so stale recovery cron
+      // doesn't spawn a duplicate run while the task is re-drafting
+      const decisionSubstatus = action === 'ADJUST'
+        ? `Adjusting draft per operator instruction`
+        : `Processing ${(action || 'decision').toLowerCase()} for proposal #${proposalId}`;
       await db.query(
-        `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
-        [caseId]
+        `UPDATE cases SET requires_human = false, pause_reason = NULL, substatus = $2, updated_at = NOW() WHERE id = $1`,
+        [caseId, decisionSubstatus]
       );
 
       // Complete the waitpoint token via direct HTTP (SDK completeToken is unreliable
@@ -4098,5 +4128,6 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
 });
 
 router.getProposalDecisionErrorCode = getProposalDecisionErrorCode;
+router.getLocalApprovalSuccessMessage = getLocalApprovalSuccessMessage;
 
 module.exports = router;

@@ -2753,6 +2753,11 @@ class CronService {
               AND COALESCE(ap.proposal_count, 0) = 0
               AND COALESCE(ar.run_count, 0) = 0
               AND li.inbound_at < NOW() - ($1::text || ' minutes')::interval
+              AND NOT EXISTS (
+                  SELECT 1 FROM proposals p2
+                  WHERE p2.case_id = c.id
+                    AND p2.updated_at > NOW() - INTERVAL '5 minutes'
+              )
             ORDER BY li.inbound_at ASC
             LIMIT $2
         `, [String(minAgeMinutes), limit]);
