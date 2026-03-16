@@ -2575,7 +2575,16 @@ function MonitorPageContent() {
               {reasoning.length > 0 && (
                 <div className="flex items-start gap-2">
                   <span className="text-muted-foreground shrink-0 w-[70px]">Reason:</span>
-                  <span className="text-foreground/80">{formatReasoningItem(reasoning[0])}</span>
+                  <div className="text-foreground/80">
+                    <span>{formatReasoningItem(reasoning[0])}</span>
+                    {reasoning.length > 1 && (
+                      <div className="mt-1 space-y-0.5">
+                        {reasoning.slice(1).map((r, i) => (
+                          <p key={i} className="text-foreground/60 text-[11px]">• {formatReasoningItem(r)}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               {selectedItem.data.case_substatus && (
@@ -2766,37 +2775,7 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Reasoning — show key takeaway, collapse details */}
-          {reasoning.length > 0 && (
-            <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
-              <div className="border p-3">
-                <SectionLabel>Why</SectionLabel>
-                <p className="text-xs text-foreground/80 mb-1">
-                  {formatReasoningItem(reasoning[0])}
-                </p>
-                {reasoning.length > 1 && (
-                  <>
-                    <CollapsibleContent>
-                      {reasoning.slice(1).map((r, i) => (
-                        <p key={i + 1} className="text-xs text-foreground/60 mb-1">
-                          • {formatReasoningItem(r)}
-                        </p>
-                      ))}
-                    </CollapsibleContent>
-                    <CollapsibleTrigger asChild>
-                      <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
-                        {reasoningExpanded ? (
-                          <><ChevronUp className="h-3 w-3" /> Hide details</>
-                        ) : (
-                          <><ChevronDown className="h-3 w-3" /> +{reasoning.length - 1} details</>
-                        )}
-                      </button>
-                    </CollapsibleTrigger>
-                  </>
-                )}
-              </div>
-            </Collapsible>
-          )}
+          {/* Reasoning details collapsed into AI Summary above */}
 
           {/* Inbound message — collapsed by default */}
           {selectedItem.data.last_inbound_preview && (
