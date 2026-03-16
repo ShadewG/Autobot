@@ -816,13 +816,38 @@ export const processInitialRequest = task({
             || adjustResearch?.contactResult?.contact_email;
           const researchPortal = adjustResearch?.contactResult?.portal_url;
           if (researchEmail || researchPortal) {
-            // Update case with researched delivery path
+            // Update case with researched delivery path + persist research notes
             const updates: Record<string, any> = {};
             if (researchEmail) updates.agency_email = researchEmail;
             if (researchPortal) updates.portal_url = researchPortal;
+            updates.contact_research_notes = JSON.stringify({
+              contactResult: adjustResearch.contactResult || {},
+              brief: {
+                summary: `Research triggered by operator: "${instruction}"`,
+                suggested_agencies: adjustResearch.contactResult?.agency_name
+                  ? [{ name: adjustResearch.contactResult.agency_name, email: researchEmail, portal: researchPortal }]
+                  : [],
+              },
+              execution: {
+                outcome: researchPortal ? "portal_found" : researchEmail ? "email_found" : "no_new_channel",
+              },
+            });
+            updates.last_contact_research_at = new Date();
             await db.updateCase(caseId, updates);
             adjustedActionType = researchPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
           } else {
+            // Persist even failed research so the UI shows what was attempted
+            await db.updateCase(caseId, {
+              contact_research_notes: JSON.stringify({
+                contactResult: adjustResearch.contactResult || {},
+                brief: {
+                  summary: `Research triggered by operator: "${instruction}" — no new delivery path found`,
+                  researchFailed: true,
+                },
+                execution: { outcome: "no_new_channel" },
+              }),
+              last_contact_research_at: new Date(),
+            });
             adjustedActionType = "SEND_INITIAL_REQUEST";
           }
           logger.info("ADJUST switched action type from portal", {
