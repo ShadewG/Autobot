@@ -286,6 +286,180 @@ router.get('/activity', async (req, res) => {
 });
 
 /**
+ * GET /health — Per-user health dashboard + bug reports
+ */
+router.get('/health', async (req, res) => {
+    try {
+        const testFilter = `(c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')`;
+
+        const [
+            stuckResult,
+            overdueResult,
+            failedRunsResult,
+            bouncedResult,
+            bugReportsResult,
+            buggedCasesResult,
+        ] = await Promise.all([
+            // Stuck cases: needs_human_review/etc with no active proposal, stale > 24h
+            db.query(`
+                SELECT c.id, c.agency_name, c.user_id, u.name AS user_name,
+                       c.status, c.substatus, c.updated_at
+                FROM cases c
+                LEFT JOIN users u ON u.id = c.user_id
+                WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM proposals p WHERE p.case_id = c.id
+                      AND p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
+                      AND ar.status IN ('created','queued','processing','running','waiting')
+                  )
+                  AND c.updated_at < NOW() - INTERVAL '24 hours'
+                  AND ${testFilter}
+                ORDER BY c.updated_at ASC
+            `),
+            // Overdue deadlines
+            db.query(`
+                SELECT c.id, c.agency_name, c.user_id, u.name AS user_name,
+                       c.status, c.deadline_date
+                FROM cases c
+                LEFT JOIN users u ON u.id = c.user_id
+                WHERE c.deadline_date < CURRENT_DATE
+                  AND c.status NOT IN ('completed', 'cancelled', 'bugged')
+                  AND ${testFilter}
+                ORDER BY c.deadline_date ASC
+            `),
+            // Failed runs (48h, exclude superseded/bugged)
+            db.query(`
+                SELECT DISTINCT ON (ar.case_id)
+                       ar.case_id AS id, c.agency_name, c.user_id, u.name AS user_name,
+                       ar.error, ar.ended_at, ar.trigger_type
+                FROM agent_runs ar
+                JOIN cases c ON c.id = ar.case_id
+                LEFT JOIN users u ON u.id = c.user_id
+                WHERE ar.status = 'failed'
+                  AND ar.error NOT IN ('superseded', 'case_marked_bugged')
+                  AND ar.ended_at > NOW() - INTERVAL '48 hours'
+                  AND c.status NOT IN ('completed', 'cancelled', 'bugged')
+                  AND ${testFilter}
+                ORDER BY ar.case_id, ar.ended_at DESC
+            `),
+            // Email bounces/failures on active cases (30 days)
+            db.query(`
+                SELECT DISTINCT ON (al.case_id)
+                       al.case_id AS id, c.agency_name, c.user_id, u.name AS user_name,
+                       al.event_type, al.description, al.created_at
+                FROM activity_log al
+                JOIN cases c ON c.id = al.case_id
+                LEFT JOIN users u ON u.id = c.user_id
+                WHERE al.event_type IN ('email_bounced', 'email_send_failed')
+                  AND al.created_at > NOW() - INTERVAL '30 days'
+                  AND c.status NOT IN ('completed', 'cancelled')
+                  AND ${testFilter}
+                ORDER BY al.case_id, al.created_at DESC
+            `),
+            // Open bug reports from user_feedback
+            db.query(`
+                SELECT f.id, f.title, f.description, f.case_id, f.status, f.priority,
+                       f.created_by, f.created_by_email, f.created_at,
+                       u.name AS reporter_name,
+                       c.agency_name, c.status AS case_status
+                FROM user_feedback f
+                LEFT JOIN users u ON u.id = f.created_by
+                LEFT JOIN cases c ON c.id = f.case_id
+                WHERE f.type = 'bug_report'
+                ORDER BY
+                    CASE f.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+                    f.created_at DESC
+                LIMIT 30
+            `),
+            // Currently bugged cases
+            db.query(`
+                SELECT c.id, c.agency_name, c.case_name, c.user_id, u.name AS user_name,
+                       c.updated_at, c.substatus,
+                       al.description AS bug_description, al.created_at AS bugged_at
+                FROM cases c
+                LEFT JOIN users u ON u.id = c.user_id
+                LEFT JOIN LATERAL (
+                    SELECT description, created_at FROM activity_log
+                    WHERE case_id = c.id AND event_type = 'case_marked_bugged'
+                    ORDER BY created_at DESC LIMIT 1
+                ) al ON true
+                WHERE c.status = 'bugged'
+                  AND ${testFilter}
+                ORDER BY c.updated_at DESC
+            `),
+        ]);
+
+        // Build per-user issue map
+        const userIssues = {};
+
+        function ensureUser(userId, userName) {
+            const key = userId || 'unassigned';
+            if (!userIssues[key]) {
+                userIssues[key] = {
+                    user_id: userId,
+                    user_name: userName || 'Unassigned',
+                    stuck: [],
+                    overdue: [],
+                    failed_runs: [],
+                    bounced: [],
+                };
+            }
+            return userIssues[key];
+        }
+
+        for (const r of stuckResult.rows) {
+            ensureUser(r.user_id, r.user_name).stuck.push({
+                id: r.id, agency_name: r.agency_name, status: r.status,
+                substatus: r.substatus, updated_at: r.updated_at,
+            });
+        }
+        for (const r of overdueResult.rows) {
+            ensureUser(r.user_id, r.user_name).overdue.push({
+                id: r.id, agency_name: r.agency_name, status: r.status,
+                deadline_date: r.deadline_date,
+            });
+        }
+        for (const r of failedRunsResult.rows) {
+            ensureUser(r.user_id, r.user_name).failed_runs.push({
+                id: r.id, agency_name: r.agency_name,
+                error: (r.error || '').slice(0, 120), trigger_type: r.trigger_type,
+                ended_at: r.ended_at,
+            });
+        }
+        for (const r of bouncedResult.rows) {
+            ensureUser(r.user_id, r.user_name).bounced.push({
+                id: r.id, agency_name: r.agency_name,
+                event_type: r.event_type, created_at: r.created_at,
+            });
+        }
+
+        // Sort: users with most issues first, unassigned last
+        const userHealthList = Object.values(userIssues)
+            .map(u => ({
+                ...u,
+                total_issues: u.stuck.length + u.overdue.length + u.failed_runs.length + u.bounced.length,
+            }))
+            .sort((a, b) => {
+                if (!a.user_id && b.user_id) return 1;
+                if (a.user_id && !b.user_id) return -1;
+                return b.total_issues - a.total_issues;
+            });
+
+        res.json({
+            success: true,
+            user_health: userHealthList,
+            bug_reports: bugReportsResult.rows,
+            bugged_cases: buggedCasesResult.rows,
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
  * GET /cases — All cases across all users (admin view)
  */
 router.get('/cases', async (req, res) => {
