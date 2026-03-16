@@ -121,7 +121,7 @@ describe('Case agency and run guards', function () {
       };
     }
 
-    it('reuses existing case-agency signals when lookup returns no data', async function () {
+    it('falls back to existing case-agency signals only after lookup returns no data', async function () {
       const dbStub = {
         query: sinon.stub().resolves({ rows: [] }),
         getCaseById: sinon.stub().resolves({
@@ -172,9 +172,17 @@ describe('Case agency and run guards', function () {
         assert.strictEqual(response.body.success, true);
         assert.strictEqual(response.body.research.source, 'existing-case-data');
         assert.strictEqual(response.body.research.contact_email, '911audio@portercountyin.gov');
-        assert.strictEqual(response.body.research.fallback_reason, 'existing_channels_available');
-        assert.strictEqual(response.body.research.immediate_reuse, true);
-        sinon.assert.notCalled(pdContactStub.lookupContact);
+        assert.strictEqual(response.body.research.fallback_reason, 'lookup_returned_no_data');
+        sinon.assert.calledOnce(pdContactStub.lookupContact);
+        sinon.assert.calledWithExactly(
+          pdContactStub.lookupContact,
+          'Porter County Central Communications',
+          'IN',
+          sinon.match({
+            forceSearch: true,
+            promptContext: null,
+          })
+        );
         sinon.assert.calledWithExactly(
           dbStub.updateCaseAgency,
           24,
@@ -191,9 +199,91 @@ describe('Case agency and run guards', function () {
           sinon.match({
             case_id: 25169,
             case_agency_id: 24,
-            fallback_reason: 'existing_channels_available',
+            fallback_reason: 'lookup_returned_no_data',
             reused_email: '911audio@portercountyin.gov',
-            immediate_reuse: true,
+          })
+        );
+      } finally {
+        restore();
+      }
+    });
+
+    it('passes the user prompt into agency research lookups', async function () {
+      const dbStub = {
+        query: sinon.stub().resolves({ rows: [] }),
+        getCaseById: sinon.stub().resolves({
+          id: 99,
+          state: 'MO',
+          agency_email: null,
+          alternate_agency_email: null,
+          portal_url: null,
+          portal_provider: null,
+        }),
+        getCaseAgencyById: sinon.stub().resolves({
+          id: 7,
+          case_id: 99,
+          agency_name: 'St. Louis County Police Department',
+          agency_email: 'old@example.gov',
+          portal_url: null,
+          portal_provider: null,
+          is_primary: true,
+          status: 'pending',
+        }),
+        updateCaseAgency: sinon.stub().callsFake(async (id, updates) => ({
+          id,
+          case_id: 99,
+          agency_name: 'St. Louis County Police Department',
+          is_primary: true,
+          ...updates,
+        })),
+        logActivity: sinon.stub().resolves(),
+      };
+      const pdContactStub = {
+        lookupContact: sinon.stub().resolves({
+          contact_email: 'records@stlouiscountymo.gov',
+          portal_url: 'https://recordsrequest.stlouiscountymo.gov/requests/new',
+          portal_provider: 'nextrequest',
+          source: 'pd-contact',
+          confidence: 0.9,
+          notes: 'Matched county records request portal',
+        }),
+      };
+      const { router, restore } = loadCaseAgenciesRouter({
+        dbStub,
+        notionStub: {},
+        pdContactStub,
+      });
+
+      try {
+        const app = express();
+        app.use('/api/cases', router);
+
+        const response = await supertest(app)
+          .post('/api/cases/99/agencies/7/research')
+          .send({ prompt: 'Find the best public records portal, not the general contact page' });
+
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.body.success, true);
+        sinon.assert.calledOnce(pdContactStub.lookupContact);
+        sinon.assert.calledWithExactly(
+          pdContactStub.lookupContact,
+          'St. Louis County Police Department',
+          'MO',
+          sinon.match({
+            forceSearch: true,
+            promptContext: 'Find the best public records portal, not the general contact page',
+          })
+        );
+        sinon.assert.calledWithExactly(
+          dbStub.logActivity,
+          'case_agency_researched',
+          sinon.match(/prompt:/),
+          sinon.match({
+            case_id: 99,
+            case_agency_id: 7,
+            found_email: 'records@stlouiscountymo.gov',
+            found_portal: 'https://recordsrequest.stlouiscountymo.gov/requests/new',
+            user_prompt: 'Find the best public records portal, not the general contact page',
           })
         );
       } finally {

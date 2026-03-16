@@ -116,7 +116,7 @@ async function preCheck(departmentName, location) {
  * Full search: Call Firecrawl v2 Agent API to research department contact info.
  * Polls for completion (max ~6 minutes).
  */
-async function firecrawlSearch(departmentName, location) {
+async function firecrawlSearch(departmentName, location, { promptContext = null } = {}) {
     if (!FIRECRAWL_API_KEY) {
         console.log('pd-contact firecrawl: FIRECRAWL_API_KEY not set, skipping');
         return null;
@@ -176,7 +176,9 @@ Search the department's official website and any FOIA-related pages. Look for "r
         // Start agent job
         console.log(`pd-contact firecrawl: starting agent search for "${departmentName}"${locationStr}`);
         const startRes = await axios.post('https://api.firecrawl.dev/v2/agent', {
-            prompt,
+            prompt: promptContext
+                ? `${prompt}\n\nAdditional operator guidance:\n${promptContext}`
+                : prompt,
             schema
         }, {
             headers: {
@@ -273,7 +275,7 @@ async function saveToNotion(pageId, contactData) {
  * save-to-Notion in background.
  * Returns normalized contact data or null on failure.
  */
-async function lookupContact(name, location, { forceSearch = false } = {}) {
+async function lookupContact(name, location, { forceSearch = false, promptContext = null } = {}) {
     if (!name) return null;
 
     // 1. Try fast Notion pre-check (skip if forceSearch requested)
@@ -283,7 +285,7 @@ async function lookupContact(name, location, { forceSearch = false } = {}) {
     }
 
     // 2. Full Firecrawl search
-    const result = await firecrawlSearch(name, location);
+    const result = await firecrawlSearch(name, location, { promptContext });
     if (!result) return null;
 
     console.log(`pd-contact full search for "${name}": portal=${result.portal_url || 'none'}, email=${result.contact_email || 'none'}, confidence=${result.confidence || 'unknown'}`);

@@ -546,12 +546,6 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
         };
 
         const existingFallback = buildExistingContactFallback(caseAgency, caseData);
-        if (existingFallback) {
-            const reused = await reuseExistingSignals('existing_channels_available', { immediate_reuse: true });
-            if (reused) {
-                return;
-            }
-        }
         if (unresolvedPlaceholderAgency) {
             return res.status(422).json({
                 success: false,
@@ -566,7 +560,10 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
                 pdContactService.lookupContact(
                     effectiveAgencyName,
                     caseData.state,
-                    { forceSearch: true }
+                    {
+                        forceSearch: true,
+                        promptContext: userPrompt || null,
+                    }
                 ),
                 new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('Research lookup timed out after 30s')), RESEARCH_TIMEOUT_MS)
