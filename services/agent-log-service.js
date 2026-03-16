@@ -149,6 +149,9 @@ const ACTIVITY_LABELS = {
   proposal_approved: () => 'Proposal approved',
   proposal_dismissed: () => 'Proposal dismissed',
   stale_inbound_marked_processed: () => 'Inbound message marked as processed',
+  research_web_search_started: (meta) => `Searching web for ${meta.query?.substring(0, 80) || 'agency contacts'}`,
+  research_web_search_completed: (meta) => meta.result_count > 0 ? `Found ${meta.result_count} web results` : 'No web results found',
+  research_contacts_resolved: () => null, // uses description directly
   stale_reprocess_retriggered: () => 'Reprocessing triggered for stale inbound',
   stale_proposal_recovered: () => 'Stale proposal recovered',
   manual_ai_trigger: () => 'AI manually triggered by operator',
@@ -164,8 +167,9 @@ function normalizeActivity(row) {
   const metadata = row.metadata || {};
   const kind = classifyActivityKind(row.event_type, metadata);
   const labelFn = ACTIVITY_LABELS[row.event_type];
-  const friendlySummary = typeof labelFn === 'function'
-    ? labelFn(metadata)
+  const labelResult = typeof labelFn === 'function' ? labelFn(metadata) : undefined;
+  const friendlySummary = labelResult !== null && labelResult !== undefined
+    ? labelResult
     : (row.description || row.event_type?.replace(/_/g, ' ') || 'Activity recorded');
   return {
     id: `activity_log:${row.id}`,

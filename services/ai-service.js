@@ -1919,6 +1919,17 @@ Respond with JSON ONLY.`;
             if (firecrawlApiKey) {
                 try {
                     const query = `${caseData.agency_name} ${caseData.state} public records FOIA portal contact email phone`;
+                    await db.logActivity(
+                        'research_web_search_started',
+                        `Searching for ${caseData.agency_name} contacts via Firecrawl`,
+                        {
+                            case_id: caseData.id,
+                            actor_type: 'system',
+                            source_service: 'ai_service',
+                            query: query.substring(0, 200),
+                            provider: 'firecrawl',
+                        }
+                    ).catch(() => {});
                     const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
                         method: 'POST',
                         headers: {
@@ -1935,6 +1946,24 @@ Respond with JSON ONLY.`;
                             const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
                             searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
                             console.log(`Firecrawl returned ${results.length} results for alternate contacts of "${caseData.agency_name}"`);
+                            await db.logActivity(
+                                'research_web_search_completed',
+                                `Firecrawl found ${results.length} results for ${caseData.agency_name}`,
+                                {
+                                    case_id: caseData.id,
+                                    actor_type: 'system',
+                                    source_service: 'ai_service',
+                                    provider: 'firecrawl',
+                                    result_count: results.length,
+                                    top_urls: results.slice(0, 3).map(r => r.url).filter(Boolean),
+                                }
+                            ).catch(() => {});
+                        } else {
+                            await db.logActivity(
+                                'research_web_search_completed',
+                                `Firecrawl returned no results for ${caseData.agency_name}`,
+                                { case_id: caseData.id, actor_type: 'system', source_service: 'ai_service', provider: 'firecrawl', result_count: 0 }
+                            ).catch(() => {});
                         }
                     } else {
                         console.warn(`Firecrawl alternate contacts search failed (${firecrawlRes.status})`);
@@ -1966,17 +1995,43 @@ Respond with JSON ONLY.`;
                 return null;
             }
 
+            let parsed = null;
             try {
-                return JSON.parse(raw);
+                parsed = JSON.parse(raw);
             } catch (parseError) {
-                // Try extracting JSON from markdown code blocks
                 const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
                 if (jsonMatch) {
-                    try { return JSON.parse(jsonMatch[1].trim()); } catch {}
+                    try { parsed = JSON.parse(jsonMatch[1].trim()); } catch {}
                 }
-                console.error('Failed to parse alternate contact research JSON:', parseError.message, raw.substring(0, 200));
-                return null;
+                if (!parsed) {
+                    console.error('Failed to parse alternate contact research JSON:', parseError.message, raw.substring(0, 200));
+                    return null;
+                }
             }
+
+            // Log the research conclusion
+            const foundChannels = [
+                parsed.portal_url ? `portal: ${parsed.portal_url}` : null,
+                parsed.contact_email ? `email: ${parsed.contact_email}` : null,
+                parsed.contact_phone ? `phone: ${parsed.contact_phone}` : null,
+            ].filter(Boolean);
+            await db.logActivity(
+                'research_contacts_resolved',
+                foundChannels.length > 0
+                    ? `Research found: ${foundChannels.join(', ')}${parsed.notes ? ` — ${String(parsed.notes).substring(0, 150)}` : ''}`
+                    : `Research found no new contacts for ${caseData.agency_name}${parsed.notes ? ` — ${String(parsed.notes).substring(0, 150)}` : ''}`,
+                {
+                    case_id: caseData.id,
+                    actor_type: 'system',
+                    source_service: 'ai_service',
+                    portal_url: parsed.portal_url || null,
+                    contact_email: parsed.contact_email || null,
+                    contact_phone: parsed.contact_phone || null,
+                    confidence: parsed.confidence || null,
+                }
+            ).catch(() => {});
+
+            return parsed;
         } catch (error) {
             console.error('Error researching alternate contacts:', error);
             return null;
