@@ -6,12 +6,10 @@ node_modules
 portal-run-results
 data
 windows-playwright-worker
-dashboard
 trigger
 screenshots
 demos
 *.png
-case-detail-*.png
 audit-*.png
 queue-check.png
 retest-*.png
