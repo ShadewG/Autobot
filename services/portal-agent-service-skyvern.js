@@ -1728,13 +1728,13 @@ class PortalAgentServiceSkyvern {
                         actionType: 'SUBMIT_PORTAL',
                         reasoning: [
                             `Automated portal submission failed: ${timeoutDetail}`,
-                            'Approve to retry automated submission, or dismiss to handle manually'
+                            'Manual portal submission required — use the portal helper to copy fields and submit manually'
                         ],
                         confidence: 0,
                         requiresHuman: true,
                         canAutoExecute: false,
-                        draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
-                        draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${timeoutDetail}\n\nApproving will retry the automated portal submission.`,
+                        draftSubject: `Manual portal submission: ${caseData.case_name}`.substring(0, 200),
+                        draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${timeoutDetail}\n\nOpen the portal and use the copy helper to manually fill the form.`,
                         status: 'PENDING_APPROVAL'
                     });
                 } catch (proposalErr) {
@@ -2040,13 +2040,13 @@ class PortalAgentServiceSkyvern {
                     actionType: 'SUBMIT_PORTAL',
                     reasoning: [
                         `Automated portal submission failed: ${failureReason}`,
-                        'Approve to retry automated submission, or dismiss to handle manually'
+                        'Manual portal submission required — use the portal helper to copy fields and submit manually'
                     ],
                     confidence: 0,
                     requiresHuman: true,
                     canAutoExecute: false,
-                    draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
-                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${failureReason}\n\nApproving will retry the automated portal submission.`,
+                    draftSubject: `Manual portal submission: ${caseData.case_name}`.substring(0, 200),
+                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${failureReason}\n\nOpen the portal and use the copy helper to manually fill the form.`,
                     status: 'PENDING_APPROVAL'
                 });
             } catch (proposalErr) {
@@ -2134,13 +2134,13 @@ class PortalAgentServiceSkyvern {
                     actionType: 'SUBMIT_PORTAL',
                     reasoning: [
                         `Automated portal submission failed: ${message}`,
-                        'Approve to retry automated submission, or dismiss to handle manually'
+                        'Manual portal submission required — use the portal helper to copy fields and submit manually'
                     ],
                     confidence: 0,
                     requiresHuman: true,
                     canAutoExecute: false,
-                    draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
-                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${message}\n\nApproving will retry the automated portal submission.`,
+                    draftSubject: `Manual portal submission: ${caseData.case_name}`.substring(0, 200),
+                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${message}\n\nOpen the portal and use the copy helper to manually fill the form.`,
                     status: 'PENDING_APPROVAL'
                 });
                 await notionService.syncStatusToNotion(caseData.id);

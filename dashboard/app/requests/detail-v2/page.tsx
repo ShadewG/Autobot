@@ -3940,48 +3940,101 @@ function DetailV2Content() {
                           </details>
                         )}
 
-                        {/* Inline portal workflow for portal submissions and manual portal fallback */}
-                        {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(proposal.action_type) && (
-                          <details className="text-xs" open>
-                            <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
-                              <Globe className="h-2.5 w-2.5" /> Portal Submission
-                            </summary>
-                            <div className="mt-1 space-y-2">
-                              <p className="text-[10px] text-muted-foreground">
-                                Handle the portal work on this case page. Use the controls below, then mark the case submitted here.
-                              </p>
+                        {/* Manual portal submission helper — per-field copy UI */}
+                        {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(proposal.action_type) && (() => {
+                          const CopyRow = ({ label, value, fieldKey }: { label: string; value: string | null | undefined; fieldKey: string }) => {
+                            if (!value) return null;
+                            return (
+                              <div className="flex items-center justify-between gap-2 py-0.5">
+                                <div className="min-w-0">
+                                  <span className="text-muted-foreground">{label}: </span>
+                                  <span className="text-foreground">{value}</span>
+                                </div>
+                                <Button
+                                  size="sm" variant="ghost"
+                                  className="h-5 px-1.5 text-[10px] shrink-0"
+                                  onClick={() => copyField(fieldKey, value)}
+                                >
+                                  {copiedField === fieldKey ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                                </Button>
+                              </div>
+                            );
+                          };
+                          return (
+                            <div className="rounded-md border border-cyan-800/40 bg-cyan-950/20 p-3 space-y-3 text-xs">
+                              <div className="flex items-center gap-2">
+                                <Globe className="h-4 w-4 text-cyan-400" />
+                                <span className="font-medium text-cyan-300">Manual Portal Submission</span>
+                              </div>
+
                               {portal_helper.portal_url && (
-                                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => window.open(portal_helper.portal_url!, "_blank")}>
-                                  <ExternalLink className="h-2.5 w-2.5 mr-1" /> Open Portal
+                                <Button
+                                  size="sm"
+                                  className="bg-cyan-700 hover:bg-cyan-600 text-white h-7 text-xs"
+                                  onClick={() => window.open(portal_helper.portal_url!, "_blank")}
+                                >
+                                  <ExternalLink className="h-3 w-3 mr-1.5" /> Open Portal
                                 </Button>
                               )}
-                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => {
-                                const lines = [
-                                  `Name: ${portal_helper.requester.name}`,
-                                  `Email: ${portal_helper.requester.email}`,
-                                  `Phone: ${portal_helper.requester.phone}`,
-                                  `Address: ${portal_helper.address.line1}, ${portal_helper.address.city}, ${portal_helper.address.state} ${portal_helper.address.zip}`,
-                                  portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
-                                  portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
-                                  portal_helper.case_info.requested_records.length > 0 && `Records: ${portal_helper.case_info.requested_records.join(", ")}`,
-                                ].filter(Boolean).join("\n");
-                                navigator.clipboard.writeText(lines);
-                                toast.success("Fields copied");
-                              }}>
-                                <Copy className="h-2.5 w-2.5 mr-1" /> Copy All Fields
-                              </Button>
-                              <Button
-                                size="sm" variant="outline"
-                                className="h-6 text-[10px] border-green-700/50 text-green-400"
-                                onClick={() => handleManualSubmit(proposal.id)}
-                                disabled={isManualSubmitting}
-                              >
-                                {isManualSubmitting ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <CheckCircle className="h-2.5 w-2.5 mr-1" />}
-                                Mark Submitted
-                              </Button>
+
+                              <div className="space-y-0.5">
+                                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Requester</p>
+                                <CopyRow label="Name" value={portal_helper.requester.name} fieldKey="ph-name" />
+                                <CopyRow label="Email" value={portal_helper.requester.email} fieldKey="ph-email" />
+                                <CopyRow label="Phone" value={portal_helper.requester.phone} fieldKey="ph-phone" />
+                                <CopyRow label="Organization" value={portal_helper.requester.organization} fieldKey="ph-org" />
+                              </div>
+
+                              <div className="space-y-0.5">
+                                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Address</p>
+                                <CopyRow label="Street" value={portal_helper.address.line1} fieldKey="ph-street" />
+                                {portal_helper.address.line2 && <CopyRow label="Line 2" value={portal_helper.address.line2} fieldKey="ph-line2" />}
+                                <CopyRow label="City" value={portal_helper.address.city} fieldKey="ph-city" />
+                                <CopyRow label="State" value={portal_helper.address.state} fieldKey="ph-state" />
+                                <CopyRow label="ZIP" value={portal_helper.address.zip} fieldKey="ph-zip" />
+                              </div>
+
+                              <div className="space-y-0.5">
+                                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Case Info</p>
+                                <CopyRow label="Subject" value={portal_helper.case_info.subject_name} fieldKey="ph-subject" />
+                                <CopyRow label="Incident Date" value={portal_helper.case_info.incident_date} fieldKey="ph-date" />
+                                {portal_helper.case_info.requested_records.length > 0 && (
+                                  <CopyRow label="Records" value={portal_helper.case_info.requested_records.join(", ")} fieldKey="ph-records" />
+                                )}
+                                <CopyRow label="Details" value={portal_helper.case_info.additional_details} fieldKey="ph-details" />
+                              </div>
+
+                              <div className="flex items-center gap-2 pt-1">
+                                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => {
+                                  const lines = [
+                                    `Name: ${portal_helper.requester.name}`,
+                                    `Email: ${portal_helper.requester.email}`,
+                                    `Phone: ${portal_helper.requester.phone}`,
+                                    portal_helper.requester.organization && `Organization: ${portal_helper.requester.organization}`,
+                                    `Address: ${portal_helper.address.line1}, ${portal_helper.address.city}, ${portal_helper.address.state} ${portal_helper.address.zip}`,
+                                    portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
+                                    portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
+                                    portal_helper.case_info.requested_records.length > 0 && `Records: ${portal_helper.case_info.requested_records.join(", ")}`,
+                                    portal_helper.case_info.additional_details && `Details: ${portal_helper.case_info.additional_details}`,
+                                  ].filter(Boolean).join("\n");
+                                  navigator.clipboard.writeText(lines);
+                                  toast.success("All fields copied");
+                                }}>
+                                  <Copy className="h-3 w-3 mr-1" /> Copy All
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="bg-green-700 hover:bg-green-600 text-white h-7 text-xs"
+                                  onClick={() => handleManualSubmit(proposal.id)}
+                                  disabled={isManualSubmitting}
+                                >
+                                  {isManualSubmitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <CheckCircle className="h-3 w-3 mr-1" />}
+                                  Mark Submitted
+                                </Button>
+                              </div>
                             </div>
-                          </details>
-                        )}
+                          );
+                        })()}
 
                         {/* Action buttons */}
                         <div className="flex items-center gap-2 pt-1">
@@ -4348,7 +4401,7 @@ function DetailV2Content() {
                               <>
                                 <Button size="sm" className="h-6 text-[10px]" onClick={async () => {
                                   try {
-                                    await fetcher(`/cases/${request.id}/agencies/${ca.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editAgencyFields) });
+                                    await fetchAPI(`/cases/${request.id}/agencies/${ca.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editAgencyFields) });
                                     setEditingAgencyId(null);
                                     setEditAgencyFields({});
                                     mutate();

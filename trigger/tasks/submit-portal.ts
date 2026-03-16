@@ -1073,6 +1073,27 @@ export const submitPortal = task({
         },
       });
 
+      // Create manual-submission proposal if none exists (covers non-Skyvern engines & edge cases)
+      try {
+        await db.upsertProposal({
+          proposalKey: `${caseId}:portal_failure:SUBMIT_PORTAL:1`,
+          caseId,
+          actionType: "SUBMIT_PORTAL",
+          reasoning: [
+            `Automated portal submission failed: ${error.message?.substring(0, 200)}`,
+            "Manual portal submission required — use the portal helper to copy fields and submit manually",
+          ],
+          confidence: 0,
+          requiresHuman: true,
+          canAutoExecute: false,
+          draftSubject: `Manual portal submission: ${caseData.case_name}`.substring(0, 200),
+          draftBodyText: `Portal URL: ${targetUrl}\nPrevious attempt failed: ${error.message?.substring(0, 200)}\n\nOpen the portal and use the copy helper to manually fill the form.`,
+          status: "PENDING_APPROVAL",
+        });
+      } catch (proposalErr: any) {
+        logger.warn("Failed to create manual submission proposal", { error: proposalErr?.message });
+      }
+
       // Don't re-throw — we've handled the failure. Retrying Skyvern is expensive.
       return { success: false, error: error.message };
     }
