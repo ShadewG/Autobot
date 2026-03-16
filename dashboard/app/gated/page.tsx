@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import Link from "next/link";
 import { useUserFilter } from "@/components/user-filter";
+import { useAuth } from "@/components/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -1043,6 +1044,8 @@ function MonitorPageContent() {
   // ── Deep linking & user filter ─────────────
   const searchParams = useSearchParams();
   const { appendUser } = useUserFilter();
+  const { user: authUser } = useAuth();
+  const isAdmin = Boolean(authUser?.is_admin);
 
   // Fetch users for resolving user_id → name
   const { data: usersData } = useSWR<{ success: boolean; users: { id: number; name: string }[] }>("/api/users");
@@ -1086,7 +1089,7 @@ function MonitorPageContent() {
       empty_normalized_inbound: number;
       proposal_message_mismatches: number;
     };
-  }>("/api/monitor/system-health", { refreshInterval: 60000 });
+  }>(isAdmin ? "/api/monitor/system-health" : null, { refreshInterval: 60000 });
 
   // Build the full queue (unfiltered by type) — filter out acted-on items via removedIds
   const allQueueItems = useMemo<QueueItem[]>(() => {
@@ -2058,8 +2061,8 @@ function MonitorPageContent() {
         />
       </div>
 
-      {/* ── System Health ──────────────────── */}
-      {healthData?.metrics && (
+      {/* ── System Health (admin only) ──────────────────── */}
+      {isAdmin && healthData?.metrics && (
         <Collapsible className="mb-4">
           <CollapsibleTrigger className="w-full">
             <div className={cn(
