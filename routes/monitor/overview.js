@@ -588,11 +588,6 @@ router.get('/live-overview', async (req, res) => {
 
         // Enrich pending approvals with inbound attachments + quick extracted insights.
         const pendingApprovalRows = pendingApprovalsResult.rows || [];
-        // DEBUG: log count and user-3 cases for troubleshooting
-        const _debugU3 = pendingApprovalRows.filter(r => Number(r.user_id) === 3);
-        if (_debugU3.length > 0 || userId === 3) {
-            console.log(`[live-overview DEBUG] pendingApprovalRows=${pendingApprovalRows.length}, user3=${_debugU3.length}, user3_cases=${_debugU3.map(r=>r.case_id).join(',')}, filter=user_id=${userId}`);
-        }
         const triggerMessageIds = [...new Set(
             pendingApprovalRows
                 .map((r) => Number(r.trigger_message_id))
