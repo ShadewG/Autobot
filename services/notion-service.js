@@ -821,6 +821,15 @@ class NotionService {
             if (resolvedAgency?.id) {
                 agencyId = resolvedAgency.id;
                 importedCaseData.agency_id = resolvedAgency.id;
+                // Clear stale AGENCY_NOT_IN_DIRECTORY warning now that we resolved it
+                if (Array.isArray(caseRecord?.import_warnings)) {
+                    const cleaned = caseRecord.import_warnings.filter(w => w?.type !== 'AGENCY_NOT_IN_DIRECTORY');
+                    if (cleaned.length !== caseRecord.import_warnings.length) {
+                        await db.query('UPDATE cases SET import_warnings = $1 WHERE id = $2', [
+                            JSON.stringify(cleaned), caseId,
+                        ]);
+                    }
+                }
             }
         }
 
