@@ -2030,7 +2030,7 @@ function DetailV2Content() {
   // Multi-agency state
   const [agencyActionLoading, setAgencyActionLoading] = useState<{
     id: number;
-    action: "primary" | "research" | "confirm-portal" | "validate-portal" | "block-portal";
+    action: "primary" | "research" | "confirm-portal" | "validate-portal" | "block-portal" | "remove";
   } | null>(null);
   const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
