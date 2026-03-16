@@ -942,6 +942,9 @@ router.post('/create', async (req, res) => {
         const recordsArray = Array.isArray(requested_records)
             ? requested_records.filter(Boolean)
             : requested_records ? [requested_records] : null;
+        const signedInUserId = Number.isFinite(Number(req.signedCookies?.autobot_uid))
+            ? Number(req.signedCookies.autobot_uid)
+            : null;
 
         const syntheticNotionId = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -959,6 +962,7 @@ router.post('/create', async (req, res) => {
             status: 'ready_to_send',
             portal_url: portal_url?.trim() || null,
             tags: ['manual-entry'],
+            user_id: signedInUserId,
         });
 
         await db.addCaseAgency(newCase.id, {
@@ -1016,6 +1020,9 @@ router.post('/batch', async (req, res) => {
             : requested_records ? [requested_records] : null;
 
         const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const signedInUserId = Number.isFinite(Number(req.signedCookies?.autobot_uid))
+            ? Number(req.signedCookies.autobot_uid)
+            : null;
         const userId = req.signedCookies?.autobot_uid || 'dashboard';
         const results = [];
         const errors = [];
@@ -1050,6 +1057,7 @@ router.post('/batch', async (req, res) => {
                     portal_url: agency.portal_url?.trim() || null,
                     portal_provider: agency.portal_provider?.trim() || null,
                     tags: ['batch', `batch:${batchId}`],
+                    user_id: signedInUserId,
                 });
 
                 await db.addCaseAgency(newCase.id, {
