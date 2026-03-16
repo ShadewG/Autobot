@@ -189,9 +189,22 @@ async function getLatestCaseErrorEvent(caseId) {
   return result.rows[0] || null;
 }
 
+function summarizeTrackedErrorEvent(errorEvent) {
+  if (!errorEvent) return null;
+  return {
+    failure_surface: errorEvent.source_service || errorEvent.operation || null,
+    error_name: errorEvent.error_name || null,
+    error_code: errorEvent.error_code || null,
+    error_message: errorEvent.error_message || null,
+    retryable: errorEvent.retryable ?? null,
+    occurred_at: errorEvent.created_at || null,
+  };
+}
+
 module.exports = {
   captureException,
   normalizeError,
   searchErrorEvents,
   getLatestCaseErrorEvent,
+  summarizeTrackedErrorEvent,
 };
