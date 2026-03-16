@@ -61,6 +61,18 @@ export default defineConfig({
           "FIRECRAWL_API_KEY",
           "PARALLEL_API_KEY",
           "BRAINTRUST_API_KEY",
+          "PORTAL_PRIMARY_ENGINE",
+          "BROWSERBASE_API_KEY",
+          "BROWSERBASE_PROJECT_ID",
+          "PLAYWRIGHT_BROWSER_BACKEND",
+          "BROWSERBASE_REGION",
+          "BROWSERBASE_ADVANCED_STEALTH",
+          "BROWSERBASE_SOLVE_CAPTCHAS",
+          "BROWSERBASE_PROXIES",
+          "BROWSERBASE_PROXY_PROVIDERS",
+          "BROWSERBASE_PROXY_DOMAINS",
+          "BROWSERBASE_PROXY_COUNTRY",
+          "BROWSERBASE_AUTH_CONTEXT_PROVIDERS",
         ];
         const result = vars
           .filter((name) => process.env[name])

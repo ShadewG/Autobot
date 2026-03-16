@@ -1,8 +1,8 @@
 /**
  * Submit Portal Task (Trigger.dev)
  *
- * Replaces the BullMQ portal-queue worker.
- * Handles portal submission via Skyvern with:
+ * Handles portal submission with Playwright+Browserbase as primary engine
+ * and Skyvern as fallback:
  * - Dedup guard (skip if PENDING task already exists for case)
  * - Circuit breaker (skip after 3 recent failures for same case)
  * - Idempotency (skip if case already past submission)
@@ -34,32 +34,6 @@ const FAILURE_WINDOW_HOURS = 24;
 const MAX_PORTAL_RUNS_PER_DAY = 2;
 const MAX_PORTAL_RUNS_TOTAL = 2;
 const STALE_CREDENTIAL_DAYS = 30;
-
-function parsePortalPrepAllowlist(rawValue: any): Set<string> {
-  return new Set(
-    String(rawValue || "")
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
-function shouldUsePlaywrightPrep(provider: any, portalUrl: any): boolean {
-  if (String(process.env.PLAYWRIGHT_PORTAL_PREP_ENABLED || "").toLowerCase() !== "true") {
-    return false;
-  }
-
-  const normalizedProvider = String(provider || "").trim().toLowerCase();
-  const allowlist = parsePortalPrepAllowlist(
-    process.env.PLAYWRIGHT_PORTAL_PREP_PROVIDERS || "nextrequest"
-  );
-  if (normalizedProvider && allowlist.has(normalizedProvider)) {
-    return true;
-  }
-
-  const normalizedUrl = String(portalUrl || "").toLowerCase();
-  return Array.from(allowlist).some((value) => normalizedUrl.includes(value));
-}
 
 function inferAgencyType(agencyName: any): string {
   const text = String(agencyName || "").toLowerCase();
@@ -643,18 +617,15 @@ export const submitPortal = task({
 
     // ── Pre-flight: check if portal account is locked (don't waste Skyvern credits) ──
     // Note: document URLs are NOT blocked here — Skyvern service handles fallback to PDF/research
-    const shouldRunPlaywrightPrep = shouldUsePlaywrightPrep(
-      provider || caseData.portal_provider || null,
-      targetUrl
-    );
+    const usePlaywrightPrimary = String(process.env.PORTAL_PRIMARY_ENGINE || "playwright").toLowerCase() !== "skyvern";
     let portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
     if (portalAccount) {
       const blockedStatuses = new Set(["locked", "inactive"]);
       if (blockedStatuses.has(portalAccount.account_status)) {
-        if (shouldRunPlaywrightPrep) {
-          logger.info("Playwright prep enabled — attempting account recovery before blocking on account status", {
-            caseId,
-            targetUrl,
+        if (usePlaywrightPrimary) {
+          // Playwright can attempt account recovery, so continue instead of aborting
+          logger.info("Playwright primary — attempting account recovery despite blocked status", {
+            caseId, targetUrl,
             accountId: portalAccount.id,
             accountStatus: portalAccount.account_status,
             accountEmail: portalAccount.email,
@@ -696,52 +667,6 @@ export const submitPortal = task({
       logger.info("No portal credentials found — will use default login-first workflow", {
         caseId, targetUrl, userId: caseData.user_id || null,
       });
-    }
-
-    if (shouldRunPlaywrightPrep) {
-      try {
-        recordNode("playwright_prep_started", {
-          provider: provider || caseData.portal_provider || null,
-          portalUrl: targetUrl,
-        });
-        const playwright = getPlaywright();
-        const prepResult = await playwright.preparePortalSession(caseData, targetUrl, {
-          trackInAutobot: true,
-          ensureAccount: true,
-          forceAccountSetup: true,
-        });
-        recordNode("playwright_prep_completed", {
-          success: prepResult?.success === true,
-          status: prepResult?.status || null,
-          accountEmail: prepResult?.accountEmail || null,
-        });
-
-        if (prepResult?.success) {
-          portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
-          logger.info("Playwright prep completed before Skyvern submission", {
-            caseId,
-            portalUrl: targetUrl,
-            status: prepResult?.status || null,
-            accountEmail: prepResult?.accountEmail || portalAccount?.email || null,
-          });
-        } else {
-          logger.warn("Playwright prep did not complete cleanly; continuing with Skyvern fallback", {
-            caseId,
-            portalUrl: targetUrl,
-            status: prepResult?.status || null,
-            blockers: prepResult?.blockers || [],
-          });
-        }
-      } catch (prepError: any) {
-        recordNode("playwright_prep_failed", {
-          error: prepError?.message || String(prepError),
-        });
-        logger.warn("Playwright prep failed; continuing with Skyvern fallback", {
-          caseId,
-          portalUrl: targetUrl,
-          error: prepError?.message || String(prepError),
-        });
-      }
     }
 
     let bypassApprovalGate = false;
@@ -789,124 +714,13 @@ export const submitPortal = task({
       logger.warn("Failed to create portal_submissions row", { caseId, error: subErr?.message });
     }
 
-    // ── Call Skyvern ──
-    const skyvern = getSkyvern();
-    try {
-      const result = await skyvern.submitToPortal(caseData, targetUrl, {
-        maxSteps: 60,
-        dryRun: false,
-        instructions,
-        bypassApprovalGate,
-      });
-
-      if (!result || !result.success) {
-        // Late-result guard: if the case already advanced (e.g., fallback email
-        // sent successfully), do not let a stale portal failure overwrite it.
-        const latestCase = await db.getCaseById(caseId);
-        const advancedStatuses = new Set([
-          "sent",
-          "awaiting_response",
-          "responded",
-          "completed",
-          "cancelled",
-          "needs_phone_call",
-        ]);
-        if (advancedStatuses.has(String(latestCase?.status || "").toLowerCase())) {
-          logger.info("Ignoring failed portal result because case already advanced", {
-            caseId,
-            currentStatus: latestCase?.status || null,
-            portalResultStatus: result?.status || null,
-          });
-          await cancelPortalTask(
-            `Ignored stale portal result (${result?.status || "failed"}) because case is already ${latestCase?.status}`
-          );
-          await closeAgentRun("completed");
-          return {
-            success: true,
-            skipped: true,
-            reason: "case_already_advanced_after_portal_result",
-            priorStatus: latestCase?.status || null,
-            portalResultStatus: result?.status || null,
-          };
-        }
-
-        // Approval gate: proposal created, waiting for human — not a failure
-        if (result?.needsApproval) {
-          trace.setGateDecision({
-            needsApproval: true,
-            reason: result.reason || null,
-          });
-          trace.markOutcome("blocked", { reason: result.reason || "needs_approval" });
-          logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
-          // Status already set to needs_human_review by the service; ensure portal_task is updated
-          if (portalTaskId) {
-            await db.query(
-              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Waiting for approval' WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-              [portalTaskId]
-            );
-          }
-          await closeAgentRun("completed");
-          return result;
-        }
-        // PDF fallback / not-real-portal handled inside Skyvern service
-        if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
-          trace.setGateDecision({
-            alternativePath: result.status,
-            reason: result.reason || null,
-          });
-          trace.markOutcome("failed", { reason: result.status });
-          logger.info("Portal handled via alternative path", { caseId, status: result.status });
-          // Mark provider as non-automatable so future "retry_portal" actions
-          // fall back to email/research instead of looping portal attempts.
-          try {
-            await db.updateCasePortalStatus(caseId, {
-              portal_provider: "No online portal - paper form required",
-              last_portal_status: `Alternative path required (${result.status})`,
-              last_portal_status_at: new Date(),
-            });
-          } catch (providerErr: any) {
-            logger.warn("Failed to update portal provider after alternative path", {
-              caseId,
-              error: providerErr?.message,
-            });
-          }
-          await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
-            substatus: `Portal requires manual handling: ${result.status}`,
-            pauseReason: "PORTAL_ABORTED",
-            portalTaskId: portalTaskId || undefined,
-            proposalId: linkedProposalId,
-            error: `Alternative path: ${result.status}`,
-          });
-          await closeAgentRun("failed", `Alternative path: ${result.status}`);
-          return result;
-        }
-        throw new Error(result?.error || "Portal submission failed");
-      }
-
-      // ── Dedup skip: Skyvern service detected this was already submitted ──
-      if (result.skipped) {
-        trace.markOutcome("skipped", { reason: result.reason || "dedup_skip" });
-        logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
-        // Reset status from portal_in_progress if it was set
-        if (caseData.status === "portal_in_progress") {
-          await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
-            substatus: `Portal skipped: ${result.reason}`,
-            pauseReason: "PORTAL_ABORTED",
-            portalTaskId: portalTaskId || undefined,
-            proposalId: linkedProposalId,
-            error: `Skyvern dedup skip: ${result.reason || "already handled"}`,
-          });
-        } else {
-          await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
-        }
-        await closeAgentRun("completed");
-        return result;
-      }
-
-      // ── Success: update everything atomically via the runtime ──
-      const engineUsed = result.engine || "skyvern";
+    // ── Shared success handler for both engines ──
+    async function handlePortalSuccess(result: any, engineLabel: string) {
+      const engineUsed = result.engine || engineLabel;
       const statusText = result.status || "submitted";
-      const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
+      const taskUrl = engineLabel === "skyvern" && result.taskId
+        ? `https://app.skyvern.com/tasks/${result.taskId}`
+        : result.recording_url || result.browser_session_url || null;
 
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_COMPLETED", {
         portalTaskId: portalTaskId || undefined,
@@ -927,7 +741,6 @@ export const submitPortal = task({
         },
       });
 
-      // Update portal submission history row
       if (submissionRow?.id) {
         try {
           await finalizePortalSubmissionSuccess(db, submissionRow.id, result, taskUrl);
@@ -948,7 +761,6 @@ export const submitPortal = task({
         logger.warn('Failed to persist portal automation success policy', { error: policyErr?.message });
       }
 
-      // Update the linked execution record from PENDING_HUMAN → SENT
       if (linkedExecutionKey) {
         try {
           await getExecutor().updateExecutionRecord(linkedExecutionKey, {
@@ -967,18 +779,15 @@ export const submitPortal = task({
         }
       }
 
-      // Portal-specific fields not part of the runtime (portal_url, portal_provider)
       await db.updateCasePortalStatus(caseId, {
         portal_url: targetUrl,
         portal_provider: provider || caseData.portal_provider || "Auto-detected",
       });
 
-      // Ensure there is a correspondence artifact for portal submissions so
-      // status/reply workflows don't look like they have no outbound contact.
       await ensurePortalSubmissionMessage(caseData, targetUrl, result);
 
       try { await getNotion().syncStatusToNotion(caseId); } catch {}
-      try { await getDiscord().notifyPortalSubmission(caseData, { success: true, portalUrl: targetUrl, steps: result.steps || 0 }); } catch {}
+      try { await getDiscord().notifyPortalSubmission(caseData, { success: true, portalUrl: targetUrl, steps: result.steps?.length || result.steps || 0 }); } catch {}
       try { await getDiscord().notifyRequestSent(caseData, "portal"); } catch {}
 
       await db.logActivity("portal_submission", `Portal submission completed for case ${caseId}`, {
@@ -1012,13 +821,14 @@ export const submitPortal = task({
       logger.info("Portal submission succeeded", { caseId, engine: engineUsed, taskUrl });
       await closeAgentRun("completed");
       return result;
+    }
 
-    } catch (error: any) {
+    // ── Shared failure handler for both engines ──
+    async function handlePortalFailure(error: any) {
       trace.markOutcome("failed", { error: error.message });
       logger.error("Portal submission failed", { caseId, error: error.message });
       await learnFromPortalFailure(caseData, provider, error.message);
 
-      // Update portal submission history row
       if (submissionRow?.id) {
         try {
           await finalizePortalSubmissionFailure(db, submissionRow.id, error);
@@ -1038,7 +848,6 @@ export const submitPortal = task({
         logger.warn('Failed to persist portal automation failure telemetry', { error: policyErr?.message });
       }
 
-      // Update the linked execution record from PENDING_HUMAN → FAILED
       if (linkedExecutionKey) {
         try {
           await getExecutor().updateExecutionRecord(linkedExecutionKey, {
@@ -1061,7 +870,6 @@ export const submitPortal = task({
         instructions,
       });
 
-      // Atomically update case, portal_task, and agent_run via the runtime
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_FAILED", {
         portalTaskId: portalTaskId || undefined,
         runId: agentRunId || undefined,
@@ -1073,7 +881,6 @@ export const submitPortal = task({
         },
       });
 
-      // Create manual-submission proposal if none exists (covers non-Skyvern engines & edge cases)
       try {
         await db.upsertProposal({
           proposalKey: `${caseId}:portal_failure:SUBMIT_PORTAL:1`,
@@ -1094,8 +901,150 @@ export const submitPortal = task({
         logger.warn("Failed to create manual submission proposal", { error: proposalErr?.message });
       }
 
-      // Don't re-throw — we've handled the failure. Retrying Skyvern is expensive.
       return { success: false, error: error.message };
+    }
+
+    // ── PRIMARY: Playwright + Browserbase ──
+    let playwrightFailed = false;
+    if (usePlaywrightPrimary) {
+      try {
+        recordNode("playwright_submit_started", { portalUrl: targetUrl, provider });
+        const playwright = getPlaywright();
+        const pwResult = await playwright.submitToPortal(caseData, targetUrl, {
+          dryRun: false,
+          trackInAutobot: true,
+          ensureAccount: true,
+          forceAccountSetup: true,
+          instructions,
+        });
+        recordNode("playwright_submit_completed", {
+          success: pwResult?.success,
+          status: pwResult?.status,
+          confirmed: pwResult?.submissionConfirmed,
+        });
+
+        if (pwResult?.success && pwResult?.submissionConfirmed) {
+          // Playwright confirmed the submission — handle success and return
+          return await handlePortalSuccess(pwResult, "playwright_browserbase");
+        }
+
+        // Playwright ran but did not confirm submission — fall through to Skyvern
+        playwrightFailed = true;
+        logger.warn("Playwright submission did not confirm; falling back to Skyvern", {
+          caseId,
+          status: pwResult?.status,
+          blockers: pwResult?.blockers,
+        });
+      } catch (playwrightError: any) {
+        playwrightFailed = true;
+        recordNode("playwright_submit_failed", { error: playwrightError?.message });
+        logger.warn("Playwright submission failed; falling back to Skyvern", {
+          caseId,
+          error: playwrightError?.message,
+        });
+      }
+    }
+
+    // ── FALLBACK: Skyvern (or primary when PORTAL_PRIMARY_ENGINE=skyvern) ──
+    if (!usePlaywrightPrimary || playwrightFailed) {
+      const skyvern = getSkyvern();
+      try {
+        const result = await skyvern.submitToPortal(caseData, targetUrl, {
+          maxSteps: 60,
+          dryRun: false,
+          instructions,
+          bypassApprovalGate,
+        });
+
+        if (!result || !result.success) {
+          // Late-result guard: if the case already advanced, don't overwrite
+          const latestCase = await db.getCaseById(caseId);
+          const advancedStatuses = new Set([
+            "sent", "awaiting_response", "responded", "completed", "cancelled", "needs_phone_call",
+          ]);
+          if (advancedStatuses.has(String(latestCase?.status || "").toLowerCase())) {
+            logger.info("Ignoring failed portal result because case already advanced", {
+              caseId, currentStatus: latestCase?.status || null, portalResultStatus: result?.status || null,
+            });
+            await cancelPortalTask(
+              `Ignored stale portal result (${result?.status || "failed"}) because case is already ${latestCase?.status}`
+            );
+            await closeAgentRun("completed");
+            return {
+              success: true, skipped: true,
+              reason: "case_already_advanced_after_portal_result",
+              priorStatus: latestCase?.status || null,
+              portalResultStatus: result?.status || null,
+            };
+          }
+
+          // Approval gate: proposal created, waiting for human
+          if (result?.needsApproval) {
+            trace.setGateDecision({ needsApproval: true, reason: result.reason || null });
+            trace.markOutcome("blocked", { reason: result.reason || "needs_approval" });
+            logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
+            if (portalTaskId) {
+              await db.query(
+                `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Waiting for approval' WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+                [portalTaskId]
+              );
+            }
+            await closeAgentRun("completed");
+            return result;
+          }
+
+          // PDF fallback / not-real-portal handled inside Skyvern service
+          if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
+            trace.setGateDecision({ alternativePath: result.status, reason: result.reason || null });
+            trace.markOutcome("failed", { reason: result.status });
+            logger.info("Portal handled via alternative path", { caseId, status: result.status });
+            try {
+              await db.updateCasePortalStatus(caseId, {
+                portal_provider: "No online portal - paper form required",
+                last_portal_status: `Alternative path required (${result.status})`,
+                last_portal_status_at: new Date(),
+              });
+            } catch (providerErr: any) {
+              logger.warn("Failed to update portal provider after alternative path", { caseId, error: providerErr?.message });
+            }
+            await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
+              substatus: `Portal requires manual handling: ${result.status}`,
+              pauseReason: "PORTAL_ABORTED",
+              portalTaskId: portalTaskId || undefined,
+              proposalId: linkedProposalId,
+              error: `Alternative path: ${result.status}`,
+            });
+            await closeAgentRun("failed", `Alternative path: ${result.status}`);
+            return result;
+          }
+          throw new Error(result?.error || "Portal submission failed");
+        }
+
+        // Dedup skip
+        if (result.skipped) {
+          trace.markOutcome("skipped", { reason: result.reason || "dedup_skip" });
+          logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
+          if (caseData.status === "portal_in_progress") {
+            await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
+              substatus: `Portal skipped: ${result.reason}`,
+              pauseReason: "PORTAL_ABORTED",
+              portalTaskId: portalTaskId || undefined,
+              proposalId: linkedProposalId,
+              error: `Skyvern dedup skip: ${result.reason || "already handled"}`,
+            });
+          } else {
+            await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
+          }
+          await closeAgentRun("completed");
+          return result;
+        }
+
+        // Skyvern success
+        return await handlePortalSuccess(result, "skyvern");
+
+      } catch (error: any) {
+        return await handlePortalFailure(error);
+      }
     }
     } catch (error: any) {
       trace?.markFailed(error, { taskType: "submit-portal" });

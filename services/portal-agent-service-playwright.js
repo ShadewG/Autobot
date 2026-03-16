@@ -862,7 +862,7 @@ class PortalAgentServicePlaywright {
         return this._runPortal(caseData, portalUrl, {
             ...options,
             mode: 'submit',
-            dryRun: options.dryRun !== false,
+            dryRun: options.dryRun ?? false,
         });
     }
 
