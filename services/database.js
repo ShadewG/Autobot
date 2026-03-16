@@ -5114,11 +5114,11 @@ class DatabaseService {
             rows.find((row) => row.portal_provider)?.portal_provider ||
             canonicalRow.portal_provider ||
             null;
-        const mergedManualRequestUrl = choosePreferredChannelUrl([
+        const mergedManualRequestUrl = choosePreferredPortalUrl([
             incomingAgencyData?.manual_request_url,
             ...rows.map((row) => row.manual_request_url),
         ]) || canonicalRow.manual_request_url || null;
-        const mergedPdfFormUrl = choosePreferredChannelUrl([
+        const mergedPdfFormUrl = choosePreferredPortalUrl([
             incomingAgencyData?.pdf_form_url,
             ...rows.map((row) => row.pdf_form_url),
         ]) || canonicalRow.pdf_form_url || null;
