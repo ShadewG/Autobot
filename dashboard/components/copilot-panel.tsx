@@ -18,11 +18,13 @@ import type {
   ScopeItem,
 } from "@/lib/types";
 import { formatCurrency, formatDate, formatReasoning, humanizeRiskFlag, condenseReviewNotes } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   AlertTriangle,
   DollarSign,
   ExternalLink,
   Info,
+  Search,
 } from "lucide-react";
 
 interface CopilotPanelProps {
@@ -31,6 +33,7 @@ interface CopilotPanelProps {
   agency: AgencySummary;
   onChallenge?: (instruction: string) => void;
   onRefresh?: () => void;
+  onResearch?: () => void;
 }
 
 export function CopilotPanel({
@@ -39,6 +42,7 @@ export function CopilotPanel({
   agency,
   onChallenge,
   onRefresh,
+  onResearch,
 }: CopilotPanelProps) {
   const [isUpdatingScope, setIsUpdatingScope] = useState(false);
   const hasAgencyDetailLink = Boolean(agency?.id && /^\d+$/.test(String(agency.id)));
@@ -259,6 +263,12 @@ export function CopilotPanel({
                   </div>
                 )}
               </div>
+            )}
+            {onResearch && (
+              <Button size="sm" variant="outline" className="h-6 text-[10px] w-fit" onClick={onResearch}>
+                <Search className="h-2.5 w-2.5 mr-1" />
+                Research
+              </Button>
             )}
           </CardContent>
         </Card>

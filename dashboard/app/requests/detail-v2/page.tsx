@@ -4221,6 +4221,10 @@ function DetailV2Content() {
                   agency={agency_summary}
                   onChallenge={() => setAdjustModalOpen(true)}
                   onRefresh={mutate}
+                  onResearch={() => {
+                    const primary = _activeCaseAgencies.find((ca) => ca.is_primary) || _activeCaseAgencies[0];
+                    if (primary) handleResearchAgency(primary.id, primary.agency_name || undefined);
+                  }}
                 />
 
                 {/* Case Agencies */}
