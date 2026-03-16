@@ -323,17 +323,21 @@ router.post('/logout', (req, res) => {
 
 /**
  * GET /test-login — Playwright / automated test login
- * Gated by TEST_AUTH_SECRET env var. Sets auth cookie for user id=3 (Sam)
+ * Gated by TEST_AUTH_SECRET and ENABLE_TEST_LOGIN_ENDPOINT env vars.
+ * Sets auth cookie for a fixed test user (default id=3) and redirects to ?next= path.
  * and redirects to ?next= path.
  *
  * Usage: /api/auth/test-login?secret=<TEST_AUTH_SECRET>&next=/requests/detail-v2?id=25206
  */
 router.get('/test-login', async (req, res) => {
+    if (String(process.env.ENABLE_TEST_LOGIN_ENDPOINT || '').toLowerCase() !== 'true') {
+        return res.status(404).json({ success: false, error: 'Not found' });
+    }
     const secret = process.env.TEST_AUTH_SECRET;
     if (!secret || req.query.secret !== secret) {
         return res.status(403).json({ success: false, error: 'Forbidden' });
     }
-    const userId = parseInt(req.query.user_id, 10) || 3;
+    const userId = parseInt(process.env.TEST_AUTH_USER_ID, 10) || 3;
     const user = await db.getUserById(userId);
     if (!user?.active) {
         return res.status(404).json({ success: false, error: 'User not found' });

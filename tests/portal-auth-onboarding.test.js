@@ -39,6 +39,9 @@ describe('Portal auth onboarding', function () {
       updateUser: db.updateUser,
       upsertUserIdentityLink: db.upsertUserIdentityLink,
       query: db.query,
+      enableTestLoginEndpoint: process.env.ENABLE_TEST_LOGIN_ENDPOINT,
+      testAuthSecret: process.env.TEST_AUTH_SECRET,
+      testAuthUserId: process.env.TEST_AUTH_USER_ID,
     };
 
     db.getUserIdentityLink = async () => null;
@@ -54,6 +57,12 @@ describe('Portal auth onboarding', function () {
 
   afterEach(function () {
     Object.assign(db, originals);
+    if (originals.enableTestLoginEndpoint === undefined) delete process.env.ENABLE_TEST_LOGIN_ENDPOINT;
+    else process.env.ENABLE_TEST_LOGIN_ENDPOINT = originals.enableTestLoginEndpoint;
+    if (originals.testAuthSecret === undefined) delete process.env.TEST_AUTH_SECRET;
+    else process.env.TEST_AUTH_SECRET = originals.testAuthSecret;
+    if (originals.testAuthUserId === undefined) delete process.env.TEST_AUTH_USER_ID;
+    else process.env.TEST_AUTH_USER_ID = originals.testAuthUserId;
   });
 
   it('returns portal onboarding context and does not auto-link by email alone', async function () {
@@ -211,5 +220,40 @@ describe('Portal auth onboarding', function () {
     assert.strictEqual(updatedPasswordFor, 42);
     assert.strictEqual(linkedPayload.provider_user_id, 'portal-999');
     assert.ok((response.headers['set-cookie'] || []).some((value) => value.includes('autobot_uid=')));
+  });
+
+  it('returns 404 when test-login endpoint is disabled', async function () {
+    delete process.env.ENABLE_TEST_LOGIN_ENDPOINT;
+    process.env.TEST_AUTH_SECRET = 'test-auth-secret';
+
+    const response = await supertest(createApp())
+      .get('/api/auth/test-login')
+      .query({ secret: 'test-auth-secret', user_id: 999, next: '/gated' });
+
+    assert.strictEqual(response.status, 404);
+    assert.strictEqual(response.body.success, false);
+  });
+
+  it('ignores user_id and uses the fixed configured test user for test-login', async function () {
+    process.env.ENABLE_TEST_LOGIN_ENDPOINT = 'true';
+    process.env.TEST_AUTH_SECRET = 'test-auth-secret';
+    process.env.TEST_AUTH_USER_ID = '7';
+
+    db.getUserById = async (userId) => ({
+      id: userId,
+      name: 'Sam',
+      email: 'sam@example.com',
+      email_handle: 'sam',
+      is_admin: false,
+      active: true,
+    });
+
+    const response = await supertest(createApp())
+      .get('/api/auth/test-login')
+      .query({ secret: 'test-auth-secret', user_id: 999, next: '/gated' });
+
+    assert.strictEqual(response.status, 302);
+    assert.strictEqual(response.headers.location, '/gated');
+    assert.ok((response.headers['set-cookie'] || []).some((value) => value.includes('autobot_uid=s%3A7.')));
   });
 });
