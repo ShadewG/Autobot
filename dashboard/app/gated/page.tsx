@@ -399,6 +399,22 @@ const ACTION_LABELS: Record<string, string> = {
   ESCALATE: "REPROCESS WITH GUIDANCE",
 };
 
+/** Detect raw Notion/Trello/Airtable import dumps that shouldn't display to operators */
+function isRawImportDump(text: string): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  return (
+    t.startsWith("--- Notion Fields ---") ||
+    t.startsWith("Attachments") ||
+    t.startsWith("Trello Card Description") ||
+    t.startsWith("Original Trello Card:") ||
+    t.startsWith("Airtable Notes") ||
+    /^#{1,3}\s*(Incident|FOIA Requests|Police Departments Involved)/m.test(t) ||
+    (t.includes("trello.com/c/") && t.includes("###")) ||
+    (t.length > 2000 && t.includes("###") && t.includes("FOIA"))
+  );
+}
+
 function getApproveLabel(actionType: string | null): string {
   const normalized = typeof actionType === "string" ? actionType : String(actionType ?? "");
   if (!normalized) return "APPROVE & EXECUTE";
@@ -2746,7 +2762,9 @@ function MonitorPageContent() {
                           {portalHelper.case_info.requested_records?.length > 0 && (
                             <CopyRow label="Records" value={portalHelper.case_info.requested_records.join(", ")} fieldKey="ph-records" />
                           )}
-                          <CopyRow label="Details" value={portalHelper.case_info.additional_details} fieldKey="ph-details" />
+                          {portalHelper.case_info.additional_details && !isRawImportDump(portalHelper.case_info.additional_details) && (
+                            <CopyRow label="Details" value={portalHelper.case_info.additional_details} fieldKey="ph-details" />
+                          )}
                         </div>
                         <div className="flex items-center gap-2 pt-1">
                           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => {
@@ -2759,7 +2777,7 @@ function MonitorPageContent() {
                               portalHelper.case_info.subject_name && `Subject: ${portalHelper.case_info.subject_name}`,
                               portalHelper.case_info.incident_date && `Date: ${portalHelper.case_info.incident_date}`,
                               portalHelper.case_info.requested_records?.length > 0 && `Records: ${portalHelper.case_info.requested_records.join(", ")}`,
-                              portalHelper.case_info.additional_details && `Details: ${portalHelper.case_info.additional_details}`,
+                              portalHelper.case_info.additional_details && !isRawImportDump(portalHelper.case_info.additional_details) && `Details: ${portalHelper.case_info.additional_details}`,
                             ].filter(Boolean).join("\n");
                             navigator.clipboard.writeText(lines);
                           }}>
@@ -4331,7 +4349,7 @@ function MonitorPageContent() {
                                 </div>
                               </div>
                             )}
-                            {task.additional_details && !task.additional_details.startsWith("--- Notion Fields ---") && (
+                            {task.additional_details && !isRawImportDump(task.additional_details) && (
                               <p><span className="text-muted-foreground">Additional details:</span> {task.additional_details}</p>
                             )}
                             {task.notes && (
