@@ -1441,8 +1441,17 @@ class NotionService {
      * Checks common property names: "Assigned", "Assignee", "Assigned To", "Owner".
      */
     getAssignedPerson(props) {
-        const candidates = ['Assigned', 'Assignee', 'Assigned To', 'Owner', 'Outreacher'];
-        for (const name of candidates) {
+        // Primary: check outreacher/assigned fields first
+        const primary = ['Assigned', 'Assignee', 'Assigned To', 'Owner', 'Outreacher'];
+        for (const name of primary) {
+            const prop = props[name];
+            if (prop?.type === 'people' && prop.people?.length > 0) {
+                return prop.people[0].name || null;
+            }
+        }
+        // Fallback: use Researcher if no outreacher is set
+        const fallback = ['Researcher'];
+        for (const name of fallback) {
             const prop = props[name];
             if (prop?.type === 'people' && prop.people?.length > 0) {
                 return prop.people[0].name || null;
@@ -2803,6 +2812,15 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
                         console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
 
+                        // Resolve user assignment from Notion outreacher/researcher
+                        let syncUserId = existing.user_id || null;
+                        if (notionCase.assigned_person) {
+                            try {
+                                const resolved = await this.resolveAssignedUserId(notionCase.assigned_person);
+                                if (resolved) syncUserId = resolved;
+                            } catch (_) { /* keep existing */ }
+                        }
+
                         const preserveExistingChannels = this.hasConcreteImportedAgencyIdentity(notionCase);
                         let updatedCase = await db.updateCase(existing.id, {
                             agency_name: notionCase.agency_name || (preserveExistingChannels ? existing.agency_name : null),
@@ -2812,6 +2830,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                             manual_request_url: notionCase.manual_request_url || (preserveExistingChannels ? existing.manual_request_url : null),
                             pdf_form_url: notionCase.pdf_form_url || (preserveExistingChannels ? existing.pdf_form_url : null),
                             status: notionCase.status || 'ready_to_send',
+                            user_id: syncUserId,
                             last_notion_synced_at: new Date(),
                         });
                         updatedCase = await this.persistImportedPrimaryAgency(updatedCase, notionCase);
@@ -2851,10 +2870,23 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                                 console.log(`Assigned case to user: ${user?.name || userId} (${user?.email || 'n/a'})`);
                             } else {
                                 console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
+                                if (!Array.isArray(notionCase.import_warnings)) notionCase.import_warnings = [];
+                                notionCase.import_warnings.push({
+                                    type: 'UNRESOLVABLE_ASSIGNEE',
+                                    field: 'assigned_person',
+                                    message: `Notion assignee "${notionCase.assigned_person}" does not match any user. Assign a user manually.`,
+                                });
                             }
                         } catch (err) {
                             console.warn(`Failed to resolve assigned user: ${err.message}`);
                         }
+                    } else {
+                        if (!Array.isArray(notionCase.import_warnings)) notionCase.import_warnings = [];
+                        notionCase.import_warnings.push({
+                            type: 'NO_ASSIGNEE',
+                            field: 'assigned_person',
+                            message: 'No outreacher or researcher assigned in Notion. Assign a user manually.',
+                        });
                     }
 
                     // Calculate deadline based on state
