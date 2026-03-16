@@ -16,6 +16,7 @@ const CHANGELOG_VERSION_KEY = "autobot_last_seen_changelog";
 // Bump this version whenever you deploy notable changes.
 // The popup shows once per user per version.
 const CURRENT_VERSION = "0.9.2";
+export const CURRENT_CHANGELOG_VERSION = CURRENT_VERSION;
 
 interface ChangeEntry {
   category: "feature" | "fix" | "improvement";
