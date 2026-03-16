@@ -181,8 +181,17 @@ async function searchErrorEvents(options = {}) {
   return result.rows;
 }
 
+async function getLatestCaseErrorEvent(caseId) {
+  const result = await db.query(
+    `SELECT * FROM error_events WHERE case_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [caseId]
+  );
+  return result.rows[0] || null;
+}
+
 module.exports = {
   captureException,
   normalizeError,
   searchErrorEvents,
+  getLatestCaseErrorEvent,
 };
