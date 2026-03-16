@@ -321,4 +321,26 @@ router.post('/logout', (req, res) => {
     res.json({ success: true });
 });
 
+/**
+ * GET /test-login — Playwright / automated test login
+ * Gated by TEST_AUTH_SECRET env var. Sets auth cookie for user id=3 (Sam)
+ * and redirects to ?next= path.
+ *
+ * Usage: /api/auth/test-login?secret=<TEST_AUTH_SECRET>&next=/requests/detail-v2?id=25206
+ */
+router.get('/test-login', async (req, res) => {
+    const secret = process.env.TEST_AUTH_SECRET;
+    if (!secret || req.query.secret !== secret) {
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    const userId = parseInt(req.query.user_id, 10) || 3;
+    const user = await db.getUserById(userId);
+    if (!user?.active) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    setAuthCookie(res, user.id);
+    const next = normalizeNextPath(req.query.next);
+    return res.redirect(302, next);
+});
+
 module.exports = router;
