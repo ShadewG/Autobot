@@ -2928,6 +2928,23 @@ function DetailV2Content() {
     }
   };
 
+  const handleRemoveAgency = async (caseAgencyId: number, agencyName: string) => {
+    if (!id) return;
+    if (!confirm(`Remove "${agencyName}" from this case?`)) return;
+    setAgencyActionLoading({ id: caseAgencyId, action: "remove" });
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}`, { method: "DELETE" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to remove agency");
+      mutate();
+      toast.success(`Removed "${agencyName}"`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to remove agency");
+    } finally {
+      setAgencyActionLoading(null);
+    }
+  };
+
   const handleResearchAgency = async (caseAgencyId: number) => {
     if (!id) return;
     setAgencyActionLoading({ id: caseAgencyId, action: "research" });
@@ -4479,6 +4496,16 @@ function DetailV2Content() {
                               <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
                                 {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
                                 Start Request
+                              </Button>
+                            )}
+                            {!ca.is_primary && !isEditing && (
+                              <Button size="sm" variant="ghost" className="h-6 text-[10px] text-destructive hover:text-destructive" onClick={() => handleRemoveAgency(ca.id, ca.agency_name || "agency")} disabled={agencyActionLoading?.id === ca.id}>
+                                {agencyActionLoading?.id === ca.id && agencyActionLoading.action === "remove" ? (
+                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-2.5 w-2.5 mr-1" />
+                                )}
+                                Remove
                               </Button>
                             )}
                           </div>

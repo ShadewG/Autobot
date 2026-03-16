@@ -2068,9 +2068,10 @@ router.get('/:id/workspace', async (req, res) => {
             agencySummary.state = importBlockedAgencyDisplay.state || caseData.state || '—';
             agencySummary.submission_method = 'UNKNOWN';
             agencySummary.portal_url = undefined;
-            sortedCaseAgencies = dedupeCaseAgencies((sortedCaseAgencies.length > 0
-                ? sortedCaseAgencies
-                : [{
+            // Only create a synthetic agency entry if no real agencies exist.
+            // Do NOT mask real agencies — it collapses them all via dedup.
+            if (sortedCaseAgencies.length === 0) {
+                sortedCaseAgencies = [{
                     id: -requestId,
                     case_id: requestId,
                     agency_id: null,
@@ -2084,15 +2085,9 @@ router.get('/:id/workspace', async (req, res) => {
                     status: 'pending',
                     created_at: caseData.created_at,
                     updated_at: caseData.updated_at,
-                }]).map((agency) => ({
-                ...agency,
-                agency_id: null,
-                agency_name: importBlockedAgencyDisplay.agency_name,
-                agency_email: null,
-                portal_url: null,
-                portal_provider: null,
-                notes: agency.notes || 'Imported case is blocked until the correct agency is confirmed.',
-            })));
+                    notes: 'Imported case is blocked until the correct agency is confirmed.',
+                }];
+            }
         }
 
         // Build portal_helper for portal execution proposals and manual portal fallback handoffs.
