@@ -65,6 +65,8 @@ import {
   Square,
   Bug,
   Brain,
+  Globe,
+  Copy,
 } from "lucide-react";
 import {
   Collapsible,
@@ -985,6 +987,8 @@ function MonitorPageContent() {
   const [addCorrespondenceCaseId, setAddCorrespondenceCaseId] = useState<number | null>(null);
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
+  const [portalHelper, setPortalHelper] = useState<any>(null);
+  const [portalHelperCaseId, setPortalHelperCaseId] = useState<number | null>(null);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [inboundFilter, setInboundFilter] = useState<"all" | "unmatched" | "matched">("all");
   const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
@@ -1136,6 +1140,25 @@ function MonitorPageContent() {
     setReviewNotesExpanded(false);
     setRiskFlagsExpanded(false);
   }, [safeIndex]);
+
+  // Fetch portal_helper from workspace API for SUBMIT_PORTAL proposals
+  useEffect(() => {
+    if (selectedItem?.type !== "proposal") { setPortalHelper(null); return; }
+    if (selectedItem.data.action_type !== "SUBMIT_PORTAL") { setPortalHelper(null); return; }
+    const caseId = selectedItem.data.case_id;
+    if (caseId === portalHelperCaseId && portalHelper) return; // already fetched
+    setPortalHelper(null);
+    setPortalHelperCaseId(caseId);
+    (async () => {
+      try {
+        const res = await fetch(`/api/requests/${caseId}/workspace`);
+        const data = await res.json();
+        if (data.success && data.portal_helper) {
+          setPortalHelper(data.portal_helper);
+        }
+      } catch {}
+    })();
+  }, [selectedItem]);
 
   // Deep link: on first load, jump to the case from ?case=XXXX
   useEffect(() => {
@@ -2656,20 +2679,87 @@ function MonitorPageContent() {
                  "Action"}
               </SectionLabel>
               {selectedItem.data.action_type === "SUBMIT_PORTAL" && (
-                <>
-                  {selectedItem.data.portal_url ? (
-                    <a
-                      href={selectedItem.data.portal_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                <div className="space-y-3">
+                  {(portalHelper?.portal_url || selectedItem.data.portal_url) ? (
+                    <Button
+                      size="sm"
+                      className="bg-cyan-700 hover:bg-cyan-600 text-white h-7 text-xs"
+                      onClick={() => window.open(portalHelper?.portal_url || selectedItem.data.portal_url, "_blank")}
                     >
-                      <ExternalLink className="h-3 w-3" /> {selectedItem.data.portal_url}
-                    </a>
+                      <ExternalLink className="h-3 w-3 mr-1.5" /> Open Portal
+                    </Button>
                   ) : (
                     <p className="text-xs text-muted-foreground">No portal URL on file</p>
                   )}
-                </>
+                  {portalHelper ? (() => {
+                    const CopyRow = ({ label, value, fieldKey }: { label: string; value: string | null | undefined; fieldKey: string }) => {
+                      if (!value) return null;
+                      return (
+                        <div className="flex items-center justify-between gap-2 py-0.5">
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-muted-foreground">{label}:</span>{" "}
+                            <span className="text-xs text-foreground/90 break-all">{value}</span>
+                          </div>
+                          <Button size="sm" variant="ghost" className="h-5 w-5 p-0 shrink-0" onClick={() => { navigator.clipboard.writeText(value); }}>
+                            <Copy className="h-3 w-3 text-muted-foreground" />
+                          </Button>
+                        </div>
+                      );
+                    };
+                    return (
+                      <div className="space-y-2 border border-cyan-800/40 bg-cyan-950/20 rounded p-2.5 text-xs">
+                        <div className="flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-cyan-400" />
+                          <span className="font-medium text-cyan-300">Manual Portal Submission</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Requester</p>
+                          <CopyRow label="Name" value={portalHelper.requester.name} fieldKey="ph-name" />
+                          <CopyRow label="Email" value={portalHelper.requester.email} fieldKey="ph-email" />
+                          <CopyRow label="Phone" value={portalHelper.requester.phone} fieldKey="ph-phone" />
+                          <CopyRow label="Organization" value={portalHelper.requester.organization} fieldKey="ph-org" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Address</p>
+                          <CopyRow label="Street" value={portalHelper.address.line1} fieldKey="ph-street" />
+                          {portalHelper.address.line2 && <CopyRow label="Line 2" value={portalHelper.address.line2} fieldKey="ph-line2" />}
+                          <CopyRow label="City" value={portalHelper.address.city} fieldKey="ph-city" />
+                          <CopyRow label="State" value={portalHelper.address.state} fieldKey="ph-state" />
+                          <CopyRow label="ZIP" value={portalHelper.address.zip} fieldKey="ph-zip" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Case Info</p>
+                          <CopyRow label="Subject" value={portalHelper.case_info.subject_name} fieldKey="ph-subject" />
+                          <CopyRow label="Incident Date" value={portalHelper.case_info.incident_date} fieldKey="ph-date" />
+                          {portalHelper.case_info.requested_records?.length > 0 && (
+                            <CopyRow label="Records" value={portalHelper.case_info.requested_records.join(", ")} fieldKey="ph-records" />
+                          )}
+                          <CopyRow label="Details" value={portalHelper.case_info.additional_details} fieldKey="ph-details" />
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => {
+                            const lines = [
+                              `Name: ${portalHelper.requester.name}`,
+                              `Email: ${portalHelper.requester.email}`,
+                              `Phone: ${portalHelper.requester.phone}`,
+                              portalHelper.requester.organization && `Organization: ${portalHelper.requester.organization}`,
+                              `Address: ${portalHelper.address.line1}, ${portalHelper.address.city}, ${portalHelper.address.state} ${portalHelper.address.zip}`,
+                              portalHelper.case_info.subject_name && `Subject: ${portalHelper.case_info.subject_name}`,
+                              portalHelper.case_info.incident_date && `Date: ${portalHelper.case_info.incident_date}`,
+                              portalHelper.case_info.requested_records?.length > 0 && `Records: ${portalHelper.case_info.requested_records.join(", ")}`,
+                              portalHelper.case_info.additional_details && `Details: ${portalHelper.case_info.additional_details}`,
+                            ].filter(Boolean).join("\n");
+                            navigator.clipboard.writeText(lines);
+                          }}>
+                            <Copy className="h-3 w-3 mr-1" /> Copy All
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })() : (
+                    <p className="text-[10px] text-muted-foreground">Loading portal fields...</p>
+                  )}
+                </div>
               )}
               {selectedItem.data.action_type === "CLOSE_CASE" && (
                 <p className="text-xs text-muted-foreground">Will mark this case as closed/denial accepted.</p>
