@@ -1132,6 +1132,9 @@ function MonitorPageContent() {
   const selectedItem = queue[safeIndex] || null;
   const isEscalateProposal =
     selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE";
+  const caseOwnerId = selectedItem?.data?.user_id ?? null;
+  const isOwnCase = !caseOwnerId || caseOwnerId === authUser?.id || isAdmin;
+  const canTakeAction = isOwnCase;
 
   // Reset per-item UI state when switching items
   useEffect(() => {
@@ -1402,6 +1405,7 @@ function MonitorPageContent() {
 
   const handleApprove = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
+    if (!canTakeAction) { showToast("Cannot take actions on another user's case", "error"); return; }
     const reviewText = getReviewInstructionText().trim();
     if (isEscalateProposal && !reviewText) {
       showToast("Provide instructions before approving this review item", "error");
@@ -1444,6 +1448,7 @@ function MonitorPageContent() {
 
   const handleDismiss = (reason: string) => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
+    if (!canTakeAction) { showToast("Cannot take actions on another user's case", "error"); return; }
     const item = selectedItem;
     scheduleUndoableAction(
       `Dismissed: ${reason}`,
@@ -1467,6 +1472,7 @@ function MonitorPageContent() {
 
   const handleAdjust = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
+    if (!canTakeAction) { showToast("Cannot take actions on another user's case", "error"); return; }
     const adjustText = getAdjustInstructionText().trim();
     if (!adjustText) return;
     setIsSubmitting(true);
@@ -1660,6 +1666,7 @@ function MonitorPageContent() {
 
   const handleResolveReview = async (action: string, instruction?: string) => {
     if (!selectedItem || selectedItem.type !== "review") return;
+    if (!canTakeAction) { showToast("Cannot take actions on another user's case", "error"); return; }
     setIsSubmitting(true);
     try {
       const res = await fetch(`/api/requests/${selectedItem.data.id}/resolve-review`, {
@@ -2477,6 +2484,11 @@ function MonitorPageContent() {
                       {userNameMap[selectedItem.data.user_id] || `User #${selectedItem.data.user_id}`}
                     </Badge>
                   )}
+                  {!canTakeAction && (
+                    <Badge variant="destructive" className="text-[10px]">
+                      View only — {userNameMap[caseOwnerId!] || "another user"}&apos;s case
+                    </Badge>
+                  )}
                   {getPauseReason(selectedItem) && (
                     <Badge variant="outline" className="text-[10px]">
                       {PAUSE_LABELS[getPauseReason(selectedItem)!] || getPauseReason(selectedItem)}
@@ -3183,7 +3195,7 @@ function MonitorPageContent() {
                       <Button
                         className="flex-1 bg-green-700 hover:bg-green-600 text-white"
                         onClick={handleApprove}
-                        disabled={isSubmitting || (isEscalateProposal && !manualPdfEscalation && !reviewInstruction.trim())}
+                        disabled={!canTakeAction || isSubmitting || (isEscalateProposal && !manualPdfEscalation && !reviewInstruction.trim())}
                       >
                         {isSubmitting ? (
                           <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
@@ -3237,7 +3249,7 @@ function MonitorPageContent() {
                           <Button
                             variant="outline"
                             className="flex-1"
-                            disabled={isSubmitting}
+                            disabled={!canTakeAction || isSubmitting}
                           >
                             <Trash2 className="h-3 w-3 mr-1" /> DISMISS
                             <span className="ml-1 text-[10px] opacity-60 border border-white/20 px-1">
@@ -4715,7 +4727,7 @@ function MonitorPageContent() {
             <Button
               size="sm"
               onClick={handleAdjust}
-              disabled={!getAdjustInstructionText().trim() || isSubmitting}
+              disabled={!canTakeAction || !getAdjustInstructionText().trim() || isSubmitting}
             >
               {isSubmitting ? (
                 <Loader2 className="h-3 w-3 mr-1 animate-spin" />
