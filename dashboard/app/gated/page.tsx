@@ -2593,12 +2593,6 @@ function MonitorPageContent() {
                   <span className="text-foreground/80">{humanizeSubstatus(selectedItem.data.case_substatus)}</span>
                 </div>
               )}
-              {riskFlags.length > 0 && (
-                <div className="flex items-start gap-2">
-                  <span className="text-muted-foreground shrink-0 w-[70px]">Risks:</span>
-                  <span className="text-amber-400">{riskFlags.slice(0, 2).map(humanizeRiskFlag).join(", ")}{riskFlags.length > 2 ? ` +${riskFlags.length - 2}` : ""}</span>
-                </div>
-              )}
               <div className="flex items-start gap-2">
                 <span className="text-muted-foreground shrink-0 w-[70px]">Next step:</span>
                 <span className="text-foreground/80">
@@ -2735,43 +2729,6 @@ function MonitorPageContent() {
                   )}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Risk flags — deduped, capped at 3 */}
-          {riskFlags.length > 0 && (
-            <div className="border border-amber-700/50 bg-amber-950/20 p-3">
-              <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1 mb-1.5">
-                <AlertTriangle className="h-3 w-3" /> Risk Flags ({riskFlags.length})
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {riskFlags.slice(0, 3).map((flag, i) => (
-                  <Badge
-                    key={i}
-                    variant="outline"
-                    className="text-[10px] text-amber-400 border-amber-700/50"
-                  >
-                    {humanizeRiskFlag(flag)}
-                  </Badge>
-                ))}
-                {riskFlags.length > 3 && !riskFlagsExpanded && (
-                  <button
-                    onClick={() => setRiskFlagsExpanded(true)}
-                    className="text-[10px] text-amber-400 hover:underline"
-                  >
-                    +{riskFlags.length - 3} more
-                  </button>
-                )}
-                {riskFlagsExpanded && riskFlags.slice(3).map((flag, i) => (
-                  <Badge
-                    key={i + 3}
-                    variant="outline"
-                    className="text-[10px] text-amber-400 border-amber-700/50"
-                  >
-                    {humanizeRiskFlag(flag)}
-                  </Badge>
-                ))}
-              </div>
             </div>
           )}
 
