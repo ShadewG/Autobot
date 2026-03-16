@@ -1,7 +1,12 @@
 const assert = require('assert');
+const sinon = require('sinon');
 const portalPlaywright = require('../services/portal-agent-service-playwright');
 
 describe('portal-agent-service-playwright helpers', function () {
+  afterEach(function () {
+    sinon.restore();
+  });
+
   it('normalizes portal providers from mixed labels and URLs', function () {
     assert.strictEqual(portalPlaywright.normalizeProviderName('JustFOIA', null), 'justfoia');
     assert.strictEqual(portalPlaywright.normalizeProviderName('GovQA', null), 'govqa');
@@ -403,5 +408,40 @@ describe('portal-agent-service-playwright helpers', function () {
     } finally {
       service._waitForPortalVerificationCode = originalWaitForCode;
     }
+  });
+
+  it('forwards explicit dryRun=false into the real submission path', async function () {
+    const runStub = sinon.stub(portalPlaywright, '_runPortal').resolves({ success: true });
+
+    await portalPlaywright.submitToPortal({ id: 25150 }, 'https://example.gov/request', {
+      dryRun: false,
+    });
+
+    sinon.assert.calledOnce(runStub);
+    assert.strictEqual(runStub.firstCall.args[2].dryRun, false);
+    assert.strictEqual(runStub.firstCall.args[2].mode, 'submit');
+  });
+
+  it('builds requester profiles from the assigned user identity first', function () {
+    const requester = portalPlaywright.buildRequesterProfile(
+      {
+        requester_name: 'Wrong Fallback',
+        requester_email: 'wrong@example.com',
+      },
+      {
+        name: 'Samuel Hylton',
+        email: 'samuel@foib-request.com',
+        signature_name: 'Samuel Hylton',
+        signature_phone: '209-800-7702',
+        signature_title: 'Reporter',
+        signature_organization: 'FOIB',
+      }
+    );
+
+    assert.strictEqual(requester.name, 'Samuel Hylton');
+    assert.strictEqual(requester.email, 'samuel@foib-request.com');
+    assert.strictEqual(requester.firstName, 'Samuel');
+    assert.strictEqual(requester.lastName, 'Hylton');
+    assert.strictEqual(requester.organization, 'FOIB');
   });
 });

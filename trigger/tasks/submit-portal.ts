@@ -77,6 +77,12 @@ export function buildPortalFailureLesson(caseData: any, provider: string | null,
   };
 }
 
+export function shouldFallbackToSkyvern(playwrightResult: any): boolean {
+  if (!playwrightResult) return true;
+  if (playwrightResult.success && playwrightResult.submissionConfirmed) return false;
+  return playwrightResult.fallback_safe !== false;
+}
+
 async function learnFromPortalFailure(caseData: any, provider: string | null, errorText: any) {
   try {
     if (!caseData?.id) return;
@@ -125,6 +131,7 @@ export async function finalizePortalSubmissionSuccess(
 ) {
   return db.updatePortalSubmission(submissionRowId, {
     status: "completed",
+    engine: result?.engine || null,
     skyvern_task_id: result?.taskId || result?.runId || null,
     screenshot_url: result?.screenshot_url || null,
     recording_url: result?.recording_url || taskUrl,
@@ -136,11 +143,33 @@ export async function finalizePortalSubmissionSuccess(
 export async function finalizePortalSubmissionFailure(
   db: any,
   submissionRowId: number,
-  error: any
+  error: any,
+  portalResult: any = null
 ) {
   return db.updatePortalSubmission(submissionRowId, {
-    status: "failed",
-    error_message: String(error?.message || error || "").substring(0, 500) || null,
+    status: portalResult?.status || "failed",
+    engine: portalResult?.engine || null,
+    skyvern_task_id: portalResult?.taskId || portalResult?.runId || null,
+    screenshot_url: portalResult?.screenshot_url || null,
+    recording_url: portalResult?.recording_url || portalResult?.browser_session_url || null,
+    extracted_data: portalResult?.extracted_data ? JSON.stringify(portalResult.extracted_data) : null,
+    browser_backend: portalResult?.browser_backend || null,
+    browser_session_id: portalResult?.browser_session_id || null,
+    browser_session_url: portalResult?.browser_session_url || null,
+    browser_debugger_url: portalResult?.browser_debugger_url || null,
+    browser_debugger_fullscreen_url: portalResult?.browser_debugger_fullscreen_url || null,
+    browser_region: portalResult?.browser_region || null,
+    browser_status: portalResult?.browser_status || null,
+    auth_context_id: portalResult?.auth_context_id || null,
+    auth_intervention_status: portalResult?.auth_intervention_status || null,
+    auth_intervention_reason: portalResult?.auth_intervention_reason || null,
+    auth_intervention_requested_at: portalResult?.auth_intervention_requested_at || null,
+    auth_intervention_completed_at: portalResult?.auth_intervention_completed_at || null,
+    browser_keep_alive: Boolean(portalResult?.browser_keep_alive),
+    browser_cost_policy: JSON.stringify(portalResult?.browser_cost_policy || {}),
+    browser_metadata: JSON.stringify(portalResult?.browser_metadata || {}),
+    browser_live_urls_jsonb: JSON.stringify(portalResult?.browser_live_urls_jsonb || {}),
+    error_message: String(portalResult?.error || error?.message || error || "").substring(0, 500) || null,
     completed_at: new Date(),
   });
 }
@@ -707,7 +736,7 @@ export const submitPortal = task({
         runId: agentRunId || null,
         skyvernTaskId: null, // filled after Skyvern returns
         status: "started",
-        engine: provider || caseData.portal_provider || null,
+        engine: null,
         accountEmail: portalAccount?.email || caseData.last_portal_account_email || null,
       });
     } catch (subErr: any) {
@@ -824,14 +853,16 @@ export const submitPortal = task({
     }
 
     // ── Shared failure handler for both engines ──
-    async function handlePortalFailure(error: any) {
-      trace.markOutcome("failed", { error: error.message });
-      logger.error("Portal submission failed", { caseId, error: error.message });
-      await learnFromPortalFailure(caseData, provider, error.message);
+    async function handlePortalFailure(error: any, portalResult: any = null) {
+      const errorMessage = String(portalResult?.error || error?.message || error || "Portal submission failed");
+      const engineUsed = portalResult?.engine || null;
+      trace.markOutcome("failed", { error: errorMessage });
+      logger.error("Portal submission failed", { caseId, error: errorMessage, engine: engineUsed });
+      await learnFromPortalFailure(caseData, provider, errorMessage);
 
       if (submissionRow?.id) {
         try {
-          await finalizePortalSubmissionFailure(db, submissionRow.id, error);
+          await finalizePortalSubmissionFailure(db, submissionRow.id, error, portalResult);
         } catch {}
       }
       try {
@@ -839,7 +870,7 @@ export const submitPortal = task({
           portalUrl: targetUrl,
           provider: provider || caseData.portal_provider || null,
           decisionSource: 'automation_failure',
-          decisionReason: getPortalFailureSignature(error.message),
+          decisionReason: getPortalFailureSignature(errorMessage),
           caseId,
           submissionId: submissionRow?.id || null,
           failureDelta: 1,
@@ -852,10 +883,15 @@ export const submitPortal = task({
         try {
           await getExecutor().updateExecutionRecord(linkedExecutionKey, {
             status: "FAILED",
-            providerPayload: { portalTaskId, portalUrl: targetUrl },
-            errorMessage: error.message?.substring(0, 500) || null,
+            providerPayload: {
+              portalTaskId,
+              portalUrl: targetUrl,
+              engine: engineUsed,
+              taskId: portalResult?.taskId || portalResult?.runId || null,
+            },
+            errorMessage: errorMessage.substring(0, 500) || null,
             failureStage: "portal_submission",
-            failureCode: getPortalFailureSignature(error.message),
+            failureCode: getPortalFailureSignature(errorMessage),
             completedAt: new Date(),
           });
         } catch (execErr: any) {
@@ -863,21 +899,30 @@ export const submitPortal = task({
         }
       }
 
-      await db.logActivity("portal_submission_failed", `Portal submission failed: ${error.message}`, {
+      await db.logActivity("portal_submission_failed", `Portal submission failed: ${errorMessage}`, {
         case_id: caseId,
         portal_url: targetUrl,
         portal_provider: provider,
         instructions,
+        engine: engineUsed,
+        task_url: portalResult?.browser_session_url || portalResult?.recording_url || null,
       });
 
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_FAILED", {
         portalTaskId: portalTaskId || undefined,
         runId: agentRunId || undefined,
-        error: error.message?.substring(0, 500),
-        substatus: "Portal submission failed - requires human submission",
+        error: errorMessage.substring(0, 500),
+        substatus: portalResult?.auth_intervention_status === "requested"
+          ? "Portal auth verification requires manual completion"
+          : "Portal submission failed - requires human submission",
         portalMetadata: {
-          last_portal_status: `Failed: ${error.message?.substring(0, 100)}`,
+          last_portal_status: `Failed: ${errorMessage.substring(0, 100)}`,
           last_portal_status_at: new Date(),
+          last_portal_engine: engineUsed,
+          last_portal_run_id: portalResult?.taskId || portalResult?.runId || null,
+          last_portal_task_url: portalResult?.browser_session_url || portalResult?.recording_url || null,
+          last_portal_recording_url: portalResult?.recording_url || portalResult?.browser_session_url || null,
+          last_portal_account_email: portalResult?.accountEmail || caseData.last_portal_account_email || null,
         },
       });
 
@@ -887,21 +932,23 @@ export const submitPortal = task({
           caseId,
           actionType: "SUBMIT_PORTAL",
           reasoning: [
-            `Automated portal submission failed: ${error.message?.substring(0, 200)}`,
-            "Manual portal submission required — use the portal helper to copy fields and submit manually",
+            `Automated portal submission failed: ${errorMessage.substring(0, 200)}`,
+            portalResult?.auth_intervention_status === "requested"
+              ? "Manual auth or verification is required before the request can be submitted."
+              : "Manual portal submission required — use the portal helper to copy fields and submit manually",
           ],
           confidence: 0,
           requiresHuman: true,
           canAutoExecute: false,
           draftSubject: `Manual portal submission: ${caseData.case_name}`.substring(0, 200),
-          draftBodyText: `Portal URL: ${targetUrl}\nPrevious attempt failed: ${error.message?.substring(0, 200)}\n\nOpen the portal and use the copy helper to manually fill the form.`,
+          draftBodyText: `Portal URL: ${targetUrl}\nPrevious attempt failed: ${errorMessage.substring(0, 200)}${portalResult?.browser_session_url ? `\nLive browser session: ${portalResult.browser_session_url}` : ""}\n\nOpen the portal and use the copy helper to manually fill the form.`,
           status: "PENDING_APPROVAL",
         });
       } catch (proposalErr: any) {
         logger.warn("Failed to create manual submission proposal", { error: proposalErr?.message });
       }
 
-      return { success: false, error: error.message };
+      return { success: false, error: errorMessage };
     }
 
     // ── PRIMARY: Playwright + Browserbase ──
@@ -912,7 +959,7 @@ export const submitPortal = task({
         const playwright = getPlaywright();
         const pwResult = await playwright.submitToPortal(caseData, targetUrl, {
           dryRun: false,
-          trackInAutobot: true,
+          trackInAutobot: false,
           ensureAccount: true,
           forceAccountSetup: true,
           instructions,
@@ -926,6 +973,15 @@ export const submitPortal = task({
         if (pwResult?.success && pwResult?.submissionConfirmed) {
           // Playwright confirmed the submission — handle success and return
           return await handlePortalSuccess(pwResult, "playwright_browserbase");
+        }
+
+        if (!shouldFallbackToSkyvern(pwResult)) {
+          logger.warn("Playwright result requires manual handling; not falling back to Skyvern", {
+            caseId,
+            status: pwResult?.status,
+            blockers: pwResult?.blockers,
+          });
+          return await handlePortalFailure(new Error(pwResult?.error || pwResult?.status || "Playwright requires manual handling"), pwResult);
         }
 
         // Playwright ran but did not confirm submission — fall through to Skyvern

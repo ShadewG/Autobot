@@ -462,7 +462,13 @@ function buildRequesterProfile(caseData, user = null) {
         Boolean(caseData?.requester_state) ||
         Boolean(caseData?.requester_zip);
 
-    const fullName = user?.signature_name || user?.name || caseData?.requester_name || process.env.REQUESTER_NAME || 'Requester';
+    const fullName =
+        user?.signature_name ||
+        user?.name ||
+        caseData?.requester_name ||
+        process.env.REQUESTER_NAME ||
+        process.env.SENDGRID_FROM_NAME ||
+        'Requester';
     const split = splitName(fullName);
 
     return {
@@ -471,9 +477,7 @@ function buildRequesterProfile(caseData, user = null) {
         lastName: split.lastName || 'User',
         email: user?.email || caseData?.requester_email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
         phone: user?.signature_phone || caseData?.requester_phone || process.env.REQUESTER_PHONE || '209-800-7702',
-        organization: user
-            ? (user.signature_organization ?? '')
-            : (caseData?.requester_organization || process.env.REQUESTER_ORG || ''),
+        organization: user?.signature_organization ?? caseData?.requester_organization ?? process.env.REQUESTER_ORG ?? '',
         title: user?.signature_title || caseData?.requester_title || process.env.REQUESTER_TITLE || '',
         address: user?.address_street || caseData?.requester_address || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
         addressLine2: user?.address_street2 || caseData?.requester_address_line2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
@@ -901,6 +905,7 @@ class PortalAgentServicePlaywright {
         const normalizedUrl = normalizePortalUrl(portalUrl);
         const providerHint = normalizeProviderName(caseData?.portal_provider, normalizedUrl);
         const browserBackend = this._resolveBrowserBackend(options);
+        const normalizedDryRun = options.dryRun ?? false;
         const runId = crypto.randomUUID();
         const artifactsDir = ensureDir(
             path.join(
@@ -911,9 +916,9 @@ class PortalAgentServicePlaywright {
 
         const summary = {
             success: false,
-            dryRun: options.dryRun !== false,
+            dryRun: normalizedDryRun,
             mode: options.mode || 'submit',
-            engine: this._resolveEngineName(browserBackend, options.dryRun !== false),
+            engine: this._resolveEngineName(browserBackend, normalizedDryRun),
             provider: providerHint,
             runId,
             caseId: caseData?.id || null,
@@ -2890,6 +2895,7 @@ service.scoreSubmitControlCandidates = scoreSubmitControlCandidates;
 service.isCaptchaLikeField = isCaptchaLikeField;
 service.mapFieldValue = mapFieldValue;
 service.buildRequestNarrative = buildRequestNarrative;
+service.buildRequesterProfile = buildRequesterProfile;
 service.buildPortalCredentialProfile = buildPortalCredentialProfile;
 service.buildPortalActionUrl = buildPortalActionUrl;
 service.inferNextRequestLinkKind = inferNextRequestLinkKind;
