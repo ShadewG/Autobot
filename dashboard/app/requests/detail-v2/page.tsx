@@ -2039,6 +2039,8 @@ function DetailV2Content() {
   const [manualAgencyEmail, setManualAgencyEmail] = useState("");
   const [manualAgencyPortalUrl, setManualAgencyPortalUrl] = useState("");
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
+  const [editingAgencyId, setEditingAgencyId] = useState<number | null>(null);
+  const [editAgencyFields, setEditAgencyFields] = useState<Record<string, string | null>>({});
   // Resizable sidebar
   const SIDEBAR_STORAGE_KEY = "detail-v2-sidebar-width";
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -3092,10 +3094,13 @@ function DetailV2Content() {
       setManualAgencyName("");
       setManualAgencyEmail("");
       setManualAgencyPortalUrl("");
+      mutate();
       if (startAfterAdd && caseAgency?.id) {
-        await handleStartRequestForAgency(caseAgency.id, caseAgency);
-      } else {
-        mutate();
+        try {
+          await handleStartRequestForAgency(caseAgency.id, caseAgency);
+        } catch (startErr: any) {
+          toast.error(`Agency added, but could not start request: ${startErr.message || "active run exists"}`);
+        }
       }
     } catch (e: any) {
       toast.error(e.message || "Failed to add agency");
@@ -4206,23 +4211,37 @@ function DetailV2Content() {
                                 : ca.portal_automation_status === "invalid"
                                   ? "Invalid portal"
                                   : null;
+                      const isEditing = editingAgencyId === ca.id;
                       return (
                         <div key={ca.id} className="rounded border p-3 space-y-1.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium">{ca.agency_name || "Unnamed"}</span>
+                            {isEditing ? (
+                              <Input value={editAgencyFields.agency_name ?? ca.agency_name ?? ""} onChange={(e) => setEditAgencyFields((f) => ({ ...f, agency_name: e.target.value }))} className="h-6 text-xs flex-1" placeholder="Agency name" />
+                            ) : (
+                              <span className="text-xs font-medium">{ca.agency_name || "Unnamed"}</span>
+                            )}
                             {ca.is_primary && <Badge variant="secondary" className="text-[10px] px-1">Primary</Badge>}
                           </div>
-                          {ca.agency_email && (
-                            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                              <Mail className="h-2.5 w-2.5" />
-                              <span className="truncate">{ca.agency_email}</span>
+                          {isEditing ? (
+                            <div className="space-y-1">
+                              <Input value={editAgencyFields.agency_email ?? ca.agency_email ?? ""} onChange={(e) => setEditAgencyFields((f) => ({ ...f, agency_email: e.target.value }))} className="h-6 text-xs" placeholder="Email" />
+                              <Input value={editAgencyFields.portal_url ?? ca.portal_url ?? ""} onChange={(e) => setEditAgencyFields((f) => ({ ...f, portal_url: e.target.value }))} className="h-6 text-xs" placeholder="Portal URL" />
                             </div>
-                          )}
-                          {ca.portal_url && (
-                            <div className="flex items-center gap-1 text-[10px]">
-                              <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                              <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
-                            </div>
+                          ) : (
+                            <>
+                              {ca.agency_email && (
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                  <Mail className="h-2.5 w-2.5" />
+                                  <span className="truncate">{ca.agency_email}</span>
+                                </div>
+                              )}
+                              {ca.portal_url && (
+                                <div className="flex items-center gap-1 text-[10px]">
+                                  <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                                  <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
+                                </div>
+                              )}
+                            </>
                           )}
                           {ca.manual_request_url && (
                             <div className="flex items-center gap-1 text-[10px]">
@@ -4324,8 +4343,25 @@ function DetailV2Content() {
                               {stats.lastMessageAt && <span> · Last: {formatRelativeTime(stats.lastMessageAt)}</span>}
                             </div>
                           )}
-                          <div className="flex items-center gap-1.5 pt-1">
-                            {!ca.is_primary && (
+                          <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+                            {isEditing ? (
+                              <>
+                                <Button size="sm" className="h-6 text-[10px]" onClick={async () => {
+                                  try {
+                                    await fetcher(`/cases/${request.id}/agencies/${ca.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editAgencyFields) });
+                                    setEditingAgencyId(null);
+                                    setEditAgencyFields({});
+                                    mutate();
+                                  } catch (e: any) { alert(e.message || "Save failed"); }
+                                }}>Save</Button>
+                                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => { setEditingAgencyId(null); setEditAgencyFields({}); }}>Cancel</Button>
+                              </>
+                            ) : (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => { setEditingAgencyId(ca.id); setEditAgencyFields({ agency_name: ca.agency_name, agency_email: ca.agency_email, portal_url: ca.portal_url }); }}>
+                                Edit
+                              </Button>
+                            )}
+                            {!ca.is_primary && !isEditing && (
                               <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleSetPrimaryAgency(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
                                 {isSettingPrimary ? (
                                   <>
@@ -4386,10 +4422,12 @@ function DetailV2Content() {
                                 )}
                               </Button>
                             )}
-                            <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
-                              {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
-                              Start Request
-                            </Button>
+                            {!isEditing && (
+                              <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
+                                {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
+                                Start Request
+                              </Button>
+                            )}
                           </div>
                         </div>
                       );
