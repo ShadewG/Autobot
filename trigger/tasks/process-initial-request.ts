@@ -798,23 +798,52 @@ export const processInitialRequest = task({
         const instruction = humanDecision.instruction || "";
 
         let adjustResearch: ResearchContext = emptyResearchContext();
-        if (RESEARCH_INSTRUCTION_RE.test(instruction)) {
+        const PORTAL_WRONG_RE = /\bnot\s+a?\s*real\s+portal\b|\bportal.*(?:wrong|bad|broken|invalid|fake)\b|\bwrong\s+portal\b/i;
+        const wantsResearch = RESEARCH_INSTRUCTION_RE.test(instruction);
+        if (wantsResearch) {
           adjustResearch = await researchContext(caseId, draft.actionType, "UNKNOWN" as any, null, "medium");
+        }
+
+        // If the instruction says the portal is wrong, or research found a different
+        // delivery path, switch from SUBMIT_PORTAL to SEND_INITIAL_REQUEST (email)
+        let adjustedActionType = draft.actionType;
+        if (
+          draft.actionType === "SUBMIT_PORTAL" &&
+          (PORTAL_WRONG_RE.test(instruction) || wantsResearch)
+        ) {
+          // Check if research found a real email or different portal
+          const researchEmail = adjustResearch?.contactResult?.email
+            || adjustResearch?.contactResult?.contact_email;
+          const researchPortal = adjustResearch?.contactResult?.portal_url;
+          if (researchEmail || researchPortal) {
+            // Update case with researched delivery path
+            const updates: Record<string, any> = {};
+            if (researchEmail) updates.agency_email = researchEmail;
+            if (researchPortal) updates.portal_url = researchPortal;
+            await db.updateCase(caseId, updates);
+            adjustedActionType = researchPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
+          } else {
+            adjustedActionType = "SEND_INITIAL_REQUEST";
+          }
+          logger.info("ADJUST switched action type from portal", {
+            caseId, from: draft.actionType, to: adjustedActionType,
+            instruction, hasResearchEmail: !!researchEmail, hasResearchPortal: !!researchPortal,
+          });
         }
 
         const adjustContext = await loadContext(caseId, null);
         const adjustedDraft = await draftResponse(
-          caseId, draft.actionType, adjustContext.constraints, adjustContext.scopeItems,
+          caseId, adjustedActionType, adjustContext.constraints, adjustContext.scopeItems,
           null, instruction, null, adjustResearch
         );
 
         const adjustedSafety = await safetyCheck(
           adjustedDraft.bodyText, adjustedDraft.subject,
-          draft.actionType, adjustContext.constraints, adjustContext.scopeItems
+          adjustedActionType, adjustContext.constraints, adjustContext.scopeItems
         );
 
         const adjustedGate = await createProposalAndGate(
-          caseId, runId, draft.actionType,
+          caseId, runId, adjustedActionType,
           null, adjustedDraft, adjustedSafety,
           false, true, null,
           [...draft.reasoning, `Adjusted per human: ${instruction}`],
