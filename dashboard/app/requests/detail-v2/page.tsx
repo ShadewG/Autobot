@@ -4811,19 +4811,6 @@ function DetailV2Content() {
                 </div>
               </CollapsibleSection>
 
-              {/* FEES */}
-              {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
-                <CollapsibleSection title="FEES">
-                  {request.fee_quote && request.fee_quote.amount > 0 ? (
-                    <FeeBreakdown feeQuote={request.fee_quote} scopeItems={request.scope_items} className="border-0 bg-transparent p-0 shadow-none" />
-                  ) : (
-                    <div className="text-[10px] text-muted-foreground">
-                      {formatCurrency(request.cost_amount!)}
-                    </div>
-                  )}
-                </CollapsibleSection>
-              )}
-
               {/* DEADLINE */}
               {deadline_milestones && deadline_milestones.length > 0 && (
                 <CollapsibleSection title="DEADLINE">
@@ -4835,41 +4822,7 @@ function DetailV2Content() {
                 </CollapsibleSection>
               )}
 
-              {/* CONSTRAINTS */}
-              <CollapsibleSection
-                title="CONSTRAINTS"
-                count={request.constraints?.length || 0}
-                action={
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setConstraintEditing(!constraintEditing); }}
-                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {constraintEditing ? "Done" : "Edit"}
-                  </button>
-                }
-              >
-                <ConstraintsDisplay
-                  constraints={request.constraints || []}
-                  editable={constraintEditing}
-                  onRemove={handleRemoveConstraint}
-                  onAdd={() => setAddConstraintOpen(true)}
-                  history={constraintHistory}
-                />
-              </CollapsibleSection>
-
-              {/* EXEMPTION CLAIMS */}
-              {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
-                <CollapsibleSection title="EXEMPTION CLAIMS" defaultOpen={false}>
-                  <ExemptionClaimsList
-                    constraints={request.constraints}
-                    state={request.state || ""}
-                    requestId={String(request.id)}
-                    onChallenge={(instruction) => {
-                      setAdjustModalOpen(true);
-                    }}
-                  />
-                </CollapsibleSection>
-              )}
+              {/* Constraints and Fees are in Case Info tab — not duplicated here */}
 
               {/* TIMELINE */}
               {timeline_events.length > 0 && (
