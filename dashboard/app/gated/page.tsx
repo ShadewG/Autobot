@@ -2546,7 +2546,7 @@ function MonitorPageContent() {
             )}
             {feeAmount != null && (
               <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-700/50">
-                ${feeAmount.toFixed(2)} fee
+                ${Number(feeAmount).toFixed(2)} fee
               </Badge>
             )}
           </div>
@@ -3341,7 +3341,7 @@ function MonitorPageContent() {
               {selectedItem.data.last_fee_quote_amount != null && (
                 <div className="flex items-start gap-2">
                   <span className="text-muted-foreground shrink-0 w-[70px]">Fee:</span>
-                  <span className="text-amber-400 font-medium">${selectedItem.data.last_fee_quote_amount.toFixed(2)}</span>
+                  <span className="text-amber-400 font-medium">${Number(selectedItem.data.last_fee_quote_amount).toFixed(2)}</span>
                 </div>
               )}
               <div className="flex items-start gap-2">
