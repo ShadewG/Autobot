@@ -11,6 +11,7 @@ const {
     buildPortalFingerprint,
     evaluatePortalAutomationDecision,
     derivePortalPolicyFromBrowserValidation,
+    normalizeRequestChannelFields,
 } = require('../utils/portal-utils');
 const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
 const canonicalAgency = require('./canonical-agency');
