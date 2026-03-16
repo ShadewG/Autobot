@@ -1017,6 +1017,7 @@ router.get('/live-overview', async (req, res) => {
                   SELECT 1 FROM proposals p WHERE p.case_id = c.id
                   AND p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
               )
+              AND COALESCE(c.pause_reason, '') NOT IN ('WAITING_INVOICE_PAYMENT', 'WAITING_GOOD_TO_PAY')
               AND NOT (
                   LOWER(c.status) = 'needs_phone_call'
                   AND EXISTS (
