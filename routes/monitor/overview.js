@@ -791,9 +791,10 @@ router.get('/live-overview', async (req, res) => {
                 agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
                 portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
             });
-            if (importSafety.shouldBlockAutoDispatch) {
-                return null;
-            }
+            // Import safety should only block auto-dispatch, not hide existing
+            // proposals from the operator review queue. If a proposal already exists
+            // and is pending approval, the operator needs to see it.
+            // importSafety.shouldBlockAutoDispatch is intentionally NOT used here.
             if (
                 CONTRADICTORY_NO_RESPONSE_ACTIONS.has(normalizedActionType) &&
                 proposalSignalsNoResponseDraft(sanitizedRow.draft_body_text)
