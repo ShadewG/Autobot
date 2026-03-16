@@ -38,6 +38,9 @@ export default defineConfig({
       "pdf.js-extract",
       "bullmq",
       "ioredis",
+      "playwright",
+      "playwright-core",
+      "chromium-bidi",
     ],
     extensions: [
       syncEnvVars(async () => {
