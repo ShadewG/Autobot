@@ -401,11 +401,9 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         console.log(`📧 Processing inbound from: ${messageData.from_email}`);
         console.log(`   Subject: ${messageData.subject}`);
 
-        // Mark message as processed
-        await db.query(
-            'UPDATE messages SET processed_at = COALESCE(processed_at, NOW()) WHERE id = $1',
-            [messageId]
-        );
+        // Fix 2: Don't mark processed_at here — wait until Trigger.dev dispatch
+        // is verified. processed_at is set after successful dispatch below.
+        // This prevents messages from being silently dropped if dispatch fails.
 
         // === ALL INBOUND → TRIGGER.DEV ===
         // Trigger.dev handles classification (classify-inbound), decision, draft,
@@ -419,14 +417,47 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         try {
             const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
-            run = await db.createAgentRunFull({
-                case_id: caseId,
-                trigger_type: 'inbound_message',
-                message_id: messageId,
-                status: 'queued',
-                autopilot_mode: autopilotMode,
-                langgraph_thread_id: `case:${caseId}:msg-${messageId}`
-            });
+            try {
+                run = await db.createAgentRunFull({
+                    case_id: caseId,
+                    trigger_type: 'inbound_message',
+                    message_id: messageId,
+                    status: 'queued',
+                    autopilot_mode: autopilotMode,
+                    langgraph_thread_id: `case:${caseId}:msg-${messageId}`
+                });
+            } catch (createRunErr) {
+                // Fix 1: Catch unique constraint violation (idx_agent_runs_one_active_per_case)
+                // gracefully instead of sending the job to the DLQ.
+                if (createRunErr.code === '23505') {
+                    const existingRun = await db.getActiveRunForCase(caseId);
+                    if (existingRun && String(existingRun.message_id) === String(messageId)) {
+                        // Active run already covers this message — skip gracefully
+                        agentLog.info(`Active run #${existingRun.id} already covers message ${messageId} — skipping duplicate`);
+                        return { skipped: true, reason: 'active_run_covers_message', existingRunId: existingRun.id };
+                    }
+                    // Active run exists for a different message — defer with backoff so we retry
+                    // after the current run finishes.
+                    const delaySec = 30;
+                    agentLog.info(`Active run exists for case ${caseId} (different message) — deferring ${delaySec}s`);
+                    const retryCount = (job.data._retryOnConflict || 0) + 1;
+                    if (retryCount > 5) {
+                        agentLog.error(`Exceeded max conflict retries for message ${messageId} on case ${caseId}`);
+                        return { skipped: true, reason: 'max_conflict_retries_exceeded' };
+                    }
+                    await analysisQueue.add('analyze-response', {
+                        ...job.data,
+                        _retryOnConflict: retryCount,
+                    }, {
+                        delay: delaySec * 1000,
+                        jobId: `analyze-${messageId}-retry-${retryCount}`,
+                        attempts: 3,
+                        backoff: { type: 'exponential', delay: 3000 },
+                    });
+                    return { deferred: true, reason: 'active_run_conflict', retryCount };
+                }
+                throw createRunErr; // Re-throw non-constraint errors
+            }
 
             const { handle } = await triggerDispatch.triggerTask('process-inbound', {
                 runId: run.id,

@@ -262,25 +262,47 @@ router.post('/inbound', upload.any(), async (req, res) => {
                 await db.markMessageProcessed(result.message_id, null, null);
             } else {
                 // Queue for AI analysis (with null guard and deterministic job ID)
+                // Fix 3 & 4: If analysisQueue is null (Redis down), fall back to
+                // direct Trigger.dev dispatch. The message is in the DB either way,
+                // and recovery crons will catch any stragglers.
                 if (!analysisQueue) {
-                    console.error('analysisQueue is null — cannot queue analysis');
-                    return res.status(503).json({ success: false, error: 'Analysis queue unavailable' });
-                }
-                await analysisQueue.add('analyze-response', {
-                    messageId: result.message_id,
-                    caseId: result.case_id,
-                    instantReply: isTestMode
-                }, {
-                    jobId: `analyze-${result.message_id}`,
-                    delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
-                    attempts: 3,
-                    backoff: {
-                        type: 'exponential',
-                        delay: 3000
+                    console.warn('analysisQueue is null (Redis down) — attempting direct Trigger.dev dispatch');
+                    try {
+                        const triggerDispatch = require('../services/trigger-dispatch-service');
+                        await triggerDispatch.triggerTask('process-inbound', {
+                            caseId: result.case_id,
+                            messageId: result.message_id,
+                        }, {
+                            idempotencyKey: `analysis:${result.case_id}:${result.message_id}`,
+                            idempotencyKeyTTL: "1h",
+                        }, {
+                            caseId: result.case_id,
+                            messageId: result.message_id,
+                            triggerType: 'inbound_message',
+                            source: 'webhook_redis_fallback',
+                        });
+                        console.log(`Direct Trigger.dev dispatch succeeded for case ${result.case_id} (Redis fallback)`);
+                    } catch (fallbackErr) {
+                        // Message is stored in DB; recovery crons will pick it up.
+                        console.error(`Direct Trigger.dev fallback also failed for case ${result.case_id}: ${fallbackErr.message}`);
                     }
-                });
+                } else {
+                    await analysisQueue.add('analyze-response', {
+                        messageId: result.message_id,
+                        caseId: result.case_id,
+                        instantReply: isTestMode
+                    }, {
+                        jobId: `analyze-${result.message_id}`,
+                        delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
+                        attempts: 3,
+                        backoff: {
+                            type: 'exponential',
+                            delay: 3000
+                        }
+                    });
 
-                console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+                    console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+                }
             }
 
             if (!alreadyProcessed && result.portal_notification) {
@@ -507,8 +529,13 @@ router.post('/inbound', upload.any(), async (req, res) => {
             });
         }
     } catch (error) {
+        // Fix 3: Always return 200 to SendGrid. Returning 500 causes SendGrid to
+        // retry the webhook, which can create duplicate messages. The email is
+        // already stored in the DB (if processInboundEmail succeeded), and
+        // recovery crons will pick up any unprocessed messages.
         console.error('Error processing inbound webhook:', error);
-        res.status(500).json({
+        res.status(200).json({
+            success: false,
             error: 'Failed to process inbound email',
             message: error.message
         });

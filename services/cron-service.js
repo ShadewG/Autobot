@@ -2490,7 +2490,11 @@ class CronService {
             if (Number(row.processed_duplicate_count || 0) > 0) handledReasons.push('duplicate_inbound_burst');
             if (['responded', 'completed', 'cancelled'].includes(String(row.case_status || '').toLowerCase())) handledReasons.push('terminal_case_status');
             if (String(row.last_run_status || '').toLowerCase() === 'completed') handledReasons.push('completed_run');
-            if (isLikelyNonSubstantiveInboundNotice(row)) handledReasons.push('non_substantive_notice');
+            // Fix 5: non_substantive_notice must never be the SOLE reason for
+            // marking a message as processed. Only add it when at least one
+            // corroborating indicator is present (later_outbound, active_proposal,
+            // terminal case status, etc.) to avoid silently dropping real replies.
+            if (isLikelyNonSubstantiveInboundNotice(row) && handledReasons.length > 0) handledReasons.push('non_substantive_notice');
 
             if (handledReasons.length > 0) {
                 const cleanupReason = `marked processed during cleanup: ${handledReasons.join(',')}`;
