@@ -65,7 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
         if (ok && data?.user) { setUser(data.user); return; }
-        if (data?.redirectTo && typeof window !== "undefined") { window.location.assign(data.redirectTo); }
+        // Don't auto-redirect to portal — show login form instead.
+        // Auto-redirect causes infinite loops when the portal callback
+        // fails to set the auth cookie for new accounts.
       })
       .catch(() => {})
       .finally(() => {
