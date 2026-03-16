@@ -259,6 +259,21 @@ async function resolveImportedAgencyDirectoryEntry(caseData, { createIfMissing =
     )).rows[0] || null;
     if (agency) return agency;
 
+    // Fuzzy match: strip state suffix and trailing punctuation, then prefix-match
+    const nameBase = agencyName.replace(/,\s*\w{2,}\.?$/, '').replace(/[.,]+$/, '').trim();
+    if (nameBase.length >= 10) {
+        agency = (await db.query(
+            `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+             FROM agencies
+             WHERE LOWER(name) LIKE LOWER($1) || '%'
+               AND ($2::text IS NULL OR state = $2 OR state IS NULL)
+             ORDER BY length(name) ASC, (state = $2)::int DESC, id DESC
+             LIMIT 1`,
+            [nameBase, state]
+        )).rows[0] || null;
+        if (agency) return agency;
+    }
+
     if (agencyEmail) {
         agency = (await db.query(
             `SELECT id, name, state, portal_url, email_main, default_autopilot_mode
