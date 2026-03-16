@@ -481,6 +481,8 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
         const caseAgencyId = parseInt(req.params.caId, 10);
         if (!caseId || !caseAgencyId) return res.status(400).json({ success: false, error: 'Invalid ids' });
 
+        const userPrompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : null;
+
         const caseData = await db.getCaseById(caseId);
         if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
 
@@ -601,6 +603,7 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             source: lookup.source || 'pd-contact',
             confidence: lookup.confidence || null,
             notes: lookup.notes || null,
+            ...(userPrompt ? { user_prompt: userPrompt } : {}),
             result: lookup,
         });
 
@@ -614,7 +617,7 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
 
         await db.logActivity(
             'case_agency_researched',
-            `Updated contact research for "${caseAgency.agency_name}"`,
+            `Updated contact research for "${caseAgency.agency_name}"${userPrompt ? ` (prompt: ${userPrompt.substring(0, 100)})` : ''}`,
             {
                 case_id: caseId,
                 case_agency_id: caseAgencyId,
@@ -622,6 +625,7 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
                 confidence: lookup.confidence || null,
                 found_email: lookup.contact_email || null,
                 found_portal: lookup.portal_url || null,
+                ...(userPrompt ? { user_prompt: userPrompt } : {}),
             }
         );
 

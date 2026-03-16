@@ -2041,6 +2041,9 @@ function DetailV2Content() {
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
   const [editingAgencyId, setEditingAgencyId] = useState<number | null>(null);
   const [editAgencyFields, setEditAgencyFields] = useState<Record<string, string | null>>({});
+  const [researchDialogOpen, setResearchDialogOpen] = useState(false);
+  const [researchPrompt, setResearchPrompt] = useState("");
+  const [researchAgencyId, setResearchAgencyId] = useState<number | null>(null);
   // Resizable sidebar
   const SIDEBAR_STORAGE_KEY = "detail-v2-sidebar-width";
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -2945,11 +2948,22 @@ function DetailV2Content() {
     }
   };
 
-  const handleResearchAgency = async (caseAgencyId: number) => {
-    if (!id) return;
-    setAgencyActionLoading({ id: caseAgencyId, action: "research" });
+  const handleResearchAgency = (caseAgencyId: number, agencyName?: string) => {
+    setResearchAgencyId(caseAgencyId);
+    setResearchPrompt(agencyName ? `Research contact info for ${agencyName}` : "");
+    setResearchDialogOpen(true);
+  };
+
+  const handleSubmitResearch = async () => {
+    if (!id || !researchAgencyId) return;
+    setResearchDialogOpen(false);
+    setAgencyActionLoading({ id: researchAgencyId, action: "research" });
     try {
-      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/research`, { method: "POST" });
+      const res = await fetch(`/api/cases/${id}/agencies/${researchAgencyId}/research`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: researchPrompt.trim() || undefined }),
+      });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
       await mutate();
@@ -2958,6 +2972,8 @@ function DetailV2Content() {
       toast.error(e.message || "Failed to research agency");
     } finally {
       setAgencyActionLoading(null);
+      setResearchAgencyId(null);
+      setResearchPrompt("");
     }
   };
 
@@ -4291,6 +4307,11 @@ function DetailV2Content() {
                               <span className="text-xs font-medium">{ca.agency_name || "Unnamed"}</span>
                             )}
                             {ca.is_primary && <Badge variant="secondary" className="text-[10px] px-1">Primary</Badge>}
+                            {ca.agency_id && /^\d+$/.test(String(ca.agency_id)) && (
+                              <a href={`/agencies/detail?id=${ca.agency_id}`} className="text-[10px] text-primary hover:underline flex items-center gap-0.5 ml-auto shrink-0">
+                                <ExternalLink className="h-2.5 w-2.5" /> Profile
+                              </a>
+                            )}
                           </div>
                           {isEditing ? (
                             <div className="space-y-1">
@@ -4397,6 +4418,37 @@ function DetailV2Content() {
                               )}
                             </div>
                           )}
+                          {/* Submission method + Rules + Stats (from agency_summary when this is the matching canonical agency) */}
+                          {ca.is_primary && agency_summary && (
+                            <>
+                              {agency_summary.submission_method && (
+                                <Badge variant="outline" className="text-[10px] px-1 py-0 w-fit">
+                                  {agency_summary.submission_method}
+                                </Badge>
+                              )}
+                              {agency_summary.rules && (
+                                <div className="text-[10px] space-y-0.5 text-muted-foreground">
+                                  {agency_summary.rules.fee_auto_approve_threshold !== null && agency_summary.rules.fee_auto_approve_threshold !== undefined && (
+                                    <div className="flex items-center gap-1">
+                                      <span>Auto-approve fees under</span>
+                                      <span className="font-medium text-foreground">{formatCurrency(agency_summary.rules.fee_auto_approve_threshold)}</span>
+                                    </div>
+                                  )}
+                                  {agency_summary.rules.always_human_gates && agency_summary.rules.always_human_gates.length > 0 && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      <span>Always-human:</span>
+                                      {agency_summary.rules.always_human_gates.map((g: string, i: number) => (
+                                        <Badge key={i} variant="secondary" className="text-[10px]">{g}</Badge>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {agency_summary.id && /^\d+$/.test(String(agency_summary.id)) && (
+                                <AgencyStatsBar agencyId={agency_summary.id} />
+                              )}
+                            </>
+                          )}
                           {stats && (stats.total > 0 || stats.recordedSubmissionAt) && (
                             <div className="text-[10px] text-muted-foreground">
                               {stats.total > 0
@@ -4443,14 +4495,17 @@ function DetailV2Content() {
                                 )}
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleResearchAgency(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleResearchAgency(ca.id, ca.agency_name || undefined)} disabled={agencyActionLoading?.id === ca.id}>
                               {isResearchingAgency ? (
                                 <>
                                   <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
                                   Researching...
                                 </>
                               ) : (
-                                "Research"
+                                <>
+                                  <Search className="h-2.5 w-2.5 mr-1" />
+                                  Research
+                                </>
                               )}
                             </Button>
                             {ca.portal_url && ca.portal_automation_status !== "trusted" && (
@@ -4568,64 +4623,6 @@ function DetailV2Content() {
                   />
                 </CollapsibleSection>
               )}
-              <CollapsibleSection title="AGENCY">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-medium">{agency_summary?.name || request.agency_name}</div>
-                    {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
-                      <a href={`/agencies/detail?id=${agency_summary.id}`} className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
-                        <ExternalLink className="h-2.5 w-2.5" /> Profile
-                      </a>
-                    )}
-                  </div>
-                  {request.state && <span className="text-[10px] text-muted-foreground">{request.state}</span>}
-                  {request.agency_email && (
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <Mail className="h-2.5 w-2.5" />
-                      <span className="truncate">{request.agency_email}</span>
-                    </div>
-                  )}
-                  {(() => {
-                    const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
-                    const manualRequestUrl = resolveManualRequestUrl(request.manual_request_url, null);
-                    const pdfFormUrl = resolvePdfFormUrl(request.pdf_form_url, null);
-                    return (
-                      <>
-                        {portalUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
-                              {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                            </a>
-                          </div>
-                        )}
-                        {manualRequestUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a href={manualRequestUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
-                              Manual request page
-                            </a>
-                          </div>
-                        )}
-                        {pdfFormUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <FileText className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a href={pdfFormUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
-                              PDF / request form
-                            </a>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                  {agency_summary?.submission_method && (
-                    <Badge variant="outline" className="text-[10px] px-1 py-0">{agency_summary.submission_method}</Badge>
-                  )}
-                  {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
-                    <AgencyStatsBar agencyId={agency_summary.id} />
-                  )}
-                </div>
-              </CollapsibleSection>
               {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
                 <CollapsibleSection title="FEES">
                   {request.fee_quote && request.fee_quote.amount > 0 ? (
@@ -4715,101 +4712,6 @@ function DetailV2Content() {
                   />
                 </CollapsibleSection>
               )}
-
-              {/* AGENCY */}
-              <CollapsibleSection title="AGENCY">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-medium">{agency_summary?.name || request.agency_name}</div>
-                    {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
-                      <a href={`/agencies/detail?id=${agency_summary.id}`} className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
-                        <ExternalLink className="h-2.5 w-2.5" /> Profile
-                      </a>
-                    )}
-                  </div>
-                  {request.state && <span className="text-[10px] text-muted-foreground">{request.state}</span>}
-                  {request.agency_email && (
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <Mail className="h-2.5 w-2.5" />
-                      <span className="truncate">{request.agency_email}</span>
-                    </div>
-                  )}
-                  {(() => {
-                    const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
-                    const manualRequestUrl = resolveManualRequestUrl(request.manual_request_url, null);
-                    const pdfFormUrl = resolvePdfFormUrl(request.pdf_form_url, null);
-                    return (
-                      <>
-                        {portalUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a
-                              href={portalUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-400 hover:underline truncate"
-                            >
-                              {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                            </a>
-                          </div>
-                        )}
-                        {manualRequestUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a
-                              href={manualRequestUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-400 hover:underline truncate"
-                            >
-                              Manual request page
-                            </a>
-                          </div>
-                        )}
-                        {pdfFormUrl && (
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <FileText className="h-2.5 w-2.5 text-muted-foreground" />
-                            <a
-                              href={pdfFormUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-400 hover:underline truncate"
-                            >
-                              PDF / request form
-                            </a>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                  {agency_summary?.submission_method && (
-                    <Badge variant="outline" className="text-[10px] px-1 py-0">
-                      {agency_summary.submission_method}
-                    </Badge>
-                  )}
-                  {agency_summary?.rules && (
-                    <div className="text-[10px] space-y-1 pt-1 border-t border-border/30">
-                      {agency_summary.rules.fee_auto_approve_threshold !== null && agency_summary.rules.fee_auto_approve_threshold !== undefined && (
-                        <div className="flex items-center justify-between text-muted-foreground">
-                          <span>Auto-approve fees under</span>
-                          <span className="font-medium text-foreground">{formatCurrency(agency_summary.rules.fee_auto_approve_threshold)}</span>
-                        </div>
-                      )}
-                      {agency_summary.rules.always_human_gates && agency_summary.rules.always_human_gates.length > 0 && (
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-muted-foreground">Always-human:</span>
-                          {agency_summary.rules.always_human_gates.map((g: string, i: number) => (
-                            <Badge key={i} variant="secondary" className="text-[10px]">{g}</Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
-                    <AgencyStatsBar agencyId={agency_summary.id} />
-                  )}
-                </div>
-              </CollapsibleSection>
 
               {/* DEADLINE */}
               {deadline_milestones && deadline_milestones.length > 0 && (
@@ -4993,6 +4895,32 @@ function DetailV2Content() {
         onOpenChange={setSnoozeModalOpen}
         onSnooze={async (snoozeUntil) => { mutate(); }}
       />
+
+      {/* Research dialog */}
+      <Dialog open={researchDialogOpen} onOpenChange={setResearchDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Agency Research</DialogTitle>
+            <DialogDescription>Describe what you want to research. The AI will look up the information and update the agency record.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Textarea
+              value={researchPrompt}
+              onChange={(e) => setResearchPrompt(e.target.value)}
+              placeholder="e.g., Find their FOIA email, check if there are more agencies involved, research their portal URL..."
+              rows={3}
+              className="text-sm"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResearchDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSubmitResearch}>
+              <Search className="h-3.5 w-3.5 mr-1.5" />
+              Research
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Constraint dialog */}
       <Dialog open={addConstraintOpen} onOpenChange={setAddConstraintOpen}>
