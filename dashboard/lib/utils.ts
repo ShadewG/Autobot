@@ -364,6 +364,21 @@ export function formatReasoningItem(item: any): string {
   return String(item);
 }
 
+export function humanizeSubstatus(raw: string | null | undefined): string {
+  if (!raw) return "Needs review";
+  const s = String(raw).trim();
+  // Strip internal prefixes
+  const cleaned = s
+    .replace(/^Proposal #\d+ pending review\s*[-—]?\s*/i, "")
+    .replace(/^Recovered stale reprocess for inbound #\d+;\s*/i, "")
+    .replace(/^Resolving:\s*/i, "")
+    .replace(/^Reset to inbound #\d+;\s*/i, "")
+    .trim();
+  if (!cleaned) return s;
+  // Capitalize first letter
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 // Normalize an entire reasoning array, capping at maxItems (from the start).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function formatReasoning(reasoning: any[] | null | undefined, maxItems?: number): string[] {
