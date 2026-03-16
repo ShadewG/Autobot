@@ -3735,29 +3735,7 @@ function MonitorPageContent() {
         </div>
       )}
 
-      {/* ── Unmatched Inbound Summary ──────── */}
-      {overview && (overview.unmatched_inbound?.length ?? 0) > 0 && queue.length === 0 && (
-        <div className="mt-6 border p-4">
-          <SectionLabel>Unmatched Inbound ({overview.unmatched_inbound.length})</SectionLabel>
-          <div className="space-y-2 mt-2">
-            {overview.unmatched_inbound.slice(0, 5).map((m) => (
-              <div key={m.id} className="border p-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-foreground">
-                    {m.from_email}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {formatRelativeTime(m.received_at || m.created_at)}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1 truncate">
-                  {m.subject}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Unmatched inbound accessible via the Inbound tab (click "Unmatched" stat) */}
 
       </>)}
 
