@@ -53,6 +53,7 @@
     "@anthropic-ai/sdk": "^0.17.1",
     "@aws-sdk/client-s3": "^3.997.0",
     "@braintrust/otel": "^0.2.0",
+    "@browserbasehq/sdk": "^2.9.0",
     "@hyperbrowser/sdk": "^0.74.0",
     "@notionhq/client": "^2.2.14",
     "@sendgrid/mail": "^8.1.0",
