@@ -131,8 +131,18 @@ app.get('/api/events', (req, res) => {
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
 const discordService = require('./services/discord-service');
+const discordErrorNotifier = require('./services/discord-error-notifier');
 const { emailWorker, analysisWorker, generateWorker, portalWorker } = require('./queues/email-queue');
 const fs = require('fs');
+
+// Initialize Discord error notifications (global unhandled error handlers)
+discordErrorNotifier.init();
+
+// Hook BullMQ workers into Discord error notifications
+discordErrorNotifier.hookWorker(emailWorker, 'email-queue');
+discordErrorNotifier.hookWorker(analysisWorker, 'analysis-queue');
+discordErrorNotifier.hookWorker(generateWorker, 'generate-queue');
+discordErrorNotifier.hookWorker(portalWorker, 'portal-queue');
 
 /**
  * Run database migrations automatically
@@ -211,6 +221,12 @@ async function runMigrations() {
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
+    // Send to Discord error channel (non-blocking, deduplicated)
+    discordErrorNotifier.notify(err, {
+        source: 'express-middleware',
+        path: req.path,
+        method: req.method,
+    });
     res.status(err.status || 500).json({
         error: err.message || 'Internal server error',
         ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
