@@ -82,7 +82,7 @@ async function main() {
 
             // Create agent_run record
             const run = await db.query(
-                `INSERT INTO agent_runs (case_id, trigger_type, status, metadata, created_at)
+                `INSERT INTO agent_runs (case_id, trigger_type, status, metadata, started_at)
                  VALUES ($1, 'submit_portal', 'running', $2, NOW()) RETURNING id`,
                 [task.case_id, JSON.stringify({ source: 'local_portal_worker', portal_task_id: task.id, worker_id: WORKER_ID })]
             );
