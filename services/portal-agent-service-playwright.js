@@ -1196,6 +1196,41 @@ class PortalAgentServicePlaywright {
                 }
             }
 
+            if (provider === 'govqa' && (options.ensureAccount || options.authOnly)) {
+                const authPreparation = await this._ensureGovQAAccountAccess(page, normalizedUrl, {
+                    caseData,
+                    requester,
+                    existingAccount: portalAccount,
+                    credentials: credentialProfile,
+                    authOnly: options.authOnly,
+                    forceAccountSetup: options.forceAccountSetup === true,
+                });
+                if (authPreparation?.step) {
+                    summary.steps.push(authPreparation.step);
+                }
+                if (authPreparation?.accountEmail) {
+                    summary.accountEmail = authPreparation.accountEmail;
+                }
+                if (authPreparation?.portalAccount) {
+                    portalAccount = authPreparation.portalAccount;
+                }
+                if (authPreparation?.blocker) {
+                    summary.status = authPreparation.blocker.status;
+                    summary.blockers.push(authPreparation.blocker);
+                    summary.final_url = page.url();
+                    summary.success = false;
+                    summary.extracted_data = authPreparation.extracted_data || null;
+                    return summary;
+                }
+                if (options.authOnly) {
+                    summary.status = authPreparation?.status || 'auth_ready';
+                    summary.success = authPreparation?.success !== false;
+                    summary.final_url = page.url();
+                    summary.extracted_data = authPreparation?.extracted_data || null;
+                    return summary;
+                }
+            }
+
             const blockingState = await this._detectBlockingState(page);
             if (blockingState) {
                 summary.status = blockingState.status;
@@ -1431,6 +1466,245 @@ class PortalAgentServicePlaywright {
             }
             await this._writeJson(path.join(artifactsDir, 'summary.json'), summary);
         }
+    }
+
+    async _ensureGovQAAccountAccess(page, portalUrl, {
+        caseData,
+        requester,
+        existingAccount = null,
+        credentials,
+        authOnly = false,
+        forceAccountSetup = false,
+    } = {}) {
+        const effectiveCredentials = credentials || buildPortalCredentialProfile(requester, existingAccount);
+
+        // Navigate to the login page if not already there
+        let loginUrl = page.url();
+        if (!loginUrl.includes('RequestLogin') && !loginUrl.includes('Login.aspx')) {
+            // Try both GovQA login page variants
+            let baseOrigin, basePath;
+            try {
+                const baseUrl = new URL(portalUrl);
+                baseOrigin = baseUrl.origin;
+                const pathMatch = baseUrl.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                basePath = pathMatch ? pathMatch[1] : '/WEBAPP/_rs/';
+            } catch {
+                baseOrigin = portalUrl.replace(/\/WEBAPP\/.*/, '');
+                basePath = '/WEBAPP/_rs/';
+            }
+            // Try RequestLogin.aspx first (more common), then Login.aspx
+            loginUrl = `${baseOrigin}${basePath}RequestLogin.aspx`;
+            await this._goto(page, loginUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(3000);
+            const hasLoginForm = await page.evaluate(() => {
+                const text = document.body.innerText || '';
+                return text.includes('Email Address') || text.includes('Password');
+            });
+            if (!hasLoginForm) {
+                loginUrl = `${baseOrigin}${basePath}Login.aspx`;
+                await this._goto(page, loginUrl, { providerHint: 'govqa' });
+                await page.waitForTimeout(3000);
+            }
+        }
+
+        // If we have existing credentials, try logging in first
+        if (existingAccount?.email && existingAccount?.password) {
+            // Handle both GovQA login form variants
+            const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I, #ASPxFormLayout1_txtUserName_I').first();
+            const passwordField = page.locator('#RequesLoginFormLayout_txtPassword_I, #ASPxFormLayout1_txtPassword_I').first();
+            if (await emailField.isVisible().catch(() => false)) {
+                await emailField.fill(existingAccount.email);
+                await passwordField.fill(existingAccount.password);
+                await page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I').first().click({ force: true });
+                await page.waitForTimeout(5000);
+                await page.waitForLoadState('networkidle').catch(() => {});
+
+                const loggedIn = await page.evaluate(() => {
+                    const text = document.body.innerText || '';
+                    return text.includes('Logged in as') || text.includes('My Records Center') || text.includes('CustomerHome');
+                });
+                if (loggedIn || page.url().includes('CustomerHome')) {
+                    await this._saveResolvedPortalAccount({
+                        portalUrl,
+                        requester,
+                        credentials: { email: existingAccount.email, password: existingAccount.password },
+                        existingAccount,
+                        userId: caseData?.user_id || null,
+                        source: 'playwright_govqa_login',
+                    }).catch(() => null);
+                    return {
+                        success: true,
+                        status: 'auth_ready',
+                        accountEmail: existingAccount.email,
+                        step: { step: 'govqa_login', outcome: 'logged_in', url: page.url() },
+                    };
+                }
+            }
+        }
+
+        // No existing account or login failed — create a new one
+        // GovQA has two variants:
+        // 1. Button: #RequesLoginFormLayout2_btnnew_I (San Antonio style)
+        // 2. Link: #lnkCreateUser or a[href*="CustomerDetails"][href*="new=1"] (Madison style)
+        const createBtn = page.locator('#RequesLoginFormLayout2_btnnew_I');
+        const createLink = page.locator('#lnkCreateUser, a[href*="CustomerDetails"][href*="new=1"]').first();
+
+        let clickedCreate = false;
+        if (await createBtn.isVisible().catch(() => false)) {
+            await createBtn.click({ force: true });
+            clickedCreate = true;
+        } else if (await createLink.isVisible().catch(() => false)) {
+            await createLink.click();
+            clickedCreate = true;
+        }
+
+        if (!clickedCreate) {
+            return {
+                success: false,
+                blocker: {
+                    status: 'govqa_registration_unavailable',
+                    reason: 'GovQA Create Account button/link not found on login page',
+                },
+            };
+        }
+
+        await page.waitForTimeout(10000);
+        await page.waitForLoadState('networkidle').catch(() => {});
+
+        // Verify the registration form loaded (different GovQA versions use different headings)
+        const hasRegForm = await page.evaluate(() => {
+            const text = document.body.innerText || '';
+            const hasEmailField = text.includes('Email Address') || text.includes('Email Address / Username');
+            const hasPasswordField = text.includes('Password');
+            return hasEmailField && hasPasswordField;
+        });
+        if (!hasRegForm) {
+            return {
+                success: false,
+                blocker: {
+                    status: 'govqa_registration_form_not_loaded',
+                    reason: 'GovQA registration form did not load after clicking Create Account',
+                },
+            };
+        }
+
+        const password = effectiveCredentials.password || ('FoiaBot2026!' + crypto.randomBytes(2).toString('hex'));
+        const email = effectiveCredentials.email;
+
+        // Fill registration form — use label-based filling for portability across GovQA versions
+        const fillByLabel = async (labelText, value) => {
+            if (!value) return;
+            // Try by ID patterns first (faster), then fall back to label proximity
+            const idPatterns = {
+                'Email': ['[id*=txtEmail_I]', '[id*=txtUserName_I]'],
+                'Password:*': ['[id*=txtPassword_I]:not([id*=Confirm])'],
+                'Confirm Password': ['[id*=txtConfirmPassword_I]', '[id*=ConfirmPassword_I]'],
+                'First Name': ['[id*=txtField2_I]', '[id*=FirstName_I]', '[id*=txtFirstName_I]'],
+                'Last Name': ['[id*=txtField4_I]', '[id*=LastName_I]', '[id*=txtLastName_I]'],
+                'Phone': ['[id*=txtPhoneMask_I]', '[id*=Phone_I]', '[id*=txtPhone_I]'],
+                'Address 1': ['[id*=txtAddressOne_I]', '[id*=Address1_I]'],
+                'City': ['[id*=txtCity_I]', '[id*=City_I]'],
+                'Zip': ['[id*=txtZip_I]', '[id*=Zip_I]'],
+            };
+            const selectors = idPatterns[labelText] || [];
+            for (const sel of selectors) {
+                const loc = page.locator(sel).first();
+                if (await loc.isVisible({ timeout: 2000 }).catch(() => false)) {
+                    await loc.fill(value);
+                    return;
+                }
+            }
+        };
+
+        await fillByLabel('Email', email);
+        await fillByLabel('Password:*', password);
+        await fillByLabel('Confirm Password', password);
+        await fillByLabel('First Name', requester.firstName || '');
+        await fillByLabel('Last Name', requester.lastName || '');
+        await fillByLabel('Phone', (requester.phone || '').replace(/\D/g, ''));
+        await fillByLabel('Address 1', requester.address || '');
+        await fillByLabel('City', requester.city || '');
+        await fillByLabel('Zip', requester.zip || '');
+
+        // Select Public/Citizen radio (try both ID patterns)
+        await page.locator('[id*=cf_5_RB0], [id*=RequesterType] [value*=Public], input[type=radio]').first()
+            .click({ force: true }).catch(() => {});
+        await page.waitForTimeout(1000);
+
+        // Submit registration (try both button patterns)
+        await page.locator('#btnSaveData_I, [id*=btnSave], input[type=submit][value*=Submit], input[type=submit][value*=Create]').first()
+            .click({ force: true });
+        await page.waitForTimeout(8000);
+        await page.waitForLoadState('networkidle').catch(() => {});
+
+        const loggedIn = await page.evaluate(() => {
+            const text = document.body.innerText || '';
+            return text.includes('Logged in as') || text.includes('My Records Center');
+        });
+        const alreadyExists = await page.evaluate(() => {
+            const text = document.body.innerText || '';
+            return text.includes('already exists') || text.includes('already registered');
+        });
+
+        if (loggedIn || page.url().includes('CustomerHome')) {
+            const resolvedAccount = await this._saveResolvedPortalAccount({
+                portalUrl,
+                requester,
+                credentials: { email, password },
+                existingAccount,
+                userId: caseData?.user_id || null,
+                source: 'playwright_govqa_registration',
+            }).catch(() => null);
+
+            // Navigate to the support home to find request submission links
+            const supportUrl = portalUrl.replace(/RequestLogin\.aspx.*/, 'SupportHome.aspx');
+            await this._goto(page, supportUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(3000);
+
+            return {
+                success: true,
+                status: 'account_created',
+                accountEmail: email,
+                portalAccount: resolvedAccount,
+                step: { step: 'govqa_registration', outcome: 'account_created', url: page.url() },
+                extracted_data: { provider: 'govqa', auth_method: 'registration' },
+            };
+        }
+
+        if (alreadyExists) {
+            // Account exists — try logging in with the credentials we just used
+            await this._goto(page, loginUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(3000);
+            const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I');
+            if (await emailField.isVisible().catch(() => false)) {
+                await emailField.fill(email);
+                await page.locator('#RequesLoginFormLayout_txtPassword_I').fill(password);
+                await page.locator('#RequesLoginFormLayout_btnLogin_I').click({ force: true });
+                await page.waitForTimeout(5000);
+                if (page.url().includes('CustomerHome')) {
+                    const resolved = await this._saveResolvedPortalAccount({
+                        portalUrl, requester, credentials: { email, password },
+                        existingAccount, userId: caseData?.user_id || null,
+                        source: 'playwright_govqa_login_after_exists',
+                    }).catch(() => null);
+                    return {
+                        success: true, status: 'auth_ready', accountEmail: email, portalAccount: resolved,
+                        step: { step: 'govqa_registration', outcome: 'already_exists_logged_in', url: page.url() },
+                    };
+                }
+            }
+            return {
+                success: false,
+                blocker: { status: 'govqa_account_already_exists', reason: 'GovQA account already exists but login failed' },
+                extracted_data: { provider: 'govqa', auth_method: 'registration_exists' },
+            };
+        }
+
+        return {
+            success: false,
+            blocker: { status: 'govqa_registration_failed', reason: 'GovQA account registration did not succeed' },
+            extracted_data: { provider: 'govqa', auth_method: 'registration_failed' },
+        };
     }
 
     async _ensureNextRequestAccountAccess(page, portalUrl, {
