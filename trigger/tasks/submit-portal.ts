@@ -951,11 +951,11 @@ export const submitPortal = task({
       return { success: false, error: errorMessage };
     }
 
-    // ── PRIMARY: Playwright + Browserbase ──
-    let playwrightFailed = false;
+    // ── PRIMARY: Local Playwright ──
+    let localFailed = false;
     if (usePlaywrightPrimary) {
       try {
-        recordNode("playwright_submit_started", { portalUrl: targetUrl, provider });
+        recordNode("playwright_local_started", { portalUrl: targetUrl, provider });
         const playwright = getPlaywright();
         const pwResult = await playwright.submitToPortal(caseData, targetUrl, {
           dryRun: false,
@@ -963,46 +963,94 @@ export const submitPortal = task({
           ensureAccount: true,
           forceAccountSetup: true,
           instructions,
+          browserBackend: 'local',
         });
-        recordNode("playwright_submit_completed", {
+        recordNode("playwright_local_completed", {
           success: pwResult?.success,
           status: pwResult?.status,
           confirmed: pwResult?.submissionConfirmed,
         });
 
         if (pwResult?.success && pwResult?.submissionConfirmed) {
-          // Playwright confirmed the submission — handle success and return
-          return await handlePortalSuccess(pwResult, "playwright_browserbase");
+          return await handlePortalSuccess(pwResult, "playwright_local");
         }
 
         if (!shouldFallbackToSkyvern(pwResult)) {
-          logger.warn("Playwright result requires manual handling; not falling back to Skyvern", {
+          logger.warn("Local Playwright requires manual handling; not falling back", {
             caseId,
             status: pwResult?.status,
             blockers: pwResult?.blockers,
           });
-          return await handlePortalFailure(new Error(pwResult?.error || pwResult?.status || "Playwright requires manual handling"), pwResult);
+          return await handlePortalFailure(new Error(pwResult?.error || pwResult?.status || "Local Playwright requires manual handling"), pwResult);
         }
 
-        // Playwright ran but did not confirm submission — fall through to Skyvern
-        playwrightFailed = true;
-        logger.warn("Playwright submission did not confirm; falling back to Skyvern", {
+        localFailed = true;
+        logger.warn("Local Playwright did not confirm; trying Browserbase", {
           caseId,
           status: pwResult?.status,
           blockers: pwResult?.blockers,
         });
-      } catch (playwrightError: any) {
-        playwrightFailed = true;
-        recordNode("playwright_submit_failed", { error: playwrightError?.message });
-        logger.warn("Playwright submission failed; falling back to Skyvern", {
+      } catch (localError: any) {
+        localFailed = true;
+        recordNode("playwright_local_failed", { error: localError?.message });
+        logger.warn("Local Playwright failed; trying Browserbase", {
           caseId,
-          error: playwrightError?.message,
+          error: localError?.message,
         });
       }
     }
 
-    // ── FALLBACK: Skyvern (or primary when PORTAL_PRIMARY_ENGINE=skyvern) ──
-    if (!usePlaywrightPrimary || playwrightFailed) {
+    // ── SECONDARY: Browserbase Playwright (fallback) ──
+    let browserbaseFailed = false;
+    if (localFailed && process.env.BROWSERBASE_API_KEY) {
+      try {
+        recordNode("playwright_browserbase_started", { portalUrl: targetUrl, provider });
+        const playwright = getPlaywright();
+        const bbResult = await playwright.submitToPortal(caseData, targetUrl, {
+          dryRun: false,
+          trackInAutobot: false,
+          ensureAccount: true,
+          forceAccountSetup: true,
+          instructions,
+          browserBackend: 'browserbase',
+        });
+        recordNode("playwright_browserbase_completed", {
+          success: bbResult?.success,
+          status: bbResult?.status,
+          confirmed: bbResult?.submissionConfirmed,
+        });
+
+        if (bbResult?.success && bbResult?.submissionConfirmed) {
+          return await handlePortalSuccess(bbResult, "playwright_browserbase");
+        }
+
+        if (!shouldFallbackToSkyvern(bbResult)) {
+          logger.warn("Browserbase Playwright requires manual handling; not falling back to Skyvern", {
+            caseId,
+            status: bbResult?.status,
+            blockers: bbResult?.blockers,
+          });
+          return await handlePortalFailure(new Error(bbResult?.error || bbResult?.status || "Browserbase requires manual handling"), bbResult);
+        }
+
+        browserbaseFailed = true;
+        logger.warn("Browserbase Playwright did not confirm; falling back to Skyvern", {
+          caseId,
+          status: bbResult?.status,
+          blockers: bbResult?.blockers,
+        });
+      } catch (bbError: any) {
+        browserbaseFailed = true;
+        recordNode("playwright_browserbase_failed", { error: bbError?.message });
+        logger.warn("Browserbase Playwright failed; falling back to Skyvern", {
+          caseId,
+          error: bbError?.message,
+        });
+      }
+    }
+
+    // ── TERTIARY: Skyvern (or primary when PORTAL_PRIMARY_ENGINE=skyvern) ──
+    if (!usePlaywrightPrimary || localFailed) {
       const skyvern = getSkyvern();
       try {
         const result = await skyvern.submitToPortal(caseData, targetUrl, {

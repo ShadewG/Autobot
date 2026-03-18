@@ -1,7 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { chromium } = require('playwright');
+let chromium;
+try {
+    const playwrightExtra = require('playwright-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+    chromium = playwrightExtra.chromium;
+    chromium.use(StealthPlugin());
+} catch (_stealthErr) {
+    chromium = require('playwright').chromium;
+}
 const database = require('./database');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 const { persistPortalScreenshot } = require('./portal-screenshot-store');
@@ -18,6 +26,11 @@ const {
     detectPortalProviderByUrl,
     isSupportedPortalUrl,
 } = require('../utils/portal-utils');
+
+const DEFAULT_LOCAL_PROFILES_ROOT = path.join(process.cwd(), 'data', 'browser-profiles');
+const DEFAULT_LOCAL_CHROME_PATH = process.env.PLAYWRIGHT_CHROME_PATH || '';
+const DEFAULT_CAPTCHA_API_KEY = process.env.TWOCAPTCHA_API_KEY || process.env.CAPTCHA_API_KEY || '';
+const DEFAULT_CAPTCHA_ENABLED = Boolean(DEFAULT_CAPTCHA_API_KEY);
 
 const DEFAULT_ARTIFACTS_ROOT = path.join(process.cwd(), 'portal-run-results', 'playwright');
 const DEFAULT_NAVIGATION_TIMEOUT_MS = parseInt(process.env.PLAYWRIGHT_PORTAL_TIMEOUT_MS || '30000', 10);
@@ -37,6 +50,7 @@ const SUBMIT_CONTROL_SELECTOR = [
     'a[role="button"]',
     'a.modern-button',
     'a.button',
+    'a[class*="button--"]',
     'a[href="#"]',
 ].join(', ');
 const NEXTREQUEST_MAGIC_LINK_PATTERN = "(https?:\\/\\/[^\\s\"']+\\/users\\/(?:confirmation|unlock|password\\/edit)[^\\s\"']*)";
@@ -59,7 +73,8 @@ function normalizeBrowserBackend(value) {
 function resolveBrowserBackendSelection(value, hasBrowserbaseApiKey = Boolean(process.env.BROWSERBASE_API_KEY)) {
     const normalized = normalizeBrowserBackend(value);
     if (normalized === 'browserbase' || normalized === 'local') return normalized;
-    return hasBrowserbaseApiKey ? 'browserbase' : 'local';
+    // Default to local — Browserbase is used as fallback when explicitly requested
+    return 'local';
 }
 
 function coerceBrowserbaseOs(value, advancedStealth = false) {
@@ -604,6 +619,21 @@ function mapFieldValue(field, { caseData, requester, portalAccount, pageKind }) 
         if (normalizedOptions.includes(normalizeText(requester.state))) return requester.state;
         if (normalizedOptions.includes('electronic')) return 'Electronic';
         if (normalizedOptions.includes('email')) return 'Email';
+
+        // Department selection — pick the best match for case type
+        if (label.includes('department')) {
+            const deptKeywords = ['police', 'law enforcement', 'public safety', 'police department'];
+            for (const keyword of deptKeywords) {
+                const match = field.options.find((o) => normalizeText(o.text || o.value).includes(keyword));
+                if (match) return match.text || match.value;
+            }
+            // If no police match, pick the first non-placeholder option
+            const firstReal = field.options.find((o) => {
+                const text = normalizeText(o.text || o.value);
+                return text && !text.includes('select') && !text.includes('choose') && !text.includes('required');
+            });
+            if (firstReal) return firstReal.text || firstReal.value;
+        }
     }
 
     return null;
@@ -624,6 +654,10 @@ class PortalAgentServicePlaywright {
         this.browserbaseKeepAlive = options.browserbaseKeepAlive ?? DEFAULT_BROWSERBASE_KEEP_ALIVE;
         this.browserbaseBlockAds = options.browserbaseBlockAds ?? DEFAULT_BROWSERBASE_BLOCK_ADS;
         this.browserbaseOs = options.browserbaseOs || DEFAULT_BROWSERBASE_OS;
+        this.localProfilesRoot = options.localProfilesRoot || DEFAULT_LOCAL_PROFILES_ROOT;
+        this.localChromePath = options.localChromePath || DEFAULT_LOCAL_CHROME_PATH;
+        this.captchaApiKey = options.captchaApiKey || DEFAULT_CAPTCHA_API_KEY;
+        this.captchaEnabled = options.captchaEnabled ?? DEFAULT_CAPTCHA_ENABLED;
     }
 
     _resolveBrowserBackend(options = {}) {
@@ -645,18 +679,56 @@ class PortalAgentServicePlaywright {
         if (browserBackend === 'browserbase') {
             return this._launchBrowserbaseRuntime(caseData, summary, options);
         }
-        return this._launchLocalRuntime(options);
+        return this._launchLocalRuntime(caseData, summary, options);
     }
 
-    async _launchLocalRuntime(options = {}) {
-        const browser = await chromium.launch({
+    async _launchLocalRuntime(caseData, summary, options = {}) {
+        const provider = normalizeProviderName(
+            summary?.provider || caseData?.portal_provider, summary?.portalUrl
+        );
+        const usePersistentContext = DEFAULT_BROWSERBASE_AUTH_CONTEXT_PROVIDERS.has(provider);
+        const userDataDir = usePersistentContext
+            ? ensureDir(path.join(this.localProfilesRoot, provider))
+            : null;
+
+        const launchArgs = [
+            '--disable-blink-features=AutomationControlled',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-infobars',
+            '--disable-dev-shm-usage',
+            '--window-size=1440,1200',
+        ];
+        const launchOptions = {
             headless: options.headless ?? this.headless,
             slowMo: options.slowMo ?? this.slowMo,
-        });
-        const context = await browser.newContext({
-            viewport: { width: 1440, height: 1200 },
+            args: launchArgs,
             ignoreHTTPSErrors: true,
-        });
+            viewport: { width: 1440, height: 1200 },
+        };
+        if (this.localChromePath) {
+            launchOptions.executablePath = this.localChromePath;
+        }
+
+        let browser = null;
+        let context;
+
+        if (usePersistentContext && userDataDir) {
+            try {
+                context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+            } catch (profileErr) {
+                // Corrupted profile — wipe and retry once
+                fs.rmSync(userDataDir, { recursive: true, force: true });
+                ensureDir(userDataDir);
+                context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+            }
+        } else {
+            browser = await chromium.launch(launchOptions);
+            context = await browser.newContext({
+                viewport: { width: 1440, height: 1200 },
+                ignoreHTTPSErrors: true,
+            });
+        }
 
         return {
             backend: 'local',
@@ -664,9 +736,10 @@ class PortalAgentServicePlaywright {
             context,
             browserSessionId: null,
             browserSessionUrl: null,
+            persistentProfile: userDataDir || null,
             close: async () => {
                 await context.close().catch(() => {});
-                await browser.close().catch(() => {});
+                if (browser) await browser.close().catch(() => {});
             },
         };
     }
@@ -1185,17 +1258,23 @@ class PortalAgentServicePlaywright {
 
             const captchaRequirement = await this._detectCaptchaRequirement(page, fieldAnalysis.visibleFields);
             if (captchaRequirement) {
-                summary.status = captchaRequirement.status;
-                summary.error = captchaRequirement.reason;
-                summary.blockers.push(captchaRequirement);
-                summary.final_url = page.url();
-                summary.success = false;
-                await this._maybeRunPortalScout(caseData, page.url(), summary.provider || provider, summary, {
-                    submissionRow,
-                    workerJobId: options.workerJobId || null,
-                    reason: captchaRequirement.status,
-                });
-                return summary;
+                // Attempt to solve via 2Captcha before giving up
+                const captchaSolution = await this._solveCaptcha(page).catch(() => null);
+                if (captchaSolution?.solved) {
+                    summary.steps.push({ step: 'captcha_solved', type: captchaSolution.type });
+                } else {
+                    summary.status = captchaRequirement.status;
+                    summary.error = captchaRequirement.reason;
+                    summary.blockers.push(captchaRequirement);
+                    summary.final_url = page.url();
+                    summary.success = false;
+                    await this._maybeRunPortalScout(caseData, page.url(), summary.provider || provider, summary, {
+                        submissionRow,
+                        workerJobId: options.workerJobId || null,
+                        reason: captchaRequirement.status,
+                    });
+                    return summary;
+                }
             }
 
             let fillSummary = {
@@ -1204,6 +1283,18 @@ class PortalAgentServicePlaywright {
             };
 
             if (pageKind === 'request_form' && !options.statusOnly) {
+                // Fill rich text editors (Quill, Trix, contenteditable) before regular fields
+                const richTextFilled = await this._fillRichTextEditors(page, { caseData, requester }).catch(() => false);
+                if (richTextFilled) {
+                    summary.steps.push({ step: 'rich_text_filled', editor: richTextFilled });
+                }
+
+                // Fill custom dropdowns (NextRequest Department, etc.) before regular fields
+                const customDropdownFilled = await this._fillCustomDropdowns(page, { caseData }).catch(() => false);
+                if (customDropdownFilled) {
+                    summary.steps.push({ step: 'custom_dropdown_filled' });
+                }
+
                 fillSummary = await this._fillVisibleFields(page, fieldAnalysis.visibleFields, {
                     caseData,
                     requester,
@@ -2049,6 +2140,66 @@ class PortalAgentServicePlaywright {
         return null;
     }
 
+    async _solveCaptcha(page) {
+        if (!this.captchaEnabled || !this.captchaApiKey) return null;
+        try {
+            const { Solver } = require('2captcha');
+            const solver = new Solver(this.captchaApiKey);
+            const pageUrl = page.url();
+
+            // Try reCAPTCHA v2
+            const recaptchaSitekey = await page.evaluate(() => {
+                const el = document.querySelector('.g-recaptcha[data-sitekey], [data-sitekey]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }).catch(() => null);
+
+            if (recaptchaSitekey) {
+                const result = await solver.recaptcha({ pageurl: pageUrl, googlekey: recaptchaSitekey });
+                await page.evaluate((token) => {
+                    const textarea = document.querySelector('#g-recaptcha-response, [name="g-recaptcha-response"]');
+                    if (textarea) {
+                        textarea.value = token;
+                        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    // Trigger the reCAPTCHA callback if available
+                    if (typeof window.___grecaptcha_cfg !== 'undefined') {
+                        try {
+                            Object.values(window.___grecaptcha_cfg.clients || {}).forEach(client => {
+                                const walk = (obj) => {
+                                    for (const k in obj) {
+                                        if (typeof obj[k] === 'function') { try { obj[k](token); } catch {} }
+                                        else if (typeof obj[k] === 'object' && obj[k]) walk(obj[k]);
+                                    }
+                                };
+                                walk(client);
+                            });
+                        } catch {}
+                    }
+                }, result.data);
+                return { solved: true, type: 'recaptcha_v2', sitekey: recaptchaSitekey };
+            }
+
+            // Try hCaptcha
+            const hcaptchaSitekey = await page.evaluate(() => {
+                const el = document.querySelector('.h-captcha[data-sitekey], iframe[src*="hcaptcha"]');
+                return el ? el.getAttribute('data-sitekey') : null;
+            }).catch(() => null);
+
+            if (hcaptchaSitekey) {
+                const result = await solver.hcaptcha({ pageurl: pageUrl, sitekey: hcaptchaSitekey });
+                await page.evaluate((token) => {
+                    const textarea = document.querySelector('[name="h-captcha-response"], textarea[name="g-recaptcha-response"]');
+                    if (textarea) textarea.value = token;
+                }, result.data);
+                return { solved: true, type: 'hcaptcha', sitekey: hcaptchaSitekey };
+            }
+
+            return null;
+        } catch (err) {
+            return null;
+        }
+    }
+
     async _detectCaptchaRequirement(page, visibleFields = []) {
         const matchingField = Array.isArray(visibleFields)
             ? visibleFields.find((field) => isCaptchaLikeField(field))
@@ -2318,6 +2469,101 @@ class PortalAgentServicePlaywright {
         };
     }
 
+    async _fillRichTextEditors(page, { caseData, requester }) {
+        const narrative = buildRequestNarrative(caseData, requester);
+        if (!narrative) return false;
+
+        // Try Quill editor (.ql-editor)
+        const quillFilled = await page.evaluate((text) => {
+            const editorEl = document.querySelector('.ql-editor');
+            if (!editorEl) return false;
+            // Use Quill's API if available for proper Vue model sync
+            const quillContainer = editorEl.closest('.ql-container');
+            const quillInstance = quillContainer?.__quill || window.Quill?.find?.(editorEl);
+            if (quillInstance) {
+                quillInstance.setText(text);
+            } else {
+                editorEl.textContent = text;
+                editorEl.classList.remove('ql-blank');
+            }
+            editorEl.dispatchEvent(new Event('input', { bubbles: true }));
+            editorEl.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }, narrative).catch(() => false);
+        if (quillFilled) return 'quill';
+
+        // Try Trix editor
+        const trixFilled = await page.evaluate((text) => {
+            const editor = document.querySelector('trix-editor');
+            if (!editor) return false;
+            editor.editor?.insertString?.(text);
+            return true;
+        }, narrative).catch(() => false);
+        if (trixFilled) return 'trix';
+
+        // Try generic contenteditable
+        const ceFilled = await page.evaluate((text) => {
+            const editors = document.querySelectorAll('[contenteditable="true"]');
+            let best = null;
+            let bestArea = 0;
+            for (const el of editors) {
+                const rect = el.getBoundingClientRect();
+                const area = rect.width * rect.height;
+                if (area > bestArea && rect.width > 100 && rect.height > 50) {
+                    best = el;
+                    bestArea = area;
+                }
+            }
+            if (!best) return false;
+            best.textContent = text;
+            best.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+        }, narrative).catch(() => false);
+        if (ceFilled) return 'contenteditable';
+
+        return false;
+    }
+
+    async _fillCustomDropdowns(page, { caseData }) {
+        // Handle NextRequest-style custom Department dropdowns
+        const deptKeywords = ['police', 'law enforcement', 'public safety', 'sheriff'];
+        try {
+            // Find custom select components with "department" label
+            const deptSelector = await page.locator('text=Department').first().isVisible().catch(() => false);
+            if (!deptSelector) return false;
+
+            // Try native select first
+            const nativeSelect = page.locator('select').filter({ hasText: /department/i });
+            if (await nativeSelect.count() > 0) return false; // handled by _fillVisibleFields
+
+            // Click the custom dropdown to open it
+            const dropdownTrigger = page.locator('[class*="NrSelect"], [class*="nr-select"], [id*="NrSelect"]').first();
+            if (await dropdownTrigger.isVisible().catch(() => false)) {
+                await dropdownTrigger.click();
+                await page.waitForTimeout(500);
+
+                // Look for options in the opened dropdown
+                for (const keyword of deptKeywords) {
+                    const option = page.locator(`[class*="option"], [role="option"], li`).filter({ hasText: new RegExp(keyword, 'i') }).first();
+                    if (await option.isVisible().catch(() => false)) {
+                        await option.click();
+                        await page.waitForTimeout(300);
+                        return true;
+                    }
+                }
+
+                // If no police match, click first non-placeholder option
+                const firstOption = page.locator(`[class*="option"]:not([class*="placeholder"]), [role="option"]`).first();
+                if (await firstOption.isVisible().catch(() => false)) {
+                    await firstOption.click();
+                    await page.waitForTimeout(300);
+                    return true;
+                }
+            }
+        } catch {}
+        return false;
+    }
+
     async _fillVisibleFields(page, fields, context) {
         const filled = [];
         const skipped = [];
@@ -2362,7 +2608,20 @@ class PortalAgentServicePlaywright {
     }
 
     async _submitFilledRequest(page, provider) {
-        const submitControl = await this._findSubmitControl(page);
+        // Wait for client-side reactivity (Vue, React) to re-evaluate form validity
+        await sleep(1500);
+
+        let submitControl = await this._findSubmitControl(page);
+        if (!submitControl) {
+            // Retry: some SPAs need an extra tick after dropdown/field changes
+            await sleep(1500);
+            submitControl = await this._findSubmitControl(page);
+        }
+        if (!submitControl) {
+            // Last resort: find a disabled submit button and try to click it anyway
+            // (some frameworks enable on click or re-evaluate on interaction)
+            submitControl = await this._findSubmitControlIncludingDisabled(page);
+        }
         if (!submitControl) {
             return {
                 attempted: false,
@@ -2480,6 +2739,54 @@ class PortalAgentServicePlaywright {
         const best = scored[0];
         if (!best || best.score < 0) return null;
         return page.locator(SUBMIT_CONTROL_SELECTOR).nth(best.index);
+    }
+
+    async _findSubmitControlIncludingDisabled(page) {
+        // Same as _findSubmitControl but includes disabled buttons with submit-like text
+        const controls = await page.locator(SUBMIT_CONTROL_SELECTOR).evaluateAll((elements) => {
+            const isVisible = (element) => {
+                const style = window.getComputedStyle(element);
+                return Boolean(style) && style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
+            };
+            return elements.map((element, index) => ({
+                index,
+                tag: String(element.tagName || '').toLowerCase(),
+                text: (element.textContent || element.getAttribute('value') || element.getAttribute('aria-label') || '').trim(),
+                id: element.id || '',
+                name: element.getAttribute('name') || '',
+                ariaLabel: element.getAttribute('aria-label') || '',
+                className: typeof element.className === 'string' ? element.className : '',
+                visible: isVisible(element),
+                disabled: element.disabled === true,
+            }));
+        }).catch(() => []);
+
+        // Include disabled but visible buttons with strong submit text
+        const candidates = controls
+            .filter((c) => c.visible)
+            .map((c) => {
+                const text = normalizeText([c.text, c.id, c.name, c.ariaLabel, c.className].filter(Boolean).join(' '));
+                let score = -10;
+                if (/\bsubmit request\b|\bsubmit form\b|\bsubmit\b/.test(text)) score = 24;
+                if (/\bmake request\b|\bcreate request\b/.test(text)) score = Math.max(score, 22);
+                if (/\bsend request\b/.test(text)) score = Math.max(score, 20);
+                if (/\bsearch\b|\blog in\b|\bsign in\b|\breset\b|\bcancel\b/.test(text)) score = -20;
+                return { ...c, score };
+            })
+            .sort((a, b) => b.score - a.score);
+
+        const best = candidates[0];
+        if (!best || best.score < 10) return null;
+
+        // Force-enable the button before clicking
+        const idx = best.index;
+        await page.locator(SUBMIT_CONTROL_SELECTOR).nth(idx).evaluate((el) => {
+            el.disabled = false;
+            el.removeAttribute('disabled');
+        }).catch(() => {});
+        await sleep(300);
+
+        return page.locator(SUBMIT_CONTROL_SELECTOR).nth(idx);
     }
 
     async _collectValidationErrors(page) {

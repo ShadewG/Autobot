@@ -19,9 +19,10 @@ describe('portal-agent-service-playwright helpers', function () {
     assert.strictEqual(portalPlaywright.normalizeBrowserBackend('local'), 'local');
     assert.strictEqual(portalPlaywright.normalizeBrowserBackend(''), 'auto');
 
+    // Default is now 'local' — Browserbase is the fallback
     assert.strictEqual(
       portalPlaywright.resolveBrowserBackendSelection('auto', true),
-      'browserbase'
+      'local'
     );
     assert.strictEqual(
       portalPlaywright.resolveBrowserBackendSelection('auto', false),

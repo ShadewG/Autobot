@@ -76,6 +76,9 @@ export default defineConfig({
           "BROWSERBASE_PROXY_DOMAINS",
           "BROWSERBASE_PROXY_COUNTRY",
           "BROWSERBASE_AUTH_CONTEXT_PROVIDERS",
+          "TWOCAPTCHA_API_KEY",
+          "PLAYWRIGHT_CHROME_PATH",
+          "PLAYWRIGHT_CAPTCHA_SOLVING",
         ];
         const result = vars
           .filter((name) => process.env[name])
