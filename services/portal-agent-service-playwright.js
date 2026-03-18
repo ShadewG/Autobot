@@ -1468,6 +1468,108 @@ class PortalAgentServicePlaywright {
         }
     }
 
+    async _recoverGovQAPassword(page, portalUrl, email, requester) {
+        const GOVQA_RESET_LINK_PATTERN = "(https?:\\/\\/[^\\s\"']+\\/(?:WEBAPP\\/_rs\\/|)[^\\s\"']*(?:resetpassword|passwordreset|ResetPassword|unlock)[^\\s\"']*)";
+        try {
+            // Navigate to forgot password page
+            let forgotUrl;
+            try {
+                const baseUrl = new URL(page.url() || portalUrl);
+                const pathMatch = baseUrl.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                const basePath = pathMatch ? pathMatch[1] : '/WEBAPP/_rs/';
+                forgotUrl = `${baseUrl.origin}${basePath}unlockaccountsendemail.aspx?forgotPassword=1`;
+            } catch {
+                forgotUrl = portalUrl.replace(/(?:RequestLogin|Login|SupportHome|CustomerHome|CustomerDetails)\.aspx.*/, 'unlockaccountsendemail.aspx?forgotPassword=1');
+            }
+
+            await this._goto(page, forgotUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(3000);
+
+            // Fill email and submit
+            const emailField = page.locator('input[type=text], input[type=email]').first();
+            if (!await emailField.isVisible().catch(() => false)) {
+                return { success: false, reason: 'Password reset email field not found' };
+            }
+            await emailField.fill(email);
+            await page.locator('input[type=submit]').first().click({ force: true });
+            await page.waitForTimeout(5000);
+
+            // Wait for reset email
+            const timeoutMs = parseInt(process.env.PORTAL_VERIFICATION_TIMEOUT_MS || '120000', 10);
+            const inboxCandidates = [email, process.env.REQUESTS_INBOX].filter(Boolean);
+            let resetLink = null;
+
+            for (const inboxAddress of inboxCandidates) {
+                try {
+                    const helper = new EmailVerificationHelper({ inboxAddress, pollIntervalMs: 5000 });
+                    const link = await helper.waitForCode({
+                        pattern: GOVQA_RESET_LINK_PATTERN,
+                        timeoutMs,
+                        fromEmail: 'govqa',
+                    });
+                    if (link) {
+                        resetLink = String(link).trim();
+                        break;
+                    }
+                } catch {}
+            }
+
+            if (!resetLink) {
+                return { success: false, reason: 'Password reset email not received' };
+            }
+
+            // Open the reset link
+            await this._goto(page, resetLink, { providerHint: 'govqa' });
+            await page.waitForTimeout(5000);
+
+            // Fill new password
+            const newPassword = 'FoiaBot2026!' + crypto.randomBytes(2).toString('hex');
+            const passwordFields = await page.locator('input[type=password]').all();
+            if (passwordFields.length < 2) {
+                return { success: false, reason: 'Password reset form not found' };
+            }
+            await passwordFields[0].fill(newPassword);
+            await passwordFields[1].fill(newPassword);
+            await page.locator('input[type=submit]').first().click({ force: true });
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState('networkidle').catch(() => {});
+
+            // Check if we're logged in or can login now
+            const bodyText = await page.locator('body').innerText().catch(() => '');
+            if (bodyText.includes('Logged in') || page.url().includes('CustomerHome')) {
+                return { success: true, newPassword };
+            }
+
+            // Try logging in with new password
+            let loginUrl;
+            try {
+                const baseUrl = new URL(portalUrl);
+                const pathMatch = baseUrl.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                const basePath = pathMatch ? pathMatch[1] : '/WEBAPP/_rs/';
+                loginUrl = `${baseUrl.origin}${basePath}RequestLogin.aspx`;
+            } catch {
+                loginUrl = portalUrl.replace(/(?:SupportHome|CustomerHome|CustomerDetails)\.aspx.*/, 'RequestLogin.aspx');
+            }
+            await this._goto(page, loginUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(3000);
+
+            const loginEmail = page.locator('#RequesLoginFormLayout_txtUsername_I, #ASPxFormLayout1_txtUserName_I').first();
+            if (await loginEmail.isVisible().catch(() => false)) {
+                await loginEmail.fill(email);
+                await page.locator('#RequesLoginFormLayout_txtPassword_I, #ASPxFormLayout1_txtPassword_I').first().fill(newPassword);
+                await page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I').first().click({ force: true });
+                await page.waitForTimeout(5000);
+                if (page.url().includes('CustomerHome') || (await page.locator('body').innerText()).includes('Logged in')) {
+                    return { success: true, newPassword };
+                }
+            }
+
+            return { success: false, reason: 'Login failed after password reset' };
+        } catch (err) {
+            return { success: false, reason: err?.message || 'Password recovery error' };
+        }
+    }
+
     async _ensureGovQAAccountAccess(page, portalUrl, {
         caseData,
         requester,
@@ -1693,10 +1795,25 @@ class PortalAgentServicePlaywright {
                     };
                 }
             }
+            // Login failed with generated password — try password recovery via email
+            const recoveryResult = await this._recoverGovQAPassword(page, portalUrl, email, requester);
+            if (recoveryResult?.success) {
+                const resolved = await this._saveResolvedPortalAccount({
+                    portalUrl, requester,
+                    credentials: { email, password: recoveryResult.newPassword },
+                    existingAccount, userId: caseData?.user_id || null,
+                    source: 'playwright_govqa_password_recovery',
+                }).catch(() => null);
+                return {
+                    success: true, status: 'account_recovered', accountEmail: email, portalAccount: resolved,
+                    step: { step: 'govqa_registration', outcome: 'password_recovered', url: page.url() },
+                    extracted_data: { provider: 'govqa', auth_method: 'password_recovery' },
+                };
+            }
             return {
                 success: false,
-                blocker: { status: 'govqa_account_already_exists', reason: 'GovQA account already exists but login failed' },
-                extracted_data: { provider: 'govqa', auth_method: 'registration_exists' },
+                blocker: { status: 'govqa_account_recovery_failed', reason: recoveryResult?.reason || 'GovQA password recovery failed' },
+                extracted_data: { provider: 'govqa', auth_method: 'password_recovery_failed' },
             };
         }
 
