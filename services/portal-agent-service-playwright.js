@@ -2805,6 +2805,11 @@ class PortalAgentServicePlaywright {
 
         if (passwordCount > 0) return 'auth_page';
         if (looksLikeAuthPage && visibleFields > 0 && visibleFields < 5 && emailLikeCount > 0) return 'auth_page';
+
+        // GovQA request forms use DevExpress controls that may not be standard inputs
+        const isGovQaRequestPage = /requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(currentUrl);
+        if (isGovQaRequestPage) return 'request_form';
+
         if (visibleFields >= 5) return 'request_form';
         if (buttonText.includes('make request') || buttonText.includes('new request') || buttonText.includes('submit a request')) {
             return 'landing_page';
