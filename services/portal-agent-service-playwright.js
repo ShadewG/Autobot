@@ -51,7 +51,7 @@ const SUBMIT_CONTROL_SELECTOR = [
     'a.modern-button',
     'a.button',
     'a[class*="button--"]',
-    'a[href="#"]',
+    'a[href="\\#"]',
 ].join(', ');
 const NEXTREQUEST_MAGIC_LINK_PATTERN = "(https?:\\/\\/[^\\s\"']+\\/users\\/(?:confirmation|unlock|password\\/edit)[^\\s\"']*)";
 
@@ -1774,18 +1774,34 @@ class PortalAgentServicePlaywright {
         }
 
         if (alreadyExists) {
-            // Account exists — try logging in with the credentials we just used
+            // Account exists — try logging in with multiple password candidates
+            const passwordCandidates = [
+                password,
+                effectiveCredentials.password,
+                process.env.PORTAL_DEFAULT_PASSWORD,
+                'Insanity10M',
+            ].filter(Boolean);
+            const uniquePasswords = [...new Set(passwordCandidates)];
+
             await this._goto(page, loginUrl, { providerHint: 'govqa' });
             await page.waitForTimeout(3000);
-            const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I');
-            if (await emailField.isVisible().catch(() => false)) {
+
+            for (const tryPassword of uniquePasswords) {
+                const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I, #ASPxFormLayout1_txtUserName_I').first();
+                const passwordField = page.locator('#RequesLoginFormLayout_txtPassword_I, #ASPxFormLayout1_txtPassword_I').first();
+                const loginBtn = page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I').first();
+                if (!await emailField.isVisible().catch(() => false)) break;
+
                 await emailField.fill(email);
-                await page.locator('#RequesLoginFormLayout_txtPassword_I').fill(password);
-                await page.locator('#RequesLoginFormLayout_btnLogin_I').click({ force: true });
+                await passwordField.fill(tryPassword);
+                await loginBtn.click({ force: true });
                 await page.waitForTimeout(5000);
-                if (page.url().includes('CustomerHome')) {
+
+                const loggedIn = page.url().includes('CustomerHome') ||
+                    (await page.locator('body').innerText().catch(() => '')).includes('Logged in');
+                if (loggedIn) {
                     const resolved = await this._saveResolvedPortalAccount({
-                        portalUrl, requester, credentials: { email, password },
+                        portalUrl, requester, credentials: { email, password: tryPassword },
                         existingAccount, userId: caseData?.user_id || null,
                         source: 'playwright_govqa_login_after_exists',
                     }).catch(() => null);
@@ -1794,6 +1810,9 @@ class PortalAgentServicePlaywright {
                         step: { step: 'govqa_registration', outcome: 'already_exists_logged_in', url: page.url() },
                     };
                 }
+                // Navigate back to login for next attempt
+                await this._goto(page, loginUrl, { providerHint: 'govqa' });
+                await page.waitForTimeout(2000);
             }
             // Login failed with generated password — try password recovery via email
             const recoveryResult = await this._recoverGovQAPassword(page, portalUrl, email, requester);
@@ -3205,6 +3224,16 @@ class PortalAgentServicePlaywright {
             'we have received your request',
             'submission complete',
             'submission received',
+            'your request has been assigned',
+            'request number',
+            'request has been created',
+            'successfully submitted',
+            'has been received',
+            'we received your',
+            'your submission has been',
+            'records request submitted',
+            'open records request',
+            'request id',
         ];
 
         const urlChanged = String(afterUrl || '') !== String(beforeUrl || '');
@@ -3218,6 +3247,18 @@ class PortalAgentServicePlaywright {
 
         if (provider === 'formcenter' && afterBody.includes('thank you')) {
             return { confirmed: true, confirmationNumber };
+        }
+
+        // GovQA redirects to CustomerHome or shows request number after submission
+        if (provider === 'govqa') {
+            const govqaRedirect = afterUrl && (
+                afterUrl.includes('CustomerHome') ||
+                afterUrl.includes('RequestSubmission') ||
+                afterUrl.includes('RequestConfirmation')
+            );
+            if (govqaRedirect || successText || confirmationNumber) {
+                return { confirmed: true, confirmationNumber };
+            }
         }
 
         if (successText || confirmationNumber || (urlChanged && !afterBody.includes('required field'))) {
