@@ -1670,16 +1670,19 @@ class PortalAgentServicePlaywright {
             };
         }
 
-        await page.waitForTimeout(10000);
-        await page.waitForLoadState('networkidle').catch(() => {});
-
-        // Verify the registration form loaded (different GovQA versions use different headings)
-        const hasRegForm = await page.evaluate(() => {
-            const text = document.body.innerText || '';
-            const hasEmailField = text.includes('Email Address') || text.includes('Email Address / Username');
-            const hasPasswordField = text.includes('Password');
-            return hasEmailField && hasPasswordField;
-        });
+        // Wait for DevExpress to render the registration form (some portals are slow)
+        let hasRegForm = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState('networkidle').catch(() => {});
+            hasRegForm = await page.evaluate(() => {
+                const text = document.body.innerText || '';
+                const hasEmailField = text.includes('Email Address') || text.includes('Email Address / Username');
+                const hasPasswordField = text.includes('Password');
+                return hasEmailField && hasPasswordField;
+            });
+            if (hasRegForm) break;
+        }
         if (!hasRegForm) {
             return {
                 success: false,
@@ -2705,13 +2708,20 @@ class PortalAgentServicePlaywright {
     }
 
     async _navigateGovQa(page, caseData) {
-        if (/requestlogin\.aspx|customerhome\.aspx/i.test(page.url())) {
+        if (/requestlogin\.aspx/i.test(page.url())) {
             return {
                 step: {
                     step: 'navigate_govqa_existing',
                     url: page.url(),
                 },
             };
+        }
+
+        // If on CustomerHome (logged in), navigate to SupportHome to find request links
+        if (/customerhome\.aspx/i.test(page.url())) {
+            const supportUrl = page.url().replace(/CustomerHome\.aspx.*/i, 'SupportHome.aspx');
+            await this._goto(page, supportUrl, { providerHint: 'govqa' });
+            await page.waitForTimeout(2000);
         }
 
         const submitRequest = page.getByRole('link', { name: /submit a request/i }).first();
