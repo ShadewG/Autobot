@@ -49,7 +49,20 @@ router.patch('/:id', async (req, res) => {
             updates.portal_provider = req.body.portal_provider || null;
         }
 
-        if (Object.keys(updates).length === 0) {
+        // Allow restoring a bugged case to a safe review status
+        const RESTORE_FROM_BUGGED_STATUSES = ['needs_human_review', 'ready_to_send'];
+        if (req.body.status !== undefined) {
+            if (!RESTORE_FROM_BUGGED_STATUSES.includes(req.body.status)) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Invalid status. Must be one of: ${RESTORE_FROM_BUGGED_STATUSES.join(', ')}`
+                });
+            }
+            updates.status = req.body.status;
+            updates.__allowRestoreFromBugged = true;
+        }
+
+        if (Object.keys(updates).filter(k => k !== '__allowRestoreFromBugged').length === 0) {
             return res.status(400).json({
                 success: false,
                 error: 'No valid fields to update'
