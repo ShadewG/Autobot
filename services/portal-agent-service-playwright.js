@@ -1376,8 +1376,10 @@ class PortalAgentServicePlaywright {
                         await page.waitForTimeout(5000);
                         await page.waitForLoadState('networkidle').catch(() => {});
 
-                        // Check if relogin actually worked (not still on login page)
-                        const reloginFailed = page.url().includes('RequestLogin') || page.url().includes('Login.aspx');
+                        // Verify relogin by checking page text (URL stays on login page for GovQA redirects)
+                        const reloginText = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
+                        const reloginFailed = reloginText.includes('invalid') || reloginText.includes('incorrect') ||
+                            (!reloginText.includes('logged in') && !reloginText.includes('my request') && !reloginText.includes('my records'));
                         if (reloginFailed) {
                             // Try password recovery
                             const recoveryResult = await this._recoverGovQAPassword(page, normalizedUrl, portalAccount.email, requester).catch(() => null);
