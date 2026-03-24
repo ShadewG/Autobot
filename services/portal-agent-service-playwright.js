@@ -1811,11 +1811,18 @@ class PortalAgentServicePlaywright {
                 'City': ['[id*=txtCity_I]', '[id*=City_I]'],
                 'Zip': ['[id*=txtZip_I]', '[id*=Zip_I]'],
             };
+            const isMaskedField = labelText === 'Phone';
             const selectors = idPatterns[labelText] || [];
             for (const sel of selectors) {
                 const loc = page.locator(sel).first();
                 if (await loc.isVisible({ timeout: 2000 }).catch(() => false)) {
-                    await loc.fill(value);
+                    if (isMaskedField) {
+                        // DevExpress masked inputs need click + type instead of fill
+                        await loc.click();
+                        await loc.pressSequentially(value, { delay: 50 });
+                    } else {
+                        await loc.fill(value);
+                    }
                     return;
                 }
             }
