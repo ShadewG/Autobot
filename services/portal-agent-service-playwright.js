@@ -1397,9 +1397,20 @@ class PortalAgentServicePlaywright {
                             }
                         } else {
                             summary.steps.push({ step: 'govqa_relogin', url: page.url() });
-                            // After successful relogin, wait for redirect to request form
-                            await page.waitForTimeout(3000);
-                            await page.waitForLoadState('networkidle').catch(() => {});
+                            // After successful relogin, navigate directly to request page
+                            // GovQA's login page doesn't always auto-redirect after re-auth
+                            if (/RequestLogin\.aspx|Login\.aspx/i.test(page.url())) {
+                                let requestUrl;
+                                try {
+                                    const bu = new URL(page.url());
+                                    const pm = bu.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                                    requestUrl = `${bu.origin}${pm ? pm[1] : '/WEBAPP/_rs/'}requestselect.aspx?sSessionID=&rqst=3`;
+                                } catch {
+                                    requestUrl = page.url().replace(/RequestLogin\.aspx.*|Login\.aspx.*/, 'requestselect.aspx?sSessionID=&rqst=3');
+                                }
+                                await this._goto(page, requestUrl, { providerHint: 'govqa' });
+                                await page.waitForTimeout(3000);
+                            }
                         }
 
                         // Re-detect page kind after relogin
