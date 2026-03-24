@@ -388,8 +388,18 @@ function scoreGovQaRequestLink(agencyName, linkText) {
     if (agency.includes('police') && text.includes('police')) score += 8;
     if (agency.includes('sheriff') && text.includes('sheriff')) score += 8;
     if (agency.includes('fire') && text.includes('fire')) score += 5;
-    if (text.includes('open records request')) score += 3;
+    if (text.includes('public safety')) score += 10;
+    if (text.includes('open records request')) score += 12;
+    if (text.includes('submit an open records')) score += 15;
+    if (text.includes('submit a request')) score += 12;
     if (text.includes('submit')) score += 1;
+
+    // Penalize non-submission links
+    if (text.includes('search')) score -= 10;
+    if (text.includes('faq')) score -= 5;
+    if (text.includes('trending')) score -= 5;
+    if (text.includes('my records center') || text.includes('my request')) score -= 5;
+    if (text.includes('view my')) score -= 5;
 
     return score;
 }
@@ -1356,6 +1366,64 @@ class PortalAgentServicePlaywright {
                     summary.success = Boolean(submitOutcome.confirmed);
                 }
             } else if (pageKind === 'auth_page') {
+                // GovQA: auto-relogin when department navigation requires re-authentication
+                if (provider === 'govqa' && portalAccount?.email && portalAccount?.password) {
+                    const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I, #ASPxFormLayout1_txtUserName_I').first();
+                    if (await emailField.isVisible().catch(() => false)) {
+                        await emailField.fill(portalAccount.email);
+                        await page.locator('#RequesLoginFormLayout_txtPassword_I, #ASPxFormLayout1_txtPassword_I').first().fill(portalAccount.password);
+                        await page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I').first().click({ force: true });
+                        await page.waitForTimeout(5000);
+                        await page.waitForLoadState('networkidle').catch(() => {});
+                        summary.steps.push({ step: 'govqa_relogin', url: page.url() });
+
+                        // Re-detect page kind after relogin
+                        const newPageKind = await this._detectPageKind(page);
+                        if (newPageKind === 'request_form') {
+                            // Rerun the field analysis and form fill
+                            const newFieldAnalysis = await this._analyzeVisibleFields(page);
+                            await this._writeJson(path.join(artifactsDir, 'fields.json'), newFieldAnalysis.visibleFields);
+
+                            const reRichText = await this._fillRichTextEditors(page, { caseData, requester }).catch(() => false);
+                            if (reRichText) summary.steps.push({ step: 'rich_text_filled', editor: reRichText });
+                            const reDropdowns = await this._fillCustomDropdowns(page, { caseData }).catch(() => false);
+                            if (reDropdowns) summary.steps.push({ step: 'custom_dropdown_filled' });
+
+                            fillSummary = await this._fillVisibleFields(page, newFieldAnalysis.visibleFields, {
+                                caseData, requester, portalAccount, pageKind: 'request_form',
+                            });
+                            if (summary.dryRun) {
+                                summary.status = fillSummary.filled.length > 0 ? 'dry_run_form_filled' : 'dry_run_form_detected';
+                                summary.success = true;
+                            } else {
+                                const submitOutcome = await this._submitFilledRequest(page, provider);
+                                summary.submissionAttempted = Boolean(submitOutcome.attempted);
+                                summary.submissionConfirmed = Boolean(submitOutcome.confirmed);
+                                summary.fallback_safe = submitOutcome.fallbackSafe !== false;
+                                summary.confirmationNumber = submitOutcome.confirmationNumber || null;
+                                if (submitOutcome.step) summary.steps.push(submitOutcome.step);
+                                if (submitOutcome.blocker) {
+                                    summary.blockers.push(submitOutcome.blocker);
+                                    summary.error = submitOutcome.blocker.reason || summary.error;
+                                }
+                                summary.status = submitOutcome.status || 'submission_failed';
+                                summary.success = Boolean(submitOutcome.confirmed);
+                            }
+                            summary.pageKind = 'request_form';
+                            summary.fieldAnalysis = { totalFields: newFieldAnalysis.totalFields, visibleFields: newFieldAnalysis.visibleFields?.length || 0 };
+                            summary.fieldsFilled = fillSummary.filled;
+                            summary.fieldsSkipped = fillSummary.skipped;
+                        } else {
+                            summary.status = 'auth_required';
+                            summary.blockers.push({ status: 'auth_required', reason: 'GovQA relogin did not reach request form' });
+                            summary.success = false;
+                        }
+                    } else {
+                        summary.status = 'auth_required';
+                        summary.blockers.push({ status: 'auth_required', reason: 'Portal requires login' });
+                        summary.success = false;
+                    }
+                } else {
                 fillSummary = await this._fillVisibleFields(page, fieldAnalysis.visibleFields, {
                     caseData,
                     requester,
@@ -1372,6 +1440,7 @@ class PortalAgentServicePlaywright {
                         reason: 'Portal requires login or account creation before request submission',
                     });
                     summary.success = false;
+                }
                 }
             } else if (pageKind === 'landing_page') {
                 summary.status = 'landing_page_detected';
@@ -1621,11 +1690,20 @@ class PortalAgentServicePlaywright {
                 await page.waitForTimeout(5000);
                 await page.waitForLoadState('networkidle').catch(() => {});
 
-                const loggedIn = await page.evaluate(() => {
-                    const text = document.body.innerText || '';
-                    return text.includes('Logged in as') || text.includes('My Records Center') || text.includes('CustomerHome');
-                });
-                if (loggedIn || page.url().includes('CustomerHome')) {
+                // Verify login by navigating to SupportHome — if session is valid we stay, otherwise redirect to login
+                let supportUrl;
+                try {
+                    const baseUrl = new URL(page.url());
+                    const pathMatch = baseUrl.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                    supportUrl = `${baseUrl.origin}${pathMatch ? pathMatch[1] : '/WEBAPP/_rs/'}SupportHome.aspx`;
+                } catch {
+                    supportUrl = loginUrl.replace(/(?:RequestLogin|Login|CustomerHome|CustomerDetails)\.aspx.*/, 'SupportHome.aspx');
+                }
+                await this._goto(page, supportUrl, { providerHint: 'govqa' });
+                await page.waitForTimeout(3000);
+
+                const loggedIn = !page.url().includes('RequestLogin') && !page.url().includes('Login.aspx');
+                if (loggedIn) {
                     await this._saveResolvedPortalAccount({
                         portalUrl,
                         requester,
@@ -1749,12 +1827,12 @@ class PortalAgentServicePlaywright {
         await page.waitForLoadState('networkidle').catch(() => {});
 
         const loggedIn = await page.evaluate(() => {
-            const text = document.body.innerText || '';
-            return text.includes('Logged in as') || text.includes('My Records Center');
+            const text = (document.body.innerText || '').toLowerCase();
+            return text.includes('logged in') || text.includes('my records center') || text.includes('my request center') || text.includes('my records');
         });
         const alreadyExists = await page.evaluate(() => {
-            const text = document.body.innerText || '';
-            return text.includes('already exists') || text.includes('already registered');
+            const text = (document.body.innerText || '').toLowerCase();
+            return text.includes('already exists') || text.includes('already registered') || text.includes('email address already');
         });
 
         if (loggedIn || page.url().includes('CustomerHome')) {
@@ -2615,35 +2693,38 @@ class PortalAgentServicePlaywright {
 
             // Try BotDetect / image CAPTCHA (used by GovQA)
             const botDetectImg = await page.evaluate(() => {
-                const img = document.querySelector('.BDC_CaptchaImage, img[id*=CaptchaImage], img[src*=BotDetectCaptcha], img[src*=captcha]');
+                const img = document.querySelector('.BDC_CaptchaImage, img[id*=CaptchaImage], img[src*=BotDetectCaptcha]');
                 if (!img || !img.src) return null;
-                const input = document.querySelector('[id*=CaptchaCodeTextBox], input[id*=captcha][type=text], input[name*=captcha]');
+                // Find the text input (NOT the hidden VCID input)
+                const input = document.querySelector('[id*=CaptchaCodeTextBox], input[id*=CaptchaCode]');
                 return {
                     src: img.src,
                     inputId: input ? input.id : null,
-                    inputName: input ? input.name : null,
                 };
             }).catch(() => null);
 
             if (botDetectImg?.src && botDetectImg.inputId) {
-                // Download the CAPTCHA image as base64
-                const imgBuffer = await page.evaluate(async (src) => {
-                    const resp = await fetch(src);
-                    const blob = await resp.blob();
-                    return new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                        reader.readAsDataURL(blob);
-                    });
-                }, botDetectImg.src).catch(() => null);
+                // Screenshot the captcha image element directly (more reliable than fetch)
+                const captchaImgEl = page.locator('.BDC_CaptchaImage, img[id*=CaptchaImage]').first();
+                let imgBuffer = null;
+                try {
+                    const screenshotBuffer = await captchaImgEl.screenshot();
+                    imgBuffer = screenshotBuffer.toString('base64');
+                } catch {
+                    // Fallback: try fetch with credentials
+                    imgBuffer = await page.evaluate(async (src) => {
+                        const resp = await fetch(src, { credentials: 'include' });
+                        const blob = await resp.blob();
+                        return new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                            reader.readAsDataURL(blob);
+                        });
+                    }, botDetectImg.src).catch(() => null);
+                }
 
-                if (imgBuffer) {
-                    const result = await solver.imageCaptcha({
-                        body: imgBuffer,
-                        numeric: 0,
-                        min_len: 4,
-                        max_len: 8,
-                    });
+                if (imgBuffer && imgBuffer.length > 100) {
+                    const result = await solver.imageCaptcha(imgBuffer);
                     if (result?.data) {
                         await page.locator(`#${botDetectImg.inputId}`).fill(result.data);
                         return { solved: true, type: 'botdetect_image', text: result.data };
@@ -2777,32 +2858,41 @@ class PortalAgentServicePlaywright {
             await page.waitForTimeout(1200);
         }
 
-        const tileOptions = await page.locator('div.live-tile[role="link"]').evaluateAll((elements) => {
-            return elements.map((element, index) => ({
-                index,
-                kind: 'tile',
-                text: (element.textContent || '').trim(),
-                href: element.getAttribute('data-link') || '',
-            }));
-        }).catch(() => []);
+        // Navigate through GovQA tile pages (may need multiple clicks for multi-level departments)
+        let lastMatchedLink = null;
+        for (let navPass = 0; navPass < 3; navPass++) {
+            // Stop if we reached a request form URL
+            const rawUrl = page.url();
+            if (/requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(rawUrl)) break;
 
-        const linkOptions = await page.locator('a').evaluateAll((elements) => {
-            return elements.map((element, index) => ({
-                index,
-                kind: 'link',
-                text: (element.textContent || '').trim(),
-                href: element.getAttribute('href') || '',
-            }));
-        }).catch(() => []);
+            const tileOptions = await page.locator('div.live-tile[role="link"]').evaluateAll((elements) => {
+                return elements.map((element, index) => ({
+                    index,
+                    kind: 'tile',
+                    text: (element.textContent || '').trim(),
+                    href: element.getAttribute('data-link') || '',
+                }));
+            }).catch(() => []);
 
-        const best = [...tileOptions, ...linkOptions]
-            .map((option) => ({
-                ...option,
-                score: scoreGovQaRequestLink(caseData?.agency_name, option.text),
-            }))
-            .sort((left, right) => right.score - left.score)[0];
+            const linkOptions = await page.locator('a').evaluateAll((elements) => {
+                return elements.map((element, index) => ({
+                    index,
+                    kind: 'link',
+                    text: (element.textContent || '').trim(),
+                    href: element.getAttribute('href') || '',
+                }));
+            }).catch(() => []);
 
-        if (best && best.score > 0) {
+            const best = [...tileOptions, ...linkOptions]
+                .map((option) => ({
+                    ...option,
+                    score: scoreGovQaRequestLink(caseData?.agency_name, option.text),
+                }))
+                .sort((left, right) => right.score - left.score)[0];
+
+            if (!best || best.score <= 0) break;
+
+            lastMatchedLink = best.text;
             const locator = best.kind === 'tile'
                 ? page.locator('div.live-tile[role="link"]').nth(best.index)
                 : page.locator('a').nth(best.index);
@@ -2810,14 +2900,14 @@ class PortalAgentServicePlaywright {
                 page.waitForLoadState('domcontentloaded'),
                 locator.click(),
             ]);
-            await page.waitForTimeout(1200);
+            await page.waitForTimeout(2000);
         }
 
         return {
             step: {
                 step: 'navigate_govqa',
                 url: page.url(),
-                matchedLink: best?.text || null,
+                matchedLink: lastMatchedLink || null,
             },
         };
     }
