@@ -1397,10 +1397,19 @@ class PortalAgentServicePlaywright {
                             }
                         } else {
                             summary.steps.push({ step: 'govqa_relogin', url: page.url() });
+                            // After successful relogin, wait for redirect to request form
+                            await page.waitForTimeout(3000);
+                            await page.waitForLoadState('networkidle').catch(() => {});
                         }
 
                         // Re-detect page kind after relogin
-                        const newPageKind = await this._detectPageKind(page);
+                        const rawUrlAfterRelogin = page.url();
+                        let newPageKind;
+                        if (/requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(rawUrlAfterRelogin)) {
+                            newPageKind = 'request_form';
+                        } else {
+                            newPageKind = await this._detectPageKind(page);
+                        }
                         if (newPageKind === 'request_form') {
                             // Rerun the field analysis and form fill
                             const newFieldAnalysis = await this._analyzeVisibleFields(page);
