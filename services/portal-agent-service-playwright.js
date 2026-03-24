@@ -1375,7 +1375,27 @@ class PortalAgentServicePlaywright {
                         await page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I').first().click({ force: true });
                         await page.waitForTimeout(5000);
                         await page.waitForLoadState('networkidle').catch(() => {});
-                        summary.steps.push({ step: 'govqa_relogin', url: page.url() });
+
+                        // Check if relogin actually worked (not still on login page)
+                        const reloginFailed = page.url().includes('RequestLogin') || page.url().includes('Login.aspx');
+                        if (reloginFailed) {
+                            // Try password recovery
+                            const recoveryResult = await this._recoverGovQAPassword(page, normalizedUrl, portalAccount.email, requester).catch(() => null);
+                            if (recoveryResult?.success) {
+                                portalAccount.password = recoveryResult.newPassword;
+                                await this._saveResolvedPortalAccount({
+                                    portalUrl: normalizedUrl, requester,
+                                    credentials: { email: portalAccount.email, password: recoveryResult.newPassword },
+                                    existingAccount: portalAccount, userId: caseData?.user_id || null,
+                                    source: 'playwright_govqa_relogin_recovery',
+                                }).catch(() => null);
+                                summary.steps.push({ step: 'govqa_relogin', outcome: 'password_recovered', url: page.url() });
+                            } else {
+                                summary.steps.push({ step: 'govqa_relogin', outcome: 'failed', url: page.url() });
+                            }
+                        } else {
+                            summary.steps.push({ step: 'govqa_relogin', url: page.url() });
+                        }
 
                         // Re-detect page kind after relogin
                         const newPageKind = await this._detectPageKind(page);
@@ -1678,8 +1698,10 @@ class PortalAgentServicePlaywright {
             }
         }
 
-        // If we have existing credentials, try logging in first
-        if (existingAccount?.email && existingAccount?.password) {
+        // If we have existing credentials and account is not locked, try logging in first
+        const accountUsable = existingAccount?.email && existingAccount?.password &&
+            existingAccount.account_status !== 'locked' && existingAccount.account_status !== 'inactive';
+        if (accountUsable) {
             // Handle both GovQA login form variants
             const emailField = page.locator('#RequesLoginFormLayout_txtUsername_I, #ASPxFormLayout1_txtUserName_I').first();
             const passwordField = page.locator('#RequesLoginFormLayout_txtPassword_I, #ASPxFormLayout1_txtPassword_I').first();
@@ -1884,8 +1906,17 @@ class PortalAgentServicePlaywright {
                 await loginBtn.click({ force: true });
                 await page.waitForTimeout(5000);
 
-                const loggedIn = page.url().includes('CustomerHome') ||
-                    (await page.locator('body').innerText().catch(() => '')).includes('Logged in');
+                // Verify login by navigating to SupportHome
+                let verifyUrl;
+                try {
+                    const bu = new URL(page.url());
+                    const pm = bu.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                    verifyUrl = `${bu.origin}${pm ? pm[1] : '/WEBAPP/_rs/'}SupportHome.aspx`;
+                } catch { verifyUrl = loginUrl.replace(/(?:RequestLogin|Login)\.aspx.*/, 'SupportHome.aspx'); }
+                await this._goto(page, verifyUrl, { providerHint: 'govqa' });
+                await page.waitForTimeout(3000);
+
+                const loggedIn = !page.url().includes('RequestLogin') && !page.url().includes('Login.aspx');
                 if (loggedIn) {
                     const resolved = await this._saveResolvedPortalAccount({
                         portalUrl, requester, credentials: { email, password: tryPassword },
