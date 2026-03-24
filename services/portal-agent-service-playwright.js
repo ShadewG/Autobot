@@ -1736,6 +1736,12 @@ class PortalAgentServicePlaywright {
             .click({ force: true }).catch(() => {});
         await page.waitForTimeout(1000);
 
+        // Solve BotDetect CAPTCHA if present on registration form
+        const regCaptchaSolved = await this._solveCaptcha(page).catch(() => null);
+        if (regCaptchaSolved?.solved) {
+            await page.waitForTimeout(500);
+        }
+
         // Submit registration (try both button patterns)
         await page.locator('#btnSaveData_I, [id*=btnSave], input[type=submit][value*=Submit], input[type=submit][value*=Create]').first()
             .click({ force: true });
@@ -2605,6 +2611,44 @@ class PortalAgentServicePlaywright {
                     if (textarea) textarea.value = token;
                 }, result.data);
                 return { solved: true, type: 'hcaptcha', sitekey: hcaptchaSitekey };
+            }
+
+            // Try BotDetect / image CAPTCHA (used by GovQA)
+            const botDetectImg = await page.evaluate(() => {
+                const img = document.querySelector('.BDC_CaptchaImage, img[id*=CaptchaImage], img[src*=BotDetectCaptcha], img[src*=captcha]');
+                if (!img || !img.src) return null;
+                const input = document.querySelector('[id*=CaptchaCodeTextBox], input[id*=captcha][type=text], input[name*=captcha]');
+                return {
+                    src: img.src,
+                    inputId: input ? input.id : null,
+                    inputName: input ? input.name : null,
+                };
+            }).catch(() => null);
+
+            if (botDetectImg?.src && botDetectImg.inputId) {
+                // Download the CAPTCHA image as base64
+                const imgBuffer = await page.evaluate(async (src) => {
+                    const resp = await fetch(src);
+                    const blob = await resp.blob();
+                    return new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                        reader.readAsDataURL(blob);
+                    });
+                }, botDetectImg.src).catch(() => null);
+
+                if (imgBuffer) {
+                    const result = await solver.imageCaptcha({
+                        body: imgBuffer,
+                        numeric: 0,
+                        min_len: 4,
+                        max_len: 8,
+                    });
+                    if (result?.data) {
+                        await page.locator(`#${botDetectImg.inputId}`).fill(result.data);
+                        return { solved: true, type: 'botdetect_image', text: result.data };
+                    }
+                }
             }
 
             return null;
