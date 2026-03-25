@@ -1806,6 +1806,33 @@ class PortalAgentServicePlaywright {
             if (hasRegForm) break;
         }
         if (!hasRegForm) {
+            // Fallback: try Login.aspx with #lnkCreateUser link (some portals render differently)
+            let fallbackLoginUrl;
+            try {
+                const bu = new URL(page.url() || portalUrl);
+                const pm = bu.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
+                fallbackLoginUrl = `${bu.origin}${pm ? pm[1] : '/WEBAPP/_rs/'}Login.aspx`;
+            } catch { fallbackLoginUrl = null; }
+
+            if (fallbackLoginUrl) {
+                await this._goto(page, fallbackLoginUrl, { providerHint: 'govqa' });
+                await page.waitForTimeout(3000);
+                const fallbackLink = page.locator('#lnkCreateUser, a[href*=CustomerDetails][href*=new]').first();
+                if (await fallbackLink.isVisible().catch(() => false)) {
+                    await fallbackLink.click();
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                        await page.waitForTimeout(5000);
+                        hasRegForm = await page.evaluate(() => {
+                            const text = document.body.innerText || '';
+                            return (text.includes('Email Address') || text.includes('Email Address / Username')) && text.includes('Password');
+                        });
+                        if (hasRegForm) break;
+                    }
+                }
+            }
+        }
+
+        if (!hasRegForm) {
             return {
                 success: false,
                 blocker: {
