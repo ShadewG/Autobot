@@ -3008,7 +3008,27 @@ class PortalAgentServicePlaywright {
                 }))
                 .sort((left, right) => right.score - left.score)[0];
 
-            if (!best || best.score <= 0) break;
+            if (!best || best.score <= 0) {
+                // AI vision — ask GPT-4o what to click when scoring fails
+                if (portalAiVision) {
+                    const aiNav = await portalAiVision.chooseNavigationTarget(
+                        page, caseData?.agency_name || '', 'Submit a public records request for police records'
+                    ).catch(() => null);
+                    if (aiNav?.clickText && aiNav.confidence > 50) {
+                        const aiLocator = page.locator(`text="${aiNav.clickText}"`).first();
+                        if (await aiLocator.isVisible().catch(() => false)) {
+                            lastMatchedLink = aiNav.clickText;
+                            await Promise.allSettled([
+                                page.waitForLoadState('domcontentloaded'),
+                                aiLocator.click(),
+                            ]);
+                            await page.waitForTimeout(2000);
+                            continue;
+                        }
+                    }
+                }
+                break;
+            }
 
             lastMatchedLink = best.text;
             const locator = best.kind === 'tile'
@@ -3068,7 +3088,7 @@ class PortalAgentServicePlaywright {
             return 'landing_page';
         }
 
-        // AI fallback — ask GPT-4o to classify the page
+        // AI vision — always ask GPT-4o for a second opinion on page type
         if (portalAiVision) {
             const aiKind = await portalAiVision.detectPageKind(page).catch(() => null);
             if (aiKind && aiKind !== 'unknown') return aiKind;
@@ -3255,10 +3275,10 @@ class PortalAgentServicePlaywright {
 
         for (const field of fields) {
             let value = mapFieldValue(field, context);
-            // AI fallback for unmapped fields (skip search, captcha, and checkbox fields)
-            if ((value === null || value === undefined || value === '') && portalAiVision && field.tag !== 'select' && field.type !== 'checkbox') {
+            // AI vision for unmapped fields — always try AI when rule-based has no answer
+            if ((value === null || value === undefined || value === '') && portalAiVision && field.type !== 'checkbox') {
                 const fieldLabel = field.label || field.name || field.id || '';
-                if (fieldLabel && !fieldLabel.toLowerCase().includes('search') && !fieldLabel.toLowerCase().includes('captcha')) {
+                if (fieldLabel && !/search|captcha|file|upload|attach/i.test(fieldLabel)) {
                     value = await portalAiVision.mapUnknownField(page, fieldLabel, context.caseData, context.requester).catch(() => null);
                 }
             }
@@ -3314,7 +3334,7 @@ class PortalAgentServicePlaywright {
             submitControl = await this._findSubmitControlIncludingDisabled(page);
         }
         if (!submitControl && portalAiVision) {
-            // AI fallback — ask GPT-4o to find the submit button
+            // AI vision — ask GPT-4o to find the submit button
             const aiButton = await portalAiVision.findSubmitButton(page).catch(() => null);
             if (aiButton?.found && aiButton.buttonText) {
                 const aiLocator = page.getByRole('button', { name: new RegExp(aiButton.buttonText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
@@ -3396,7 +3416,7 @@ class PortalAgentServicePlaywright {
             };
         }
 
-        // AI fallback — ask GPT-4o to check if submission was confirmed
+        // AI vision — ask GPT-4o to verify submission status
         if (portalAiVision) {
             const aiConfirmation = await portalAiVision.detectConfirmation(page).catch(() => null);
             if (aiConfirmation?.confirmed) {
