@@ -108,7 +108,7 @@ async function analyzePage(page, context = {}) {
         `"notes":"what you see"}`,
         { maxTokens: 1200 }
     );
-    try { return JSON.parse(result); } catch { return null; }
+    return parseJSON(result);
 }
 
 async function detectPageKind(page) {
@@ -128,7 +128,7 @@ async function findSubmitButton(page) {
         'Find the SUBMIT button on this form. Respond with JSON only:\n' +
         '{"found":true/false,"buttonText":"exact text","disabled":true/false}'
     );
-    try { return JSON.parse(result); } catch { return null; }
+    return parseJSON(result);
 }
 
 async function mapUnknownField(page, fieldLabel, caseData, requester) {
@@ -156,7 +156,7 @@ async function detectConfirmation(page) {
         'Was a form submission successful? Look for confirmation numbers, thank you messages, request received text.\n' +
         'Respond with JSON only: {"confirmed":true/false,"confirmationNumber":"number" or null,"reason":"explanation"}'
     );
-    try { return JSON.parse(result); } catch { return null; }
+    return parseJSON(result);
 }
 
 async function chooseNavigationTarget(page, agencyName, goal) {
@@ -166,7 +166,7 @@ async function chooseNavigationTarget(page, agencyName, goal) {
         `On a portal for "${agencyName}". Goal: ${goal}\n` +
         'What should I click? Respond with JSON only: {"clickText":"exact text","elementType":"link"|"button"|"tile","confidence":0-100}'
     );
-    try { return JSON.parse(result); } catch { return null; }
+    return parseJSON(result);
 }
 
 async function handleAuthPage(page, credentials = {}) {
@@ -181,7 +181,7 @@ async function handleAuthPage(page, credentials = {}) {
         '"loginButtonText":"text" or null,"isActuallyLoggedIn":true/false,' +
         '"linkToClick":"text" or null,"notes":"what you see"}'
     );
-    try { return JSON.parse(result); } catch { return null; }
+    return parseJSON(result);
 }
 
 async function navigateToForm(page, context = {}, maxSteps = 8) {
@@ -229,21 +229,54 @@ async function navigateToForm(page, context = {}, maxSteps = 8) {
             continue;
         }
 
-        if (analysis.action === 'fill_form' && analysis.fields?.length) {
+        if (analysis.action === 'fill_form' || (analysis.action === 'submit' && analysis.fields?.length)) {
             // AI provided field values — fill them
-            for (const field of analysis.fields) {
+            for (const field of (analysis.fields || [])) {
                 if (!field.label || !field.value) continue;
                 const loc = page.getByLabel(field.label).first();
                 if (await loc.isVisible().catch(() => false)) {
                     await loc.fill(field.value).catch(() => {});
                 }
             }
+            // Click submit if available
+            if (analysis.submitButton) {
+                const btn = page.locator(`text="${analysis.submitButton}"`).first();
+                if (await btn.isVisible().catch(() => false)) {
+                    await btn.click({ force: true }).catch(() => {});
+                    await page.waitForTimeout(5000);
+                    await page.waitForLoadState('networkidle').catch(() => {});
+                    continue;
+                }
+            }
+            // Try generic submit
+            await page.locator('input[type=submit], button[type=submit]').first().click({ force: true }).catch(() => {});
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState('networkidle').catch(() => {});
+            continue;
+        }
+
+        // If page is login and we have credentials, just login regardless of action
+        if (analysis.pageType === 'login' && context.credentials) {
+            const emailField = page.locator('input[type=email], input[type=text]').first();
+            const pwField = page.locator('input[type=password]').first();
+            if (await emailField.isVisible().catch(() => false)) await emailField.fill(context.credentials.email || '');
+            if (await pwField.isVisible().catch(() => false)) await pwField.fill(context.credentials.password || '');
+            await page.locator('input[type=submit], button[type=submit]').first().click({ force: true }).catch(() => {});
+            await page.waitForTimeout(5000);
+            await page.waitForLoadState('networkidle').catch(() => {});
             continue;
         }
 
         break;
     }
     return { success: false, steps };
+}
+
+function parseJSON(text) {
+    if (!text) return null;
+    // Strip markdown code fences
+    const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    try { return JSON.parse(cleaned); } catch { return null; }
 }
 
 module.exports = {

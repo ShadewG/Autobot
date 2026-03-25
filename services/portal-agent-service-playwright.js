@@ -1383,10 +1383,10 @@ class PortalAgentServicePlaywright {
                         await page.waitForTimeout(5000);
                         await page.waitForLoadState('networkidle').catch(() => {});
 
-                        // Verify relogin by checking page text (URL stays on login page for GovQA redirects)
+                        // Verify relogin — check for explicit failure indicators only
                         const reloginText = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
-                        const reloginFailed = reloginText.includes('invalid') || reloginText.includes('incorrect') ||
-                            (!reloginText.includes('logged in') && !reloginText.includes('my request') && !reloginText.includes('my records'));
+                        const reloginFailed = reloginText.includes('invalid email') || reloginText.includes('invalid username') ||
+                            reloginText.includes('incorrect password') || reloginText.includes('account locked');
                         if (reloginFailed) {
                             // Try password recovery
                             const recoveryResult = await this._recoverGovQAPassword(page, normalizedUrl, portalAccount.email, requester).catch(() => null);
@@ -1404,20 +1404,12 @@ class PortalAgentServicePlaywright {
                             }
                         } else {
                             summary.steps.push({ step: 'govqa_relogin', url: page.url() });
-                            // After successful relogin, navigate directly to request page
-                            // GovQA's login page doesn't always auto-redirect after re-auth
-                            if (/RequestLogin\.aspx|Login\.aspx/i.test(page.url())) {
-                                let requestUrl;
-                                try {
-                                    const bu = new URL(page.url());
-                                    const pm = bu.pathname.match(/^(\/WEBAPP\/_rs\/(?:\([^)]+\)\/)?)/i);
-                                    requestUrl = `${bu.origin}${pm ? pm[1] : '/WEBAPP/_rs/'}requestselect.aspx?sSessionID=&rqst=3`;
-                                } catch {
-                                    requestUrl = page.url().replace(/RequestLogin\.aspx.*|Login\.aspx.*/, 'requestselect.aspx?sSessionID=&rqst=3');
-                                }
-                                await this._goto(page, requestUrl, { providerHint: 'govqa' });
-                                await page.waitForTimeout(3000);
-                            }
+                            // After successful relogin, click the login button again to trigger redirect
+                            // GovQA embeds the target URL — a second submit should redirect
+                            await page.locator('#RequesLoginFormLayout_btnLogin_I, #ASPxFormLayout1_btnLogin_I, input[type=submit]').first()
+                                .click({ force: true }).catch(() => {});
+                            await page.waitForTimeout(5000);
+                            await page.waitForLoadState('networkidle').catch(() => {});
                         }
 
                         // Re-detect page kind after relogin
