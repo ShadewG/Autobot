@@ -1499,6 +1499,22 @@ class PortalAgentServicePlaywright {
                             summary.blockers.push({ status: 'auth_required', reason: 'GovQA relogin did not reach request form' });
                             summary.success = false;
                         }
+                    } else if (portalAiVision) {
+                        // No visible login field — try AI navigation
+                        const aiNav = await portalAiVision.navigateToForm(page, {
+                            caseData, requester,
+                            credentials: { email: portalAccount?.email, password: portalAccount?.password },
+                        }).catch(() => null);
+                        if (aiNav?.success) {
+                            summary.steps.push({ step: 'ai_navigation', steps: aiNav.steps?.length || 0 });
+                            summary.pageKind = 'request_form';
+                            summary.status = 'dry_run_form_detected';
+                            summary.success = true;
+                        } else {
+                            summary.status = 'auth_required';
+                            summary.blockers.push({ status: 'auth_required', reason: 'AI could not navigate past auth' });
+                            summary.success = false;
+                        }
                     } else {
                         summary.status = 'auth_required';
                         summary.blockers.push({ status: 'auth_required', reason: 'Portal requires login' });
