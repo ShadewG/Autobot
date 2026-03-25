@@ -3136,9 +3136,14 @@ class PortalAgentServicePlaywright {
             return 'landing_page';
         }
 
-        // AI vision — always ask GPT-4o for a second opinion on page type
+        // AI vision — always ask for a second opinion on page type
         if (portalAiVision) {
-            const aiKind = await portalAiVision.detectPageKind(page).catch(() => null);
+            let aiKind = await portalAiVision.detectPageKind(page).catch(() => null);
+            // Normalize AI responses to match our internal types
+            if (aiKind === 'login_page' || aiKind === 'registration_form') aiKind = 'auth_page';
+            if (aiKind === 'confirmation_page') aiKind = 'confirmation';
+            if (aiKind === 'department_selection') aiKind = 'landing_page';
+            if (aiKind === 'landing_page') aiKind = 'landing_page';
             if (aiKind && aiKind !== 'unknown') return aiKind;
         }
 
