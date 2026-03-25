@@ -400,6 +400,11 @@ function scoreGovQaRequestLink(agencyName, linkText) {
     if (text.includes('trending')) score -= 5;
     if (text.includes('my records center') || text.includes('my request')) score -= 5;
     if (text.includes('view my')) score -= 5;
+    if (text.includes('fees')) score -= 8;
+    if (text.includes('how ')) score -= 5;
+    if (text.includes('what ')) score -= 5;
+    if (text.includes('status')) score -= 5;
+    if (text.includes('track')) score -= 5;
 
     return score;
 }
