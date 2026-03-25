@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+let portalAiVision = null;
+try { portalAiVision = require('./portal-ai-vision'); } catch {}
 let chromium;
 try {
     const playwrightExtra = require('playwright-extra');
@@ -3065,6 +3067,13 @@ class PortalAgentServicePlaywright {
         if (buttonText.includes('make request') || buttonText.includes('new request') || buttonText.includes('submit a request')) {
             return 'landing_page';
         }
+
+        // AI fallback — ask GPT-4o to classify the page
+        if (portalAiVision) {
+            const aiKind = await portalAiVision.detectPageKind(page).catch(() => null);
+            if (aiKind && aiKind !== 'unknown') return aiKind;
+        }
+
         return 'unknown';
     }
 
@@ -3245,7 +3254,14 @@ class PortalAgentServicePlaywright {
         const skipped = [];
 
         for (const field of fields) {
-            const value = mapFieldValue(field, context);
+            let value = mapFieldValue(field, context);
+            // AI fallback for unmapped fields (skip search, captcha, and checkbox fields)
+            if ((value === null || value === undefined || value === '') && portalAiVision && field.tag !== 'select' && field.type !== 'checkbox') {
+                const fieldLabel = field.label || field.name || field.id || '';
+                if (fieldLabel && !fieldLabel.toLowerCase().includes('search') && !fieldLabel.toLowerCase().includes('captcha')) {
+                    value = await portalAiVision.mapUnknownField(page, fieldLabel, context.caseData, context.requester).catch(() => null);
+                }
+            }
             if (value === null || value === undefined || value === '') {
                 skipped.push({ field: field.label || field.name || field.id || field.type, reason: 'no_mapped_value' });
                 continue;
@@ -3295,8 +3311,23 @@ class PortalAgentServicePlaywright {
         }
         if (!submitControl) {
             // Last resort: find a disabled submit button and try to click it anyway
-            // (some frameworks enable on click or re-evaluate on interaction)
             submitControl = await this._findSubmitControlIncludingDisabled(page);
+        }
+        if (!submitControl && portalAiVision) {
+            // AI fallback — ask GPT-4o to find the submit button
+            const aiButton = await portalAiVision.findSubmitButton(page).catch(() => null);
+            if (aiButton?.found && aiButton.buttonText) {
+                const aiLocator = page.getByRole('button', { name: new RegExp(aiButton.buttonText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }).first();
+                if (await aiLocator.isVisible().catch(() => false)) {
+                    submitControl = aiLocator;
+                } else {
+                    // Try as link or generic text match
+                    const textLocator = page.locator(`text="${aiButton.buttonText}"`).first();
+                    if (await textLocator.isVisible().catch(() => false)) {
+                        submitControl = textLocator;
+                    }
+                }
+            }
         }
         if (!submitControl) {
             return {
@@ -3363,6 +3394,26 @@ class PortalAgentServicePlaywright {
                     url: afterUrl,
                 },
             };
+        }
+
+        // AI fallback — ask GPT-4o to check if submission was confirmed
+        if (portalAiVision) {
+            const aiConfirmation = await portalAiVision.detectConfirmation(page).catch(() => null);
+            if (aiConfirmation?.confirmed) {
+                return {
+                    attempted: true,
+                    confirmed: true,
+                    fallbackSafe: false,
+                    status: 'submitted_confirmation_detected',
+                    confirmationNumber: aiConfirmation.confirmationNumber || null,
+                    step: {
+                        step: 'submit_request',
+                        outcome: 'ai_confirmed',
+                        url: afterUrl,
+                        confirmationNumber: aiConfirmation.confirmationNumber || null,
+                    },
+                };
+            }
         }
 
         return {
