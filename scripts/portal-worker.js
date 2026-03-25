@@ -175,6 +175,22 @@ async function processPortalTask(db, playwright, caseRuntime, task, agentRunId) 
             }
         }
 
+        // ── FALLBACK: Skyvern ──
+        if ((!result?.success || !result?.submissionConfirmed) && result?.fallback_safe !== false) {
+            try {
+                const skyvern = require('../services/portal-agent-service-skyvern');
+                console.log('  Falling back to Skyvern...');
+                engineUsed = 'skyvern';
+                result = await skyvern.submitToPortal(caseData, portalUrl, {
+                    maxSteps: 60,
+                    dryRun: false,
+                    instructions: task.instructions,
+                });
+            } catch (skyvernErr) {
+                console.log(`  Skyvern error: ${skyvernErr.message}`);
+            }
+        }
+
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         if (result?.success && result?.submissionConfirmed) {
