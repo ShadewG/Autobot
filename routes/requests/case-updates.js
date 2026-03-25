@@ -51,6 +51,7 @@ router.patch('/:id', async (req, res) => {
 
         // Allow restoring a bugged case to a safe review status
         const RESTORE_FROM_BUGGED_STATUSES = ['needs_human_review', 'ready_to_send'];
+        let restoreStatus = null;
         if (req.body.status !== undefined) {
             if (!RESTORE_FROM_BUGGED_STATUSES.includes(req.body.status)) {
                 return res.status(400).json({
@@ -58,18 +59,27 @@ router.patch('/:id', async (req, res) => {
                     error: `Invalid status. Must be one of: ${RESTORE_FROM_BUGGED_STATUSES.join(', ')}`
                 });
             }
-            updates.status = req.body.status;
-            updates.__allowRestoreFromBugged = true;
+            restoreStatus = req.body.status;
         }
 
-        if (Object.keys(updates).filter(k => k !== '__allowRestoreFromBugged').length === 0) {
+        const hasOtherUpdates = Object.keys(updates).length > 0;
+        if (!restoreStatus && !hasOtherUpdates) {
             return res.status(400).json({
                 success: false,
                 error: 'No valid fields to update'
             });
         }
 
-        const updatedCase = await db.updateCase(requestId, updates);
+        let updatedCase;
+        if (restoreStatus) {
+            // Use updateCaseStatus with __allowRestoreFromBugged in additionalFields so the
+            // flag is not mixed with mutable case fields and cannot be stripped accidentally.
+            const statusAdditional = { __allowRestoreFromBugged: true };
+            if (Object.keys(updates).length > 0) Object.assign(statusAdditional, updates);
+            updatedCase = await db.updateCaseStatus(requestId, restoreStatus, statusAdditional);
+        } else {
+            updatedCase = await db.updateCase(requestId, updates);
+        }
 
         if (!updatedCase) {
             return res.status(404).json({
