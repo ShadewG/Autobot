@@ -1462,6 +1462,46 @@ class PortalAgentServicePlaywright {
                             summary.fieldAnalysis = { totalFields: newFieldAnalysis.totalFields, visibleFields: newFieldAnalysis.visibleFields?.length || 0 };
                             summary.fieldsFilled = fillSummary.filled;
                             summary.fieldsSkipped = fillSummary.skipped;
+                        } else if (portalAiVision) {
+                            // AI-driven navigation — let AI figure out how to get to the form
+                            const aiNav = await portalAiVision.navigateToForm(page, {
+                                caseData, requester,
+                                credentials: { email: portalAccount.email, password: portalAccount.password },
+                            }).catch(() => null);
+                            if (aiNav?.success) {
+                                summary.steps.push({ step: 'ai_navigation', steps: aiNav.steps?.length || 0 });
+                                if (aiNav.confirmed) {
+                                    summary.status = 'submitted_confirmation_detected';
+                                    summary.submissionConfirmed = true;
+                                    summary.success = true;
+                                } else {
+                                    // AI got us to the form — try filling and submitting
+                                    const aiFieldAnalysis = await this._analyzeVisibleFields(page);
+                                    const aiRichText = await this._fillRichTextEditors(page, { caseData, requester }).catch(() => false);
+                                    if (aiRichText) summary.steps.push({ step: 'rich_text_filled', editor: aiRichText });
+                                    const aiFillSummary = await this._fillVisibleFields(page, aiFieldAnalysis.visibleFields, {
+                                        caseData, requester, portalAccount, pageKind: 'request_form',
+                                    });
+                                    if (summary.dryRun) {
+                                        summary.status = aiFillSummary.filled.length > 0 ? 'dry_run_form_filled' : 'dry_run_form_detected';
+                                        summary.success = true;
+                                    } else {
+                                        const submitOutcome = await this._submitFilledRequest(page, provider);
+                                        summary.submissionAttempted = Boolean(submitOutcome.attempted);
+                                        summary.submissionConfirmed = Boolean(submitOutcome.confirmed);
+                                        summary.confirmationNumber = submitOutcome.confirmationNumber || null;
+                                        summary.status = submitOutcome.status || 'submission_failed';
+                                        summary.success = Boolean(submitOutcome.confirmed);
+                                    }
+                                    summary.pageKind = 'request_form';
+                                    summary.fieldsFilled = aiFillSummary.filled;
+                                    summary.fieldsSkipped = aiFillSummary.skipped;
+                                }
+                            } else {
+                                summary.status = 'auth_required';
+                                summary.blockers.push({ status: 'auth_required', reason: 'AI navigation could not reach request form' });
+                                summary.success = false;
+                            }
                         } else {
                             summary.status = 'auth_required';
                             summary.blockers.push({ status: 'auth_required', reason: 'GovQA relogin did not reach request form' });
