@@ -1421,7 +1421,7 @@ class PortalAgentServicePlaywright {
                         // Re-detect page kind after relogin
                         const rawUrlAfterRelogin = page.url();
                         let newPageKind;
-                        if (/requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(rawUrlAfterRelogin)) {
+                        if (/requestopen\.aspx|requestsubmission\.aspx/i.test(rawUrlAfterRelogin)) {
                             newPageKind = 'request_form';
                         } else {
                             newPageKind = await this._detectPageKind(page);
@@ -2953,9 +2953,33 @@ class PortalAgentServicePlaywright {
         // Navigate through GovQA tile pages (may need multiple clicks for multi-level departments)
         let lastMatchedLink = null;
         for (let navPass = 0; navPass < 3; navPass++) {
-            // Stop if we reached a request form URL
+            // Stop if we reached the actual request form (not the type selection page)
             const rawUrl = page.url();
-            if (/requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(rawUrl)) break;
+            if (/requestopen\.aspx|requestsubmission\.aspx/i.test(rawUrl)) break;
+
+            // Handle requestselect.aspx — click the Police/relevant "Select" button
+            if (/requestselect\.aspx/i.test(rawUrl)) {
+                const selectBtns = await page.locator('input[value="Select"], button:has-text("Select")').all();
+                if (selectBtns.length > 0) {
+                    // Find the row with "police" in the text
+                    let clicked = false;
+                    for (const btn of selectBtns) {
+                        const row = await btn.locator('xpath=ancestor::tr').first().innerText().catch(() => '');
+                        if (row.toLowerCase().includes('police')) {
+                            await btn.click({ force: true });
+                            await page.waitForTimeout(5000);
+                            clicked = true;
+                            break;
+                        }
+                    }
+                    if (!clicked && selectBtns.length > 0) {
+                        // Click the last Select button (usually the most specific)
+                        await selectBtns[selectBtns.length - 1].click({ force: true });
+                        await page.waitForTimeout(5000);
+                    }
+                }
+                continue;
+            }
 
             const tileOptions = await page.locator('div.live-tile[role="link"]').evaluateAll((elements) => {
                 return elements.map((element, index) => ({
@@ -3034,7 +3058,7 @@ class PortalAgentServicePlaywright {
 
         // GovQA request forms use DevExpress controls that may not be standard inputs
         const rawUrl = page.url();
-        const isGovQaRequestPage = /requestopen\.aspx|requestsubmission\.aspx|requestselect\.aspx/i.test(rawUrl);
+        const isGovQaRequestPage = /requestopen\.aspx|requestsubmission\.aspx/i.test(rawUrl);
         if (isGovQaRequestPage) return 'request_form';
 
         if (visibleFields >= 5) return 'request_form';
