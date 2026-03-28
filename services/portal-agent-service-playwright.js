@@ -396,6 +396,8 @@ function scoreGovQaRequestLink(agencyName, linkText) {
     if (text.includes('submit an open records')) score += 15;
     if (text.includes('submit a request')) score += 12;
     if (text.includes('submit a records request')) score += 14;
+    if (text.includes('incident report')) score += 10;
+    if (text.includes('other') && text.includes('records')) score += 6;
     if (text.includes('submit')) score += 1;
 
     // Penalize non-submission links
@@ -3004,7 +3006,7 @@ class PortalAgentServicePlaywright {
 
         // Navigate through GovQA tile pages (may need multiple clicks for multi-level departments)
         let lastMatchedLink = null;
-        for (let navPass = 0; navPass < 3; navPass++) {
+        for (let navPass = 0; navPass < 5; navPass++) {
             // Stop if we reached the actual request form (not the type selection page)
             const rawUrl = page.url();
             if (/requestopen\.aspx|requestsubmission\.aspx/i.test(rawUrl)) break;
