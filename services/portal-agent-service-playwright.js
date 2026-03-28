@@ -391,9 +391,11 @@ function scoreGovQaRequestLink(agencyName, linkText) {
     if (agency.includes('sheriff') && text.includes('sheriff')) score += 8;
     if (agency.includes('fire') && text.includes('fire')) score += 5;
     if (text.includes('public safety')) score += 10;
+    if (text.includes('public records request')) score += 15;
     if (text.includes('open records request')) score += 12;
     if (text.includes('submit an open records')) score += 15;
     if (text.includes('submit a request')) score += 12;
+    if (text.includes('submit a records request')) score += 14;
     if (text.includes('submit')) score += 1;
 
     // Penalize non-submission links
@@ -3031,7 +3033,10 @@ class PortalAgentServicePlaywright {
                 continue;
             }
 
-            const tileOptions = await page.locator('div.live-tile[role="link"]').evaluateAll((elements) => {
+            // Wait for tiles to render (GovQA uses JS to load them)
+            await page.waitForSelector('div.live-tile, a[href*="requestselect"], a[href*="RequestOpen"]', { timeout: 5000 }).catch(() => {});
+
+            const tileOptions = await page.locator('div.live-tile[role="link"], div.live-tile').evaluateAll((elements) => {
                 return elements.map((element, index) => ({
                     index,
                     kind: 'tile',
@@ -3080,7 +3085,7 @@ class PortalAgentServicePlaywright {
 
             lastMatchedLink = best.text;
             const locator = best.kind === 'tile'
-                ? page.locator('div.live-tile[role="link"]').nth(best.index)
+                ? page.locator('div.live-tile[role="link"], div.live-tile').nth(best.index)
                 : page.locator('a').nth(best.index);
             await Promise.allSettled([
                 page.waitForLoadState('domcontentloaded'),
