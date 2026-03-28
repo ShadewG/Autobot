@@ -3009,28 +3009,27 @@ class PortalAgentServicePlaywright {
             const rawUrl = page.url();
             if (/requestopen\.aspx|requestsubmission\.aspx/i.test(rawUrl)) break;
 
-            // Handle requestselect.aspx — click the Police/relevant "Select" button
+            // Handle requestselect.aspx — click Select buttons OR fall through to tile scan
             if (/requestselect\.aspx/i.test(rawUrl)) {
                 const selectBtns = await page.locator('input[value="Select"], button:has-text("Select")').all();
                 if (selectBtns.length > 0) {
-                    // Find the row with "police" in the text
                     let clicked = false;
                     for (const btn of selectBtns) {
                         const row = await btn.locator('xpath=ancestor::tr').first().innerText().catch(() => '');
-                        if (row.toLowerCase().includes('police')) {
+                        if (row.toLowerCase().includes('police') || row.toLowerCase().includes('sheriff')) {
                             await btn.click({ force: true });
                             await page.waitForTimeout(5000);
                             clicked = true;
                             break;
                         }
                     }
-                    if (!clicked && selectBtns.length > 0) {
-                        // Click the last Select button (usually the most specific)
+                    if (!clicked) {
                         await selectBtns[selectBtns.length - 1].click({ force: true });
                         await page.waitForTimeout(5000);
                     }
+                    continue;
                 }
-                continue;
+                // No Select buttons — fall through to tile scan (some portals use tiles on requestselect)
             }
 
             // Wait for tiles to render (GovQA uses JS to load them)
