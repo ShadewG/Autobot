@@ -382,6 +382,8 @@ function isNotionObjectNotFoundError(error) {
     const message = String(error?.message || '');
     if (status === 404) return true;
     if (/object_not_found/i.test(code)) return true;
+    if (/page_archived/i.test(code)) return true;
+    if (/page_archived/i.test(message)) return true;
     return /could not find (page|block) with id/i.test(message);
 }
 
