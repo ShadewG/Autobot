@@ -51,6 +51,7 @@ router.patch('/:id', async (req, res) => {
 
         // Allow restoring a bugged case to a safe review status
         const RESTORE_FROM_BUGGED_STATUSES = ['needs_human_review', 'ready_to_send'];
+        let restoreStatus = null;
         if (req.body.status !== undefined) {
             if (!RESTORE_FROM_BUGGED_STATUSES.includes(req.body.status)) {
                 return res.status(400).json({
@@ -58,18 +59,52 @@ router.patch('/:id', async (req, res) => {
                     error: `Invalid status. Must be one of: ${RESTORE_FROM_BUGGED_STATUSES.join(', ')}`
                 });
             }
-            updates.status = req.body.status;
-            updates.__allowRestoreFromBugged = true;
+            restoreStatus = req.body.status;
         }
 
-        if (Object.keys(updates).filter(k => k !== '__allowRestoreFromBugged').length === 0) {
+        if (Object.keys(updates).length === 0 && !restoreStatus) {
             return res.status(400).json({
                 success: false,
                 error: 'No valid fields to update'
             });
         }
 
-        const updatedCase = await db.updateCase(requestId, updates);
+        let updatedCase;
+        if (restoreStatus) {
+            // Verify the case is in BUGGED status before restoring
+            const currentCase = await db.getCaseById(requestId);
+            if (!currentCase) {
+                return res.status(404).json({ success: false, error: 'Request not found' });
+            }
+            if (currentCase.status !== 'bugged') {
+                return res.status(400).json({
+                    success: false,
+                    error: `Case is not in BUGGED status (current: ${currentCase.status})`
+                });
+            }
+            // Use raw SQL to bypass the updateCase guard for bugged cases
+            const result = await db.query(
+                `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+                [restoreStatus, requestId]
+            );
+            updatedCase = result.rows[0];
+            if (!updatedCase) {
+                return res.status(404).json({ success: false, error: 'Request not found' });
+            }
+            // Apply any other field updates via normal path
+            if (Object.keys(updates).length > 0) {
+                updatedCase = await db.updateCase(requestId, updates) || updatedCase;
+            }
+            // Trigger Notion sync for status change
+            try {
+                const notionService = require('../../services/notion-service');
+                notionService.syncStatusToNotion(requestId).catch(err =>
+                    console.warn(`[PATCH] Notion sync failed for case ${requestId}:`, err.message)
+                );
+            } catch (_e) { /* notion service not available */ }
+        } else {
+            updatedCase = await db.updateCase(requestId, updates);
+        }
 
         if (!updatedCase) {
             return res.status(404).json({
