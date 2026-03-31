@@ -2838,6 +2838,9 @@ class PortalAgentServicePlaywright {
             }
 
             // Try BotDetect / image CAPTCHA (used by GovQA)
+            // Wait for remote CAPTCHA to render (loads async from remote.captcha.com)
+            await page.waitForSelector('.BDC_CaptchaImage, img[id*=CaptchaImage], img[src*=BotDetectCaptcha]', { timeout: 10000 }).catch(() => {});
+
             const botDetectImg = await page.evaluate(() => {
                 const img = document.querySelector('.BDC_CaptchaImage, img[id*=CaptchaImage], img[src*=BotDetectCaptcha]');
                 if (!img || !img.src) return null;
