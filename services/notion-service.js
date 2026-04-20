@@ -2878,7 +2878,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
                         syncedCases.push(updatedCase);
 
-                        await db.logActivity('case_status_changed', `Case status changed to "${status}" - re-queued: ${notionCase.case_name}`, {
+                        await db.logActivity('case_status_changed', `Case status changed to "${status}" - re-queued: ${(notionCase.case_name || '').slice(0, 400)}`, {
                             case_id: existing.id
                         });
 
