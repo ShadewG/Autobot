@@ -84,75 +84,97 @@ router.patch('/:id', async (req, res) => {
             }
             // Multi-level trigger bypass for restoring a bugged case status.
             // A PostgreSQL BEFORE UPDATE trigger on the cases table reverts any status
-            // change away from 'bugged'. Three strategies are attempted in order:
-            //   1. SET LOCAL session_replication_role = 'replica' (bypasses non-ALWAYS triggers)
-            //   2. ALTER TABLE cases DISABLE/ENABLE TRIGGER per user trigger (requires owner)
-            //   3. Plain raw SQL fallback (may be blocked by trigger)
+            // change away from 'bugged'. Strategies are attempted in order:
+            //   1. app.allow_restore_from_bugged GUC variable (requires migration 096; no superuser needed)
+            //   2. SET LOCAL session_replication_role = 'replica' (bypasses non-ALWAYS triggers)
+            //   3. ALTER TABLE cases DISABLE/ENABLE TRIGGER per user trigger (requires owner)
+            //   4. Plain raw SQL fallback (may be blocked by trigger)
             let bypassSucceeded = false;
 
-            // Strategy 1: session_replication_role (requires pg_write_all_data or superuser)
+            // Strategy 1: GUC variable bypass (works with migration 096_bugged_status_trigger_guc_bypass)
             try {
                 updatedCase = await db.withTransaction(async (txQuery) => {
-                    await txQuery("SET LOCAL session_replication_role = 'replica'");
+                    await txQuery("SET LOCAL app.allow_restore_from_bugged = 'true'");
                     const result = await txQuery(
                         `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
                         [restoreStatus, requestId]
                     );
                     const row = result.rows[0];
                     if (row && row.status !== restoreStatus.toLowerCase()) {
-                        throw new Error(`Trigger still active: status reverted to '${row.status}'`);
+                        throw new Error(`GUC bypass failed: status reverted to '${row.status}'`);
                     }
                     return row;
                 });
                 bypassSucceeded = true;
             } catch (txErr1) {
-                console.warn(`[PATCH] Strategy 1 (session_replication_role) failed: ${txErr1.message}`);
+                console.warn(`[PATCH] Strategy 1 (GUC bypass) failed: ${txErr1.message}`);
 
-                // Strategy 2: temporarily disable user-defined triggers on cases table
+                // Strategy 2: session_replication_role (requires pg_write_all_data or superuser)
                 try {
                     updatedCase = await db.withTransaction(async (txQuery) => {
-                        // Find all non-internal triggers on the cases table
-                        const triggersRes = await txQuery(`
-                            SELECT t.tgname
-                            FROM pg_catalog.pg_trigger t
-                            JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
-                            WHERE c.relname = 'cases' AND NOT t.tgisinternal
-                        `);
-                        const triggerNames = triggersRes.rows.map(r => r.tgname);
-                        console.log(`[PATCH] Found ${triggerNames.length} triggers on cases: ${triggerNames.join(', ')}`);
-
-                        // Disable each trigger, run update, re-enable — all within one transaction
-                        for (const tgname of triggerNames) {
-                            await txQuery(`ALTER TABLE cases DISABLE TRIGGER "${tgname}"`);
-                        }
+                        await txQuery("SET LOCAL session_replication_role = 'replica'");
                         const result = await txQuery(
                             `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
                             [restoreStatus, requestId]
                         );
-                        for (const tgname of triggerNames) {
-                            await txQuery(`ALTER TABLE cases ENABLE TRIGGER "${tgname}"`);
-                        }
                         const row = result.rows[0];
                         if (row && row.status !== restoreStatus.toLowerCase()) {
-                            throw new Error(`Status still reverted after trigger disable: '${row.status}'`);
+                            throw new Error(`Trigger still active: status reverted to '${row.status}'`);
                         }
                         return row;
                     });
                     bypassSucceeded = true;
                 } catch (txErr2) {
-                    console.warn(`[PATCH] Strategy 2 (disable trigger) failed: ${txErr2.message}`);
+                    console.warn(`[PATCH] Strategy 2 (session_replication_role) failed: ${txErr2.message}`);
 
-                    // Strategy 3: plain raw SQL (original behavior, may be blocked by trigger)
-                    console.warn('[PATCH] Falling back to plain raw SQL — trigger may still block');
-                    const result = await db.query(
-                        `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
-                        [restoreStatus, requestId]
-                    );
-                    updatedCase = result.rows[0];
+                    // Strategy 3: temporarily disable user-defined triggers on cases table
+                    try {
+                        updatedCase = await db.withTransaction(async (txQuery) => {
+                            const triggersRes = await txQuery(`
+                                SELECT t.tgname
+                                FROM pg_catalog.pg_trigger t
+                                JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+                                WHERE c.relname = 'cases' AND NOT t.tgisinternal
+                            `);
+                            const triggerNames = triggersRes.rows.map(r => r.tgname);
+                            console.log(`[PATCH] Found ${triggerNames.length} triggers on cases: ${triggerNames.join(', ')}`);
+
+                            for (const tgname of triggerNames) {
+                                await txQuery(`ALTER TABLE cases DISABLE TRIGGER "${tgname}"`);
+                            }
+                            const result = await txQuery(
+                                `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+                                [restoreStatus, requestId]
+                            );
+                            for (const tgname of triggerNames) {
+                                await txQuery(`ALTER TABLE cases ENABLE TRIGGER "${tgname}"`);
+                            }
+                            const row = result.rows[0];
+                            if (row && row.status !== restoreStatus.toLowerCase()) {
+                                throw new Error(`Status still reverted after trigger disable: '${row.status}'`);
+                            }
+                            return row;
+                        });
+                        bypassSucceeded = true;
+                    } catch (txErr3) {
+                        console.warn(`[PATCH] Strategy 3 (disable trigger) failed: ${txErr3.message}`);
+
+                        // Strategy 4: plain raw SQL (original behavior, may be blocked by trigger)
+                        console.warn('[PATCH] Falling back to plain raw SQL — trigger may still block');
+                        const result = await db.query(
+                            `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
+                            [restoreStatus, requestId]
+                        );
+                        updatedCase = result.rows[0];
+                    }
                 }
             }
             if (!bypassSucceeded && updatedCase && updatedCase.status === 'bugged') {
                 console.error(`[PATCH] All bypass strategies failed for case ${requestId} — DB trigger is blocking status restore`);
+                return res.status(500).json({
+                    success: false,
+                    error: 'DB trigger is blocking status restore. Run migration 096_bugged_status_trigger_guc_bypass.sql to fix.'
+                });
             }
             if (!updatedCase) {
                 return res.status(404).json({ success: false, error: 'Request not found' });
