@@ -169,7 +169,7 @@ router.patch('/:id', async (req, res) => {
                     }
                 }
             }
-            if (!bypassSucceeded && updatedCase && updatedCase.status === 'bugged') {
+            if (!bypassSucceeded && updatedCase && updatedCase.status?.toLowerCase() === 'bugged') {
                 console.error(`[PATCH] All bypass strategies failed for case ${requestId} — DB trigger is blocking status restore`);
                 return res.status(500).json({
                     success: false,
