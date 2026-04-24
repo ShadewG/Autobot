@@ -1,5 +1,5 @@
 -- Add GUC variable bypass to the BUGGED status protection trigger.
--- The PATCH endpoint (case-updates.js) needs to restore bugged cases to
+-- The PATCH /api/requests/:id endpoint needs to restore bugged cases to
 -- needs_human_review/ready_to_send, but the trigger was blocking all strategies.
 -- Setting app.allow_restore_from_bugged = 'true' in a transaction now allows
 -- the PATCH to succeed without requiring superuser or table ownership.
