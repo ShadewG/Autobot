@@ -2781,6 +2781,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             const syncedCases = [];
             const statusKey = status.toLowerCase().replace(/ /g, '_');
             const protectedStatuses = new Set([
+                'bugged',
                 'portal_in_progress',
                 'needs_human_review',
                 'needs_human_fee_approval',
