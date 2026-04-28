@@ -57,3 +57,5 @@ CREATE TRIGGER trg_protect_bugged_status
 BEFORE UPDATE ON cases
 FOR EACH ROW
 EXECUTE FUNCTION protect_bugged_status();
+
+-- Redeploy trigger: force Railway restart 2026-04-28T08:44Z
