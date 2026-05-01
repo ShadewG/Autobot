@@ -44,6 +44,11 @@ app.use('/api/screenshots', express.static('/data/screenshots'));
 const dashboardPath = path.join(__dirname, 'dashboard', 'out');
 app.use(express.static(dashboardPath));
 
+// Version endpoint — deployed commit sentinel for Railway verification
+app.get('/api/version', (req, res) => {
+    res.json({ commit: '3a40467', deployed_at: '2026-05-01T21:28Z', migrations: ['096','097','098','099'] });
+});
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
     try {
