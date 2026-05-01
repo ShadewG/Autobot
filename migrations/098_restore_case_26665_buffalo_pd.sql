@@ -66,3 +66,5 @@ CREATE TRIGGER trg_protect_bugged_status
 BEFORE UPDATE ON cases
 FOR EACH ROW
 EXECUTE FUNCTION protect_bugged_status();
+
+-- Redeploy trigger: force Railway build 2026-05-01T09:00Z (migration 098 not yet applied to production)
