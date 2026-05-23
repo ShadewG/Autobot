@@ -1,4 +1,5 @@
 require('dotenv').config();
+// Redeploy trigger: 2026-05-23 — server returned 502 (Railway restart retries exhausted)
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
