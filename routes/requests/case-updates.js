@@ -169,7 +169,11 @@ router.patch('/:id', async (req, res) => {
                     }
                 }
             }
-            if (!bypassSucceeded && updatedCase && updatedCase.status?.toLowerCase() === 'bugged') {
+            // Detect failure regardless of which strategy appeared to succeed.
+            // bypassSucceeded=true can occur when strategy 1's transaction returns without
+            // throwing (e.g. row is null, or trigger fires after RETURNING), so we must
+            // re-check the actual resulting status.
+            if (updatedCase?.status?.toLowerCase() === 'bugged') {
                 console.error(`[PATCH] All bypass strategies failed for case ${requestId} — DB trigger is blocking status restore`);
                 return res.status(500).json({
                     success: false,
