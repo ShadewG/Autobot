@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: 'b2c46b4', deployed_at: '2026-05-01T21:15Z', migrations: ['096','097','098','099'] });
+    res.json({ commit: '1e81e82', deployed_at: '2026-05-29T20:00Z', migrations: ['096','097','098','099','100'] });
 });
 
 // Health check endpoint
