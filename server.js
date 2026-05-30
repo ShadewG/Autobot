@@ -1,5 +1,5 @@
 require('dotenv').config();
-// Redeploy trigger: 2026-05-23 — server returned 502 (Railway restart retries exhausted)
+// Redeploy trigger: 2026-05-30 — migration 101 for cases 26839+26665 (GUC-aware check)
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
