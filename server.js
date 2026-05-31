@@ -1,5 +1,5 @@
 require('dotenv').config();
-// Redeploy trigger: 2026-05-30 — migration 101 for cases 26839+26665 (GUC-aware check)
+// Redeploy trigger: 2026-05-31 — migration 102 session-GUC restore for case 26839
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '1e81e82', deployed_at: '2026-05-29T20:00Z', migrations: ['096','097','098','099','100'] });
+    res.json({ commit: '49e4c9e-102', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102'] });
 });
 
 // Health check endpoint
@@ -224,6 +224,60 @@ async function runMigrations() {
     }
 }
 
+/**
+ * Startup repair: restore case 26839 (Minneapolis PD) from bugged status.
+ * Runs on EVERY server start using session-level GUC (different from migration's
+ * transaction-local SET LOCAL). Safe to run if case is already restored.
+ */
+async function repairBuggedCase26839() {
+    try {
+        // Check current status first — skip if already restored.
+        const check = await db.query('SELECT status FROM cases WHERE id = 26839 LIMIT 1');
+        if (!check.rows[0]) {
+            console.log('  ℹ️ Case 26839 not found — skipping repair');
+            return;
+        }
+        if (check.rows[0].status !== 'bugged') {
+            console.log(`  ✓ Case 26839 already in status: ${check.rows[0].status}`);
+            return;
+        }
+
+        // Use a dedicated connection so we can set session-level GUC before
+        // the UPDATE transaction, which differs from SET LOCAL (tx-local only).
+        const client = await db.pool.connect();
+        try {
+            // Session-level GUC — persists across transaction boundaries on this connection.
+            await client.query("SET app.allow_restore_from_bugged = 'true'");
+            await client.query('BEGIN');
+            const result = await client.query(
+                `UPDATE cases
+                 SET status = 'awaiting_response',
+                     requires_human = false,
+                     substatus = 'Restored on startup (2026-05-31): Minneapolis PD follow-up needed',
+                     pause_reason = NULL,
+                     updated_at = NOW()
+                 WHERE id = 26839 AND status = 'bugged'
+                 RETURNING id, status`
+            );
+            await client.query('COMMIT');
+            await client.query("SET app.allow_restore_from_bugged = 'false'");
+
+            if (result.rows[0]?.status === 'awaiting_response') {
+                console.log('  ✅ Case 26839 restored to awaiting_response (Minneapolis PD)');
+            } else {
+                console.log('  ⚠️  Case 26839 still bugged — trigger is not GUC-aware; DB admin must run migration 102 manually');
+            }
+        } catch (e) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('  ✗ Case 26839 repair failed:', e.message);
+        } finally {
+            client.release();
+        }
+    } catch (e) {
+        console.error('  ✗ Case 26839 repair check failed:', e.message);
+    }
+}
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
@@ -274,6 +328,10 @@ async function startServer() {
         // Run migrations automatically
         console.log('\nRunning database migrations...');
         await runMigrations();
+
+        // Startup repair for known-stuck cases
+        console.log('\nRunning startup repairs...');
+        await repairBuggedCase26839();
 
         // Initialize Discord notifications
         console.log('\nInitializing Discord notifications...');
