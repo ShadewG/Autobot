@@ -278,6 +278,56 @@ async function repairBuggedCase26839() {
     }
 }
 
+/**
+ * Startup repair: restore case 26665 (Buffalo PD) from bugged status.
+ * Portal request #26-1128 was CLOSED/DENIED by agency — restore to needs_human_review
+ * so operator can close as denied. Safe to run if case is already restored.
+ */
+async function repairBuggedCase26665() {
+    try {
+        const check = await db.query('SELECT status FROM cases WHERE id = 26665 LIMIT 1');
+        if (!check.rows[0]) {
+            console.log('  ℹ️ Case 26665 not found — skipping repair');
+            return;
+        }
+        if (check.rows[0].status !== 'bugged') {
+            console.log(`  ✓ Case 26665 already in status: ${check.rows[0].status}`);
+            return;
+        }
+
+        const client = await db.pool.connect();
+        try {
+            await client.query("SET app.allow_restore_from_bugged = 'true'");
+            await client.query('BEGIN');
+            const result = await client.query(
+                `UPDATE cases
+                 SET status = 'needs_human_review',
+                     requires_human = true,
+                     substatus = 'Restored on startup: Buffalo PD portal #26-1128 CLOSED/DENIED — close as denied',
+                     pause_reason = NULL,
+                     updated_at = NOW()
+                 WHERE id = 26665 AND status = 'bugged'
+                 RETURNING id, status`
+            );
+            await client.query('COMMIT');
+            await client.query("SET app.allow_restore_from_bugged = 'false'");
+
+            if (result.rows[0]?.status === 'needs_human_review') {
+                console.log('  ✅ Case 26665 restored to needs_human_review (Buffalo PD — close as denied)');
+            } else {
+                console.log('  ⚠️  Case 26665 still bugged — trigger is not GUC-aware; DB admin must run migration 101 manually');
+            }
+        } catch (e) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error('  ✗ Case 26665 repair failed:', e.message);
+        } finally {
+            client.release();
+        }
+    } catch (e) {
+        console.error('  ✗ Case 26665 repair check failed:', e.message);
+    }
+}
+
 // Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Error:', err);
@@ -332,6 +382,7 @@ async function startServer() {
         // Startup repair for known-stuck cases
         console.log('\nRunning startup repairs...');
         await repairBuggedCase26839();
+        await repairBuggedCase26665();
 
         // Initialize Discord notifications
         console.log('\nInitializing Discord notifications...');
