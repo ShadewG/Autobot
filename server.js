@@ -46,7 +46,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — deployed commit sentinel for Railway verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '3a40467', deployed_at: '2026-05-01T21:28Z', migrations: ['096','097','098','099'] });
+    res.json({ commit: '77cd5ff', deployed_at: '2026-06-04T08:00Z', migrations: ['096','097','098','099','100'], repairs: ['26839','26665'] });
 });
 
 // Health check endpoint
