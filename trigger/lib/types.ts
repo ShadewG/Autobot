@@ -27,6 +27,18 @@ export type JurisdictionLevel = "federal" | "state" | "local";
 export type ResponseNature = "substantive" | "procedural" | "administrative" | "mixed";
 export type ResearchLevel = "none" | "light" | "medium" | "deep";
 
+export interface ContactResult {
+  email?: string;
+  contact_email?: string;
+  portal_url?: string;
+  agency_name?: string;
+  contact_phone?: string;
+  notes?: string;
+  source?: string;
+  confidence?: number;
+  [key: string]: any;
+}
+
 export interface ResearchContext {
   level: ResearchLevel;
   agency_hierarchy_verified: boolean;
@@ -39,6 +51,7 @@ export interface ResearchContext {
   clarification_answer_support: string | null;
   case_context_notes: string | null;
   cached_at: string | null;
+  contactResult?: ContactResult | null;
 }
 
 export type ActionType =

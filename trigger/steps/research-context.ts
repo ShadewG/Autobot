@@ -26,6 +26,7 @@ export function emptyResearchContext(): ResearchContext {
     clarification_answer_support: null,
     case_context_notes: null,
     cached_at: null,
+    contactResult: null,
   };
 }
 
@@ -235,6 +236,7 @@ export async function researchContext(
       clarification_answer_support: null,
       case_context_notes: null,
       cached_at: new Date().toISOString(),
+      contactResult: contactResult ?? null,
     };
 
     if (level === "light") {

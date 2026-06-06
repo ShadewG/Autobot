@@ -850,7 +850,7 @@ export const processInbound = task({
         research
       );
 
-      if (draftSignalsNoResponse(draft) && decision.actionType !== "NONE") {
+      if (draftSignalsNoResponse(draft)) {
         const suppressedReasoning = [
           ...(decision.reasoning || []),
           "Suppressed contradictory draft because the generated reply explicitly said no response was needed.",
