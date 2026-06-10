@@ -1,5 +1,5 @@
 require('dotenv').config();
-// Redeploy trigger: 2026-06-02 — enhanced startup repair: try update+drop trigger strategies
+// Redeploy trigger: 2026-06-10 — migration 104: counter-trigger to override bugged-status protection
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '103-repair', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103'] });
+    res.json({ commit: '104-counter-trigger', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104'] });
 });
 
 // Health check endpoint
@@ -293,8 +293,11 @@ async function repairBuggedCaseWithClient(client, caseId, targetStatus, substatu
         console.warn(`  ⚠️  Case ${caseId}: could not update original trigger fn (${e.message})`);
     }
 
-    // Strategy 3: Set session-level GUC (persists outside transactions) and UPDATE.
+    // Strategy 3: Set session-level GUCs (persists outside transactions) and UPDATE.
+    // app.restore_to_status enables the counter-trigger trz_allow_restore (migration 104)
+    // to override the bugged-status protection even when the app user can't modify the trigger.
     await client.query("SET app.allow_restore_from_bugged = 'true'");
+    await client.query(`SET app.restore_to_status = '${targetStatus}'`);
     await client.query('BEGIN');
     let result = await client.query(
         `UPDATE cases
@@ -309,6 +312,7 @@ async function repairBuggedCaseWithClient(client, caseId, targetStatus, substatu
     );
     await client.query('COMMIT');
     await client.query("SET app.allow_restore_from_bugged = 'false'");
+    await client.query("SET app.restore_to_status = ''");
 
     if (result.rows[0]?.status === targetStatus) {
         console.log(`  ✅ Case ${caseId} restored to ${targetStatus} (GUC strategy)`);

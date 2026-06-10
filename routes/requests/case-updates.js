@@ -112,10 +112,14 @@ router.patch('/:id', async (req, res) => {
                 console.warn(`[PATCH] Strategy 0 (update trigger fn) failed: ${s0Err.message}`);
             }
 
-            // Strategy 1: GUC variable bypass (works with migration 096_bugged_status_trigger_guc_bypass)
+            // Strategy 1: GUC variable bypass + counter-trigger (migration 104: trz_allow_restore).
+            // Sets both app.allow_restore_from_bugged and app.restore_to_status so that
+            // either the original GUC-aware protect_bugged_status() (if migration 096 worked)
+            // OR the counter-trigger trz_allow_restore (migration 104) can allow the change.
             try {
                 updatedCase = await db.withTransaction(async (txQuery) => {
                     await txQuery("SET LOCAL app.allow_restore_from_bugged = 'true'");
+                    await txQuery(`SET LOCAL app.restore_to_status = '${restoreStatus}'`);
                     const result = await txQuery(
                         `UPDATE cases SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *`,
                         [restoreStatus, requestId]
