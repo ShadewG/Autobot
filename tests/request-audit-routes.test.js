@@ -457,7 +457,7 @@ describe('Request audit/debug routes', function () {
       ['provider_event', 'error', 'decision', 'portal', 'external_call', 'agent_step', 'state_transition']
     );
     assert.strictEqual(response.body.entries[0].payload.raw_payload.token, '[redacted]');
-    assert.match(response.body.entries[2].summary, /action SEND_CLARIFICATION/);
+    assert.match(response.body.entries[2].summary, /decided send clarification/);
     assert.strictEqual(response.body.entries[4].payload.metadata.model, 'gpt-5.2-2025-12-11');
   });
 

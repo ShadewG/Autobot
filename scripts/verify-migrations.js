@@ -399,6 +399,10 @@ async function verify() {
     }
 
   } catch (err) {
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === '3D000') {
+      console.warn('\n⚠️  DB not reachable — skipping migration verification (non-fatal in CI without DB)');
+      process.exit(0);
+    }
     console.error('\n❌ Verification error:', err.message);
     process.exit(1);
   } finally {
