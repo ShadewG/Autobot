@@ -1,5 +1,5 @@
 require('dotenv').config();
-// Redeploy trigger: 2026-06-10 — migration 104: counter-trigger to override bugged-status protection
+// Redeploy trigger: 2026-06-12 — cases 26839+26665 stuck in BUGGED; DB admin needed (see mark-bugged notes for SQL fix)
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '104-counter-trigger', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104'] });
+    res.json({ commit: '105-redeploy-2026-06-12', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104'] });
 });
 
 // Health check endpoint
