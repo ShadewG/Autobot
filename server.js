@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '105-redeploy-2026-06-12', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104'] });
+    res.json({ commit: '106-fix-26839-target-status', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104','105'] });
 });
 
 // Health check endpoint
@@ -361,8 +361,9 @@ async function repairBuggedCaseWithClient(client, caseId, targetStatus, substatu
 
 /**
  * Startup repair: restore case 26839 (Minneapolis PD) from bugged status.
- * Email request sent 2026-04-09 — no response, 40+ days overdue.
- * Target: awaiting_response so automation can send follow-up.
+ * FOIA was NEVER actually sent (outbound_count=0, message_count=0).
+ * The submitted_at=2026-04-09 was set during Notion import, not from an actual send.
+ * Target: needs_human_review so operator can send the initial FOIA request.
  */
 async function repairBuggedCase26839() {
     try {
@@ -379,8 +380,8 @@ async function repairBuggedCase26839() {
         const client = await db.pool.connect();
         try {
             await repairBuggedCaseWithClient(
-                client, 26839, 'awaiting_response',
-                'Restored on startup (2026-06-02): Minneapolis PD — submitted 2026-04-09, follow-up needed'
+                client, 26839, 'needs_human_review',
+                'Restored on startup: FOIA was NEVER sent to Minneapolis PD (outbound=0). Operator must send initial request to police-recordsinformationunit@minneapolismn.gov. Notion page 0a5c1ee5 missing (non-blocking).'
             );
         } catch (e) {
             await client.query('ROLLBACK').catch(() => {});
