@@ -47,7 +47,7 @@ app.use(express.static(dashboardPath));
 
 // Version endpoint — shows deployed commit for deployment verification
 app.get('/api/version', (req, res) => {
-    res.json({ commit: '106-fix-26839-target-status', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104','105'] });
+    res.json({ commit: '106-superuser-fix-required', deployed_at: new Date().toISOString(), migrations: ['096','097','098','099','100','101','102','103','104','105','106'] });
 });
 
 // Health check endpoint
